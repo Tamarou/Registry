@@ -61,7 +61,12 @@
             </div>
         </div>
         <p class="trial-terms">
-            <small>2.5% of processed revenue. No upfront costs, no monthly fees, no lock-in.</small>
+            <small>
+                % if (defined( my $rate = platform_rate_percent )) {
+                <%= $rate %>% of processed revenue.
+                % }
+                No upfront costs, no monthly fees, no lock-in.
+            </small>
         </p>
     </div>
 

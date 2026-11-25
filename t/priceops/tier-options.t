@@ -11,7 +11,6 @@ use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;
 use Registry::DAO::WorkflowSteps::PricingPlanSelection;
 use Registry::PriceOps::RevenueShare;
-use Mojo::File qw( path );
 
 # The point of this file. The display test builds its own Solo/Studio/Empire
 # fixtures, so it passed for as long as the machinery worked -- while the
@@ -63,7 +62,7 @@ subtest 'an unpublished offer cannot be selected' => sub {
     } )->array->[0], 0, 'no seeded Studio or Empire plan is current';
 
     my $legacy = $db->query(
-        q{SELECT id FROM registry.pricing_plans WHERE metadata->>'launch_rate' = 'true'}
+        q{SELECT id FROM registry.pricing_plans WHERE plan_name = 'Solo' AND superseded_at IS NULL}
     )->array->[0];
 
     # Fatal precondition. The refusal below would pass on an undef id.
@@ -84,43 +83,22 @@ subtest 'an unpublished offer cannot be selected' => sub {
 # The rate is a decision, not a derived value, so it is pinned once, here, to
 # the number the signup copy quotes.
 subtest 'the launch rate is the rate the platform advertises' => sub {
-    my $launch = Registry::PriceOps::RevenueShare::platform_launch_fraction($db);
+    my $launch = Registry::PriceOps::RevenueShare::platform_offered_fraction($db);
 
     cmp_ok abs( $launch - 0.025 ), '<', 1e-9,
         'the launch rate is 2.5%';
 
-    # And the static copy agrees with it. This is the loop the whole rate
-    # exercise exists to close: a number in a template that nothing compares
-    # against the database is how three rates came to be live at once.
-    my $pct = 0 + sprintf '%g', $launch * 100;
-
-    # Every template that quotes a rate, not just the one that prompted this.
-    # Closing the loop on a single file makes a rate move update that file and
-    # leave its siblings saying the old number -- which is the same drift, minus
-    # one door. Adding marketing copy that quotes a rate means adding it here.
-    for my $tpl (
-        'templates/tenant-signup/index.html.ep',
-        'templates/registry-storefront/landing.html.ep',
-    ) {
-        my $copy = path($tpl)->slurp;
-
-        # (?<![\d.]) or "12.5%" satisfies a check for "2.5%" -- the typo the
-        # assertion exists to catch would have passed it.
-        like $copy, qr/(?<![\d.])\Q$pct\E%/,
-            "$tpl quotes ${pct}%, the rate the platform actually charges";
-
-        unlike $copy,
-            qr/(?<![\d.])(?!\Q$pct\E%)\d+(?:\.\d+)?%\s+(?:of\s+)?(?:processed\s+)?revenue/,
-            "$tpl quotes no other rate alongside it, in the phrasings this checks";
-    }
+    # The copy renders this rate rather than restating it:
+    # t/controller/registry-landing-page.t checks both pages and that no
+    # storefront or signup template hard-codes a rate.
 };
 
 subtest 'the buyable tier is the one carrying the advertised rate' => sub {
     my ($solo) = @$plans;
 
-    my $launch = Registry::PriceOps::RevenueShare::platform_launch_fraction($db);
+    my $launch = Registry::PriceOps::RevenueShare::platform_offered_fraction($db);
     cmp_ok abs( $solo->{pricing_configuration}{percentage} - $launch ), '<', 1e-9,
-        'Solo charges the rate platform_launch_fraction advertises';
+        'Solo charges the rate platform_offered_fraction advertises';
 
     # The signup copy quotes a rate; the page renders one; the charge path
     # resolves one. This is the seam where they were allowed to differ.

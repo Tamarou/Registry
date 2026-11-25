@@ -643,6 +643,17 @@ class Registry :isa(Mojolicious) {
             }
         );
 
+        # Helper: the rate the platform quotes, as a percent (2.5), for the
+        # storefront and signup copy; undef when it cannot name exactly one
+        # published offer, so a page quotes no rate rather than a default.
+        $self->helper(
+            platform_rate_percent => sub ($c) {
+                require Registry::PriceOps::RevenueShare;
+                return Registry::PriceOps::RevenueShare::platform_offered_percent(
+                    $c->dao('registry')->db );
+            }
+        );
+
         # Helper: require an authenticated session.
         # Redirects browsers to login; sends 401 JSON to API clients.
         # Returns true if authenticated, false (and terminates dispatch) otherwise.
