@@ -127,7 +127,13 @@ subtest 'rejected promise leaves run unchanged' => sub {
 
     is $info->{state}, 'failed', 'job failed';
     like $info->{result}, qr/invalid input syntax for type uuid/, 'with the rejection';
-    is_deeply where($run), $parked, 'latest step and data are unchanged';
+    my $now    = where($run);
+    my $driver = delete $now->{data}{__driver};
+    is_deeply $now, $parked, 'latest step and the rest of its data are unchanged';
+    # The driver writes down each failed attempt; one attempt, so it is halted.
+    is $driver->{step},  'payment', 'the run records the step that failed';
+    is $driver->{state}, 'halted',  'and that its only attempt halted it';
+    like $driver->{error}, qr/invalid input syntax for type uuid/, 'with the rejection';
     isnt Registry::DAO::Payment->find( $tdb, { id => $payment->id } )->status, 'completed',
         'the settlement was rolled back with it';
 };
