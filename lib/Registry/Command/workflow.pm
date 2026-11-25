@@ -9,6 +9,7 @@ class Registry::Command::workflow :isa(Mojolicious::Command) {
     use Carp          qw(carp);
     use Mojo::File    qw(path);
     use Registry::DAO qw(Workflow);
+    use Registry::WorkflowDivergence;
     use YAML::XS      qw(Load);
 
     field $app :param = undef;
@@ -24,6 +25,7 @@ class Registry::Command::workflow :isa(Mojolicious::Command) {
             * show - show details about a workflow
             * import - import workflows from YAML files
             * export - export a workflow to YAML
+            * divergence - report, read-only, how each tenant's workflow copies differ from registry's
 
         END
 
@@ -89,6 +91,11 @@ class Registry::Command::workflow :isa(Mojolicious::Command) {
 
         print "\n";
 
+        return;
+    }
+
+    method divergence () {
+        print Registry::WorkflowDivergence::report( $dao->db );
         return;
     }
 

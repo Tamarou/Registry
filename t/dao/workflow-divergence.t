@@ -162,4 +162,28 @@ subtest 'a registry slug missing from the tenant is reported, the two provisioni
     unlike $section, qr/tenant-signup|registry-storefront/, 'expected absences are not reported';
 };
 
+subtest 'the workflow divergence command prints the report and writes nothing' => sub {
+    require Registry::Command::workflow;
+    my @schemas = ( 'registry', map { $_->[0] } $db->query(
+        q{SELECT slug FROM registry.tenants WHERE slug <> 'registry' ORDER BY slug})->arrays->each );
+    my $counts = sub {
+        [ map { my $s = $db->dbh->quote_identifier($_);
+                $db->query("SELECT (SELECT count(*) FROM $s.workflows), (SELECT count(*) FROM $s.workflow_steps),
+                                   (SELECT count(*) FROM $s.templates), (SELECT max(updated_at) FROM $s.templates)")->array }
+          @schemas ];
+    };
+    my $before = $counts->();
+
+    local $ENV{DB_URL} = $test_db->uri;
+    my $out = '';
+    {
+        local *STDOUT;
+        open STDOUT, '>', \$out;
+        Registry::Command::workflow->new( app => Registry->new )->run( 'divergence', 'registry' );
+    }
+    is $out, Registry::WorkflowDivergence::report($db), 'it prints the Markdown report';
+    like $out, qr/^# Tenant workflow divergence$/m, 'with its heading';
+    is_deeply $counts->(), $before, 'no workflow, step or template row changed in any schema';
+};
+
 done_testing;
