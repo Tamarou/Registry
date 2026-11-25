@@ -319,6 +319,7 @@ subtest 'late payment with seats gone refunds and notifies' => sub {
         payment_id      => $payment->id,
         amount_cents    => 9000,
         idempotency_key => 'refund:booking:' . $run->id,
+        reason          => 'full',
     }, 'the run records the refund owed: the whole charge, under a key for the run';
     like $data->{__driver}{error}, qr/refund/, 'the failed refund is retried by the driver';
     like Registry::DAO::Payment->find( $sacp->{db}, { id => $payment->id } )->metadata->{refund_last_failure}{message},
@@ -340,6 +341,50 @@ subtest 'late payment with seats gone refunds and notifies' => sub {
     is Registry::DAO::Payment->find( $sacp->{db}, { id => $payment->id } )->status, 'refunded', 'the payment is refunded';
     is scalar told( $sacp, $sacp->{booker}->id, $run )->@*, 1, 'and nobody is told twice';
     is_deeply entitlements_of( $sacp, $payment ), [], 'and still no booking is made';
+};
+
+# A late success for a class that is no longer on sale: $started_sql moves
+# the occurrence's start into the past. Nothing is booked; the whole charge
+# is refunded once and the booker and staff are told once.
+sub refunded_after ( $what, $started_sql ) {
+    my ( $version, $occurrence ) = class_offer( $sacp, seats => 4 );
+    my $run     = held( $sacp, $occurrence, $version, 2 );
+    my $payment = started( $sacp, $run );
+    lapse( $sacp, $run );
+    $sacp->{db}->query( "UPDATE events SET time = $started_sql WHERE id = ?", $occurrence->event_id );
+    succeeded( $sacp, $payment )->status_is(200);
+    {
+        local $ENV{STRIPE_SECRET_KEY} = '';    # the refund fails before reaching Stripe
+        drive();
+    }
+    is_deeply entitlements_of( $sacp, $payment ), [], "$what: nothing is booked";
+    my $data = reload( $sacp, $run )->data;
+    is_deeply $data->{booking_refund}, {
+        payment_id      => $payment->id,
+        amount_cents    => 9000,
+        idempotency_key => 'refund:booking:' . $run->id,
+        reason          => 'started',
+    }, "$what: the whole charge is owed back, under the run's key";
+    unlike $data->{__driver}{error} // '', qr/tstzrange|range lower bound/, "$what: no database error";
+    Registry::DAO::Payment->find( $sacp->{db}, { id => $payment->id } )->_apply_refund_result( $sacp->{db},
+        { id => "re_isbp_$what", status => 'succeeded' }, 9000, 'requested_by_customer', 0,
+        $data->{booking_refund}{idempotency_key} );
+    my $again = settle( $run->process( $sacp->{db}, step( $sacp, 'complete' ), {} ) );
+    like "@{ $again->{errors} // [] }", qr/already started.*refunded/s, "$what: the booker is shown why and the refund";
+    is Registry::DAO::Payment->find( $sacp->{db}, { id => $payment->id } )->status, 'refunded', "$what: refunded";
+    my $booker = told( $sacp, $sacp->{booker}->id, $run );
+    is scalar @$booker, 1, "$what: the booker is told once";
+    like $booker->[0]{message}, qr/already started/, "$what: that the class had started";
+    is scalar told( $sacp, $sacp->{admin}, $run )->@*, 1, "$what: and the studio admin once";
+    is_deeply entitlements_of( $sacp, $payment ), [], "$what: and still nothing is booked";
+}
+
+subtest 'late success after class ended refunds once and grants nothing' => sub {
+    refunded_after( 'ended', q{now() - interval '3 hours'} );
+};
+
+subtest 'late success after class started refunds once and grants nothing' => sub {
+    refunded_after( 'started', q{now() - interval '30 minutes'} );
 };
 
 # The platform's admins: told of a charge Stripe took for the wrong amount.

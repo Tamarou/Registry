@@ -43,10 +43,30 @@ class Registry::DAO::WorkflowSteps::CompleteBooking :isa(Registry::DAO::Workflow
         my $terms = $data->{agreed_terms_version};
         return _stay('Agree to the terms of service to book.') unless defined $terms && !ref $terms && length $terms;
 
-        my $live = Registry::PriceOps::Hold->live_sql('holds');
-        unless ( $db->query( "SELECT $live FROM holds WHERE id = ?", $hold->id )->array->[0] ) {
-            # Paid after the hold lapsed: the seats are taken again, under the
-            # occurrence's lock, if they still fit (ADR 005, ruling 7a).
+        # Under the occurrence's lock from here: whether it is still on sale
+        # and whether its seats fit are decided by one reader at a time.
+        my $occurrence = Registry::DAO::Resource->locked( $db, $hold->resource_id );
+        # A booking needs a class still to start; one that started or ended
+        # while a late payment was in flight is refunded (ruling 7a).
+        return $self->_refuse( $db, $tx, $run, $payment, $hold, 'started' ) unless $occurrence->on_sale($db);
+
+        my $version = Registry::DAO::OfferVersion->find( $db, { id => $payment->offer_version_id } );
+        my ( undef, $ends ) = ( $version->policies->{expiry}{kind} // '' ) eq 'end_of_occurrence'
+            ? $occurrence->occurrence_window($db) : ();
+        my %into = (
+            holder_user_id      => $payment->user_id,
+            offer_version_id    => $payment->offer_version_id,
+            payment_plan_id     => $payment->metadata->{payment_plan_id},
+            starts_at           => 'now',
+            ends_at             => $ends,
+            payment_id          => $payment->id,
+            payment_share_cents => $payment->amount_cents,
+            terms_version       => $terms,
+        );
+        # A hold that lapsed, before or during this request, converts nothing:
+        # the seats are taken again if they still fit, otherwise refunded.
+        unless ( eval { $hold->convert( $db, \%into ); 1 } ) {
+            die $@ unless $@ =~ /is not live/;
             $hold->release($db);
             my $again = eval {
                 Registry::PriceOps::Hold->place( $db, {
@@ -58,58 +78,56 @@ class Registry::DAO::WorkflowSteps::CompleteBooking :isa(Registry::DAO::Workflow
             };
             unless ($again) {
                 die $@ unless $@ =~ /units free/;
-                # They do not: nothing is booked and the whole charge is
-                # refunded, despite a refund-none policy, which governs the
-                # booker's cancellations, not this race (ruling 7a).
-                my $refund = {
-                    payment_id      => $payment->id,
-                    amount_cents    => $payment->amount_cents,
-                    idempotency_key => 'refund:booking:' . $run->id,
-                };
-                $run->update_data( $db, { booking_refund => $refund } );
-                $self->_tell( $db, $run, $payment, $hold->units );
-                $tx->commit if $tx;
-                return $self->_refund( $db, $run, $refund );
+                return $self->_refuse( $db, $tx, $run, $payment, $hold, 'full' );
             }
-            $hold = $again;
-            $run->update_data( $db, { booking_hold => { %$booking, hold_id => $hold->id } } );
+            $run->update_data( $db, { booking_hold => { %$booking, hold_id => $again->id } } );
+            $again->convert( $db, \%into );
         }
-
-        my $version = Registry::DAO::OfferVersion->find( $db, { id => $payment->offer_version_id } );
-        my $ends;
-        if ( ( $version->policies->{expiry}{kind} // '' ) eq 'end_of_occurrence' ) {
-            ( undef, $ends ) = Registry::DAO::Resource->find( $db, { id => $hold->resource_id } )->occurrence_window($db);
-        }
-        $hold->convert( $db, {
-            holder_user_id      => $payment->user_id,
-            offer_version_id    => $payment->offer_version_id,
-            payment_plan_id     => $payment->metadata->{payment_plan_id},
-            starts_at           => 'now',
-            ends_at             => $ends,
-            payment_id          => $payment->id,
-            payment_share_cents => $payment->amount_cents,
-            terms_version       => $terms,
-        } );
         $tx->commit if $tx;
         return {};
     }
 
+    # Why a paid booking is not made, in the booker's words and staff's.
+    my %WHY = (
+        full    => [ 'the class has no room left', 'the class had no room left for %d seats' ],
+        started => [ 'the class has already started', 'the class had already started (%d seats)' ],
+    );
+
+    # The paid booking cannot be made ($reason, a key of %WHY): nothing is
+    # booked and the whole charge is refunded, despite a refund-none policy,
+    # which governs the booker's cancellations, not this race (ruling 7a).
+    # Decided once, under the run's lock; the booker and staff are told then.
+    method _refuse ( $db, $tx, $run, $payment, $hold, $reason ) {
+        # Already released when its seats were found not to fit.
+        $db->query( q{UPDATE holds SET state = 'released' WHERE id = ? AND state = 'held'}, $hold->id );
+        my $refund = {
+            payment_id      => $payment->id,
+            amount_cents    => $payment->amount_cents,
+            idempotency_key => 'refund:booking:' . $run->id,
+            reason          => $reason,
+        };
+        $run->update_data( $db, { booking_refund => $refund } );
+        $self->_tell( $db, $run, $payment, $hold->units, $reason );
+        $tx->commit if $tx;
+        return $self->_refund( $db, $run, $refund );
+    }
+
     # The booker and the studio's admins, told once, when the refund is decided.
-    method _tell ( $db, $run, $payment, $seats ) {
+    method _tell ( $db, $run, $payment, $seats, $reason ) {
         my $sum  = sprintf '$%.2f', $payment->amount_cents / 100;
         my $meta = { workflow_run_id => $run->id, payment_id => $payment->id };
         Registry::DAO::Notification->create( $db, {
             user_id  => $payment->user_id, type => 'general', channel => 'email',
             subject  => 'Your booking could not be made: your payment is refunded',
-            message  => "Your payment went through after the seats we held for you were let go, and the class "
-                      . "has no room left, so you are not booked. Your payment of $sum is being refunded in full; "
+            message  => "Your payment went through after the seats we held for you were let go, and "
+                      . "$WHY{$reason}[0], so you are not booked. Your payment of $sum is being refunded in full; "
                       . 'it can take 5-10 business days to show on your statement.',
             metadata => $meta,
         } );
         Registry::DAO::Notification->alert_admins( $db,
             'A paid booking could not be made: it is being refunded',
-            sprintf( 'Payment %s (%s) was made after its seat hold lapsed, and the class had no room left for %d '
-                . 'seats. Nothing was booked. Registry is refunding the payment in full; the platform fee is kept.',
+            sprintf( "Payment %s (%s) was made after its seat hold lapsed, and $WHY{$reason}[1]. Nothing was "
+                . 'booked. Registry is refunding the payment in full; the platform fee is kept.',
                 $payment->id, $sum, $seats ),
             $meta );
     }
@@ -121,8 +139,10 @@ class Registry::DAO::WorkflowSteps::CompleteBooking :isa(Registry::DAO::Workflow
     # attempt puts the run before the admins.
     method _refund ( $db, $run, $refund ) {
         my $payment = Registry::DAO::Payment->find( $db, { id => $refund->{payment_id} } );
-        my $told = sprintf 'The class filled up before your payment went through, so you are not booked. '
-            . 'Your payment of $%.2f is being refunded in full.', $refund->{amount_cents} / 100;
+        my $why  = $WHY{ $refund->{reason} // 'full' } // $WHY{full};
+        my $told = sprintf 'Your payment went through after %s, so you are not booked. '
+            . 'Your payment of $%.2f is being refunded in full.',
+            $why->[0] =~ s/\Athe class has/the class had/r, $refund->{amount_cents} / 100;
         # From a resolved promise, so a guard's die is a rejection handled below.
         return Mojo::Promise->resolve->then( sub {
             $payment->refund_async( $db, { $refund->%{qw( amount_cents idempotency_key )} } );
