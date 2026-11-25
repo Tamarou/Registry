@@ -159,8 +159,8 @@ The blueprint creates:
 After deployment:
 
 1. Visit your app URL to see the marketing page
-2. Click "Start Your Free Trial" to begin tenant onboarding
-3. Complete the 5-step registration process
+2. Click "Start Your Tiny Art Empire" to begin tenant onboarding
+3. Complete the registration steps
 4. Access your tenant dashboard
 
 ### Demo Flow
@@ -168,15 +168,14 @@ After deployment:
 #### Marketing Landing Page
 - Visit: `https://your-app-name.onrender.com`
 - Professional marketing page with features and pricing
-- Clear call-to-action for starting trial
+- Clear call-to-action for signing up
 
-#### Tenant Onboarding (5 steps)
+#### Tenant Onboarding
 1. **Welcome** - Introduction and process overview
-2. **Profile** - Organization details and subdomain selection  
+2. **Profile** - Organization details and subdomain selection
 3. **Team Setup** - Add admin user and team members
-4. **Review** - Confirm all details before payment
-5. **Payment** - Stripe integration for subscription setup
-6. **Completion** - Success page with next steps
+4. **Review** - Confirm the details and accept a platform offer (on day one, Solo: $0 plus 2.5% of each sale). There is no card or subscription step: accepting the offer creates the tenant.
+5. **Completion** - Success page with next steps
 
 #### Tenant Features
 - Multi-child registration workflows
