@@ -135,6 +135,21 @@ subtest 'full refund ends entitlement partial refund recorded' => sub {
     is $after->ended_reason, "re_full_$$", 'naming the Stripe refund';
     is $occurrence->free_units($adb), 4, 'and its 2 seats are free';
     is $after->refunded_cents($adb), 4000, 'the refund is recorded against it';
+
+    my $part = payment( 4000, "pi_part_$$" );
+    my ( $p, $seats ) = booking( $part, 4000, 2 );
+    deliver( refund_event( 'refund.created', $ACCOUNT_A, refund( "re_part1_$$", "pi_part_$$", 1500 ) ) );
+    is reread($p)->state, 'active', 'a partial refund leaves it in effect';
+    is $seats->free_units($adb), 2, 'holding its seats';
+    is_deeply $adb->query( 'SELECT amount_cents, stripe_refund_id FROM entitlement_refunds WHERE entitlement_id = ?',
+        $p->id )->hashes->to_array, [ { amount_cents => 1500, stripe_refund_id => "re_part1_$$" } ],
+        'and is recorded with its amount and Stripe refund id';
+
+    deliver( refund_event( 'refund.created', $ACCOUNT_A, refund( "re_part2_$$", "pi_part_$$", 2500 ) ) );
+    is reread($p)->state,        'refunded',   'a later refund that makes it full ends it';
+    is reread($p)->ended_reason, "re_part2_$$", 'naming that refund';
+    is $p->refunded_cents($adb), 4000, 'the two refunds sum with no double count';
+    is $seats->free_units($adb), 4, 'and its seats are free';
 };
 
 subtest 'entitlement-stripe-move admits admin and refuses staff' => sub {
