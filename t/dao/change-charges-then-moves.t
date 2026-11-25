@@ -291,7 +291,13 @@ subtest 'extension bounded however often the charge starts' => sub {
     # no payment is ever named on the run.
     $db->query( 'UPDATE registry.tenants SET stripe_charges_enabled = false WHERE slug = ?', $SLUG );
     my $refused = held_run( booking( $version, $from ), $to );
-    my @errors  = map { reload($refused)->process( $studio, step('pay'), {} )->{errors} } 1 .. 4;
+    my @warned;
+    my @errors = do {
+        local $SIG{__WARN__} = sub { push @warned, @_ };
+        map { reload($refused)->process( $studio, step('pay'), {} )->{errors} } 1 .. 4;
+    };
+    is scalar( grep { /\Q$SLUG\E' is not Stripe Connect ready/ } @warned ), 4,
+        'each refused post tells the operator which tenant';
     $db->query( 'UPDATE registry.tenants SET stripe_charges_enabled = true WHERE slug = ?', $SLUG );
     ok !grep( { !$_ } @errors ), 'every post is refused';
     ok !defined reload($refused)->data->{owed_payment_id}, 'and starts no payment';
@@ -358,6 +364,11 @@ subtest 'paid change of ended entitlement needs admin' => sub {
         'and the fee is kept, not refunded';
     is $minion->jobs( { tasks => [ grep { /refund/ } keys $minion->tasks->%* ] } )->total, 0,
         'with no refund job queued';
+
+    my $id = $minion->enqueue( continue_workflow_run => [ { tenant => $SLUG, run_id => $run->id } ],
+        { attempts => 1 } );
+    $minion->perform_jobs( { id => $id } );
+    is reload($run)->data->{__driver}{state}, 'halted', 'its last attempt halts the run for an admin';
 };
 
 # The fee payment, completed as the Connect webhook completes it.
