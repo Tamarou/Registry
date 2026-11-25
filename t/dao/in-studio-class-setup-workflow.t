@@ -180,6 +180,32 @@ subtest 'invalid capacity refused' => sub {
     }
 };
 
+subtest 'an offer of another class is refused' => sub {
+    my %a = terms( 'offer-basics' => { offer_name => 'Wheel drop-in' } );
+    my ( $first ) = walk( admin => %a );
+    my $v = Registry::DAO::OfferVersion->find( $tdb, { id => $first->data->{published_offer_version_id} // '' } )
+        or return fail 'nothing published';
+    my $count  = sub { $tdb->query( 'SELECT count(*) FROM offer_versions WHERE offer_id = ?', $v->offer_id )->array->[0] };
+    my $before = $count->();
+
+    my %b = terms( 'offer-basics' => { offer_id => $v->offer_id } );
+    my ( $run, $result ) = walk( admin => %b );
+    like errors_of( $result->{'offer-basics'} ), qr/Choose one of the offers for this class/,
+        'a new version of another class\'s offer is refused';
+    ok !$run->data->{offer_basics}, 'the run holds no offer';
+    is $count->(), $before, 'no version of that offer is drafted or published';
+    is Registry::DAO::Offer->find( $tdb, { id => $v->offer_id } )->current_version($tdb)->class_project_id,
+        $v->class_project_id, 'it still covers its own class';
+
+    my $listed = $workflow->get_step( $tdb, { slug => 'offer-basics' } )->prepare_template_data( $tdb, $run );
+    ok !grep( { $_->id eq $v->offer_id } $listed->{offers}->@* ), 'and offer-basics does not list it for this class';
+    my ( $own ) = walk( admin => %a, class => { class_mode => 'existing', class_project_id => $v->class_project_id },
+        'offer-basics' => { offer_id => $v->offer_id } );
+    ok $own->data->{published_offer_version_id}, 'its own class publishes a new version of it' or return;
+    $listed = $workflow->get_step( $tdb, { slug => 'offer-basics' } )->prepare_template_data( $tdb, $own );
+    ok grep( { $_->id eq $v->offer_id } $listed->{offers}->@* ), 'where offer-basics lists it';
+};
+
 subtest 'location required and from this tenant' => sub {
     for my $case ( [ blank => '' ], [ 'not an id' => 'nope' ], [ unknown => '00000000-0000-0000-0000-00000000abcd' ],
                    [ 'another schema\'s' => $elsewhere->id ] ) {

@@ -244,26 +244,31 @@ subtest 'a solo version that is no offer to tenants is refused' => sub {
         'percentage-of-sales-payment' => { percentage_of_sales => 'offered', rate_percent => '2.4' },
         price(0),
     );
-    for my $case (
-        [ 'on another resource', { 'offer-basics' => { $solo{'offer-basics'}->%*,
-            resource_id => '00000000-0000-0000-0001-000000000002' } } ],    # email sending
-        [ 'without its percentage plan', {
+    # A new version sells what the current one does, so offer-basics refuses
+    # moving Solo to another resource before publish is reached.
+    my $moved = eval {
+        publish_offer( $dao, 'registry', $admin, { %solo, 'offer-basics' => { $solo{'offer-basics'}->%*,
+            resource_id => '00000000-0000-0000-0001-000000000002' } } );    # email sending
+        1;
+    };
+    ok !$moved, 'a solo version on another resource is refused';
+    like $@, qr/\Apublish_offer: offer-basics refused: Choose one of the offers for this resource/, 'at offer-basics';
+    is_deeply current_versions( $solo_id, $rdb ), [ $before->version ], 'the old version stays current';
+
+    my @logged;
+    my $ok = eval {
+        local $SIG{__WARN__} = sub { push @logged, @_ };
+        publish_offer( $dao, 'registry', $admin, { %solo,
             'one-time-payment'            => { one_time => 'offered' },
-            'percentage-of-sales-payment' => { percentage_of_sales => 'declined' } } ],
-    ) {
-        my @logged;
-        my $ok = eval {
-            local $SIG{__WARN__} = sub { push @logged, @_ };
-            publish_offer( $dao, 'registry', $admin, { %solo, $case->[1]->%* } );
-            1;
-        };
-        ok !$ok, "a solo version $case->[0] is refused";
-        like $@, qr/\Apublish_offer: publish refused: Publishing this would leave signup with no platform offer/,
-            'at publish, saying why';
-        unlike $@, qr/[0-9a-f]{8}-[0-9a-f]{4}-/, 'with no id on the screen';
-        like "@logged", qr/no current published platform offer to tenants/, 'the database refused it';
-        is_deeply current_versions( $solo_id, $rdb ), [ $before->version ], 'the old version stays current';
-    }
+            'percentage-of-sales-payment' => { percentage_of_sales => 'declined' } } );
+        1;
+    };
+    ok !$ok, 'a solo version without its percentage plan is refused';
+    like $@, qr/\Apublish_offer: publish refused: Publishing this would leave signup with no platform offer/,
+        'at publish, saying why';
+    unlike $@, qr/[0-9a-f]{8}-[0-9a-f]{4}-/, 'with no id on the screen';
+    like "@logged", qr/no current published platform offer to tenants/, 'the database refused it';
+    is_deeply current_versions( $solo_id, $rdb ), [ $before->version ], 'the old version stays current';
 
     ok !eval { $rdb->query( 'UPDATE registry.offer_versions SET superseded_at = now() WHERE id = ?', $before->id ); 1 },
         'retiring solo outright is refused';

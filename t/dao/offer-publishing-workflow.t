@@ -13,6 +13,7 @@ use Test::Registry::Fixtures;
 use Test::Registry::Helpers qw( import_all_workflows join_tenant publish_offer platform_solo_offer_version_id );
 use Registry::DAO;
 use Registry::DAO::Workflow;
+use Registry::DAO::Offer;
 use Registry::DAO::OfferVersion;
 use Registry::DAO::Resource;
 use Registry::Utility::WorkflowProcessor;
@@ -226,6 +227,37 @@ subtest 'foreign or missing resource stays with an error' => sub {
         ok !$r->data->{offer_basics}, 'and the run holds no offer';
     }
     is published_count(), $before, 'and nothing is published';
+};
+
+subtest 'an offer of another resource is refused' => sub {
+    my $kiln = Test::Registry::Fixtures::create_resource( $tdb, { name => 'Kiln shelf', kind => 'finite', capacity => 4 } );
+    my ( $first ) = walk( $tenant_dao, $admin, terms( 'offer-basics' => { offer_name => 'Wheel drop-in' } ) );
+    my $offer_id = Registry::DAO::OfferVersion->find( $tdb, { id => $first->data->{published_offer_version_id} } )->offer_id;
+    my $count    = sub { $tdb->query( 'SELECT count(*) FROM offer_versions WHERE offer_id = ?', $offer_id )->array->[0] };
+    my $before   = $count->();
+
+    my ( $run, $result ) = walk( $tenant_dao, $admin,
+        terms( 'offer-basics' => { resource_id => $kiln->id, offer_id => $offer_id } ) );
+    like errors_of( $result->{'offer-basics'} ), qr/Choose one of the offers for this resource/,
+        'a new version of an offer selling another resource is refused';
+    ok !$run->data->{offer_basics}, 'the run holds no offer';
+    is $count->(), $before, 'and no version of that offer is drafted or published';
+    is Registry::DAO::Offer->find( $tdb, { id => $offer_id } )->current_version($tdb)->resource_id, $seats->id,
+        'it still sells its own resource';
+
+    # A class offer is never listed where a resource is chosen.
+    my ($class) = new_class('Listed class');
+    my ( $class_run ) = walk( $tenant_dao, $admin, terms(
+        'resource'      => { resource_mode => 'class', class_project_id => $class },
+        'offer-basics'  => { resource_id => undef, offer_name => 'Class drop-in' },
+        'expiry-policy' => { expiry => 'end_of_occurrence' } ) );
+    my $class_offer = Registry::DAO::OfferVersion->find( $tdb, { id => $class_run->data->{published_offer_version_id} // '' } );
+    ok $class_offer, 'a class offer is published' or return;
+    my $listed = $tenant_dao->find( Workflow => { slug => 'offer-publishing' } )
+        ->get_step( $tdb, { slug => 'offer-basics' } )->prepare_template_data( $tdb, $run );
+    my %ids = map { $_->id => 1 } $listed->{offers}->@*;
+    ok $ids{$offer_id}, 'offer-basics lists an offer selling a resource';
+    ok !$ids{ $class_offer->offer_id }, 'but not a class offer';
 };
 
 subtest 'invalid offer terms stay with an error' => sub {
