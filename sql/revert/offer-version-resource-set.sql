@@ -7,41 +7,7 @@ BEGIN;
 
 SET client_min_messages = 'warning';
 
-DO $$
-DECLARE
-    s name;
-    n bigint;
-BEGIN
-    FOR s IN
-        SELECT 'registry'::name
-        UNION ALL
-        SELECT slug::name FROM registry.tenants WHERE slug != 'registry'
-    LOOP
-        CONTINUE WHEN to_regclass(format('%I.offer_version_resources', s)) IS NULL;
-        EXECUTE format('SELECT count(*) FROM %I.offer_version_resources', s) INTO n;
-        IF n > 0 THEN
-            RAISE EXCEPTION 'cannot revert offer-version-resource-set: schema % has offer versions '
-                            'that buy a set of resources', s;
-        END IF;
-
-        EXECUTE format('DROP TABLE %I.offer_version_resources', s);
-        EXECUTE format('DROP TRIGGER offer_versions_require_purchase ON %I.offer_versions', s);
-        EXECUTE format($f$
-            ALTER TABLE %1$I.offer_versions
-                DROP CONSTRAINT offer_versions_buys_resource_or_class,
-                ADD CONSTRAINT offer_versions_buys_resource_or_class
-                    CHECK (num_nonnulls(resource_id, class_project_id) = 1)
-        $f$, s);
-        -- A tenant cloned since deploy carries its own copies of the new functions.
-        IF s != 'registry' THEN
-            EXECUTE format('DROP FUNCTION IF EXISTS %I.offer_version_resource_set_guard()', s);
-            EXECUTE format('DROP FUNCTION IF EXISTS %I.offer_version_requires_purchase()', s);
-        END IF;
-    END LOOP;
-END $$;
-
-DROP FUNCTION registry.offer_version_resource_set_guard();
-DROP FUNCTION registry.offer_version_requires_purchase();
+-- registry's guards first: the tenant copies below are rebuilt from them.
 
 CREATE OR REPLACE FUNCTION registry.entitlement_one_platform_term() RETURNS trigger AS $t$
 BEGIN
@@ -113,4 +79,65 @@ BEGIN
 END;
 $t$ LANGUAGE plpgsql;
 
-COMMIT
+
+DO $$
+DECLARE
+    s name;
+    n bigint;
+    draft uuid;
+    fn text;
+BEGIN
+    FOR s IN
+        SELECT 'registry'::name
+        UNION ALL
+        SELECT slug::name FROM registry.tenants WHERE slug != 'registry'
+    LOOP
+        CONTINUE WHEN to_regclass(format('%I.offer_version_resources', s)) IS NULL;
+        EXECUTE format('SELECT count(*) FROM %I.offer_version_resources', s) INTO n;
+        IF n > 0 THEN
+            RAISE EXCEPTION 'cannot revert offer-version-resource-set: schema % has offer versions '
+                            'that buy a set of resources', s;
+        END IF;
+        -- An empty set draft would fail the restored check with no name; say which.
+        EXECUTE format('SELECT id FROM %I.offer_versions
+                         WHERE resource_id IS NULL AND class_project_id IS NULL LIMIT 1', s) INTO draft;
+        IF draft IS NOT NULL THEN
+            RAISE EXCEPTION 'cannot revert offer-version-resource-set: offer version % in schema % '
+                            'buys neither a resource nor a class (an empty set draft): delete it or '
+                            'give it a resource first', draft, s;
+        END IF;
+
+        EXECUTE format('DROP TABLE %I.offer_version_resources', s);
+        EXECUTE format('DROP TRIGGER offer_versions_require_purchase ON %I.offer_versions', s);
+        EXECUTE format($f$
+            ALTER TABLE %1$I.offer_versions
+                DROP CONSTRAINT offer_versions_buys_resource_or_class,
+                ADD CONSTRAINT offer_versions_buys_resource_or_class
+                    CHECK (num_nonnulls(resource_id, class_project_id) = 1)
+        $f$, s);
+        -- A tenant cloned since deploy carries its own copies of the new functions.
+        IF s != 'registry' THEN
+            EXECUTE format('DROP FUNCTION IF EXISTS %I.offer_version_resource_set_guard()', s);
+            EXECUTE format('DROP FUNCTION IF EXISTS %I.offer_version_requires_purchase()', s);
+            EXECUTE format('DROP FUNCTION IF EXISTS %I.offer_version_resources_no_truncate()', s);
+            -- Its copies of the guards name offer_version_resources unqualified,
+            -- and PL/pgSQL plans the whole IF, so each is rebuilt from registry's
+            -- restored body the way clone_schema copies it.
+            FOREACH fn IN ARRAY ARRAY['entitlement_one_platform_term', 'offer_versions_keep_platform_offer',
+                                      'resources_keep_platform_offer_name']
+            LOOP
+                CONTINUE WHEN to_regprocedure(format('%I.%I()', s, fn)) IS NULL;
+                EXECUTE replace(
+                    replace(pg_get_functiondef(format('registry.%I()', fn)::regprocedure),
+                            format('FUNCTION registry.%s()', fn), format('FUNCTION %I.%I()', s, fn)),
+                    'registry.', '');
+            END LOOP;
+        END IF;
+    END LOOP;
+END $$;
+
+DROP FUNCTION registry.offer_version_resource_set_guard();
+DROP FUNCTION registry.offer_version_requires_purchase();
+DROP FUNCTION registry.offer_version_resources_no_truncate();
+
+COMMIT;

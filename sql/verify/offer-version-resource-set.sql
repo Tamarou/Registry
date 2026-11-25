@@ -20,6 +20,9 @@ BEGIN
                            WHERE tgrelid = to_regclass(format('%I.offer_version_resources', s))
                              AND tgname = 'offer_version_resources_guard')
            OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                           WHERE tgrelid = to_regclass(format('%I.offer_version_resources', s))
+                             AND tgname = 'offer_version_resources_no_truncate')
+           OR NOT EXISTS (SELECT 1 FROM pg_trigger
                            WHERE tgrelid = to_regclass(format('%I.offer_versions', s))
                              AND tgname = 'offer_versions_require_purchase')
         THEN

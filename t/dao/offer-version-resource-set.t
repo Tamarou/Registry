@@ -203,4 +203,38 @@ subtest 'email sending in a set lifts the cap' => sub {
     ok !defined Registry::Job::SendNotifications->send_allowance( $db, 'bundled_mail' ), 'uncapped by the set';
 };
 
+subtest 'truncating a published set refused' => sub {
+    throws_ok { $db->query('TRUNCATE offer_version_resources') }
+        qr/cannot be truncated/, 'refused while a published version has a set';
+    ok $db->query('SELECT count(*) FROM offer_version_resources')->array->[0], 'and every member stays';
+
+    my $tenant = new_tenant('draft_sets_only');
+    my $own    = $tenant->dao($dao)->db;
+    my @r      = map { Registry::DAO::Resource->create( $own, { name => "draft $_", kind => 'unbounded' } ) } 1, 2;
+    Registry::DAO::Offer->create( $own, { name => 'Draft bundle' } )->draft( $own, set_terms( [ map { $_->id } @r ] ) );
+    lives_ok { $own->query('TRUNCATE offer_version_resources') } 'a schema with only draft sets may truncate';
+};
+
+# Pinned as it stands: a set's other members are where a change may move a
+# seat. Day-one sets are unbounded run rights with no change policy, so
+# nothing offers this yet; a set that sells seats revisits it.
+subtest 'a set entitlements change targets are its other members' => sub {
+    my $tenant = new_tenant('set_seats');
+    my @seat   = map { Registry::DAO::Resource->create( $db, { name => "set seat $_", kind => 'finite', capacity => 4 } ) }
+        1 .. 3;
+    my $v = Registry::DAO::Offer->create( $db, { name => 'Seat bundle' } )
+        ->draft( $db, set_terms( [ map { $_->id } @seat ], price_cents => 0 ) )->publish($db);
+    my $held = Registry::DAO::Entitlement->grant( $db, {
+        holder_tenant_id => $tenant->id, offer_version_id => $v->id, payment_plan_id => 'pay',
+        starts_at        => $PAST,       resource_id      => $seat[1]->id, units => 1,
+    } );
+    is_deeply ids( $held->change_targets($db) ), ids( [ @seat[ 0, 2 ] ] ), 'the members it holds no unit of';
+
+    my $unheld = Registry::DAO::Entitlement->create( $db, {
+        holder_tenant_id => new_tenant('set_rights')->id, offer_version_id => $v->id,
+        payment_plan_id  => 'pay', starts_at => $PAST,
+    } );
+    is_deeply ids( $unheld->change_targets($db) ), ids( \@seat ), 'every member when it holds no unit';
+};
+
 done_testing;

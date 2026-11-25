@@ -44,6 +44,24 @@ BEGIN
 END;
 $t$ LANGUAGE plpgsql;
 
+-- TRUNCATE fires no row trigger, so it would empty a published version's set
+-- unseen; refuse it while any published version has one.
+CREATE FUNCTION registry.offer_version_resources_no_truncate() RETURNS trigger AS $t$
+DECLARE
+    published boolean;
+BEGIN
+    EXECUTE format(
+        'SELECT EXISTS (SELECT 1 FROM %1$I.offer_version_resources s
+                          JOIN %1$I.offer_versions v ON v.id = s.offer_version_id
+                         WHERE v.published_at IS NOT NULL)', TG_TABLE_SCHEMA) INTO published;
+    IF published THEN
+        RAISE EXCEPTION 'offer_version_resources holds the set of a published offer version: '
+                        'it cannot be truncated. Publish a new version instead.';
+    END IF;
+    RETURN NULL;
+END;
+$t$ LANGUAGE plpgsql;
+
 -- At publish (checked at commit, so a draft's members may follow its row) a
 -- version buys exactly one thing: absence is not zero.
 CREATE FUNCTION registry.offer_version_requires_purchase() RETURNS trigger AS $t$
@@ -172,6 +190,11 @@ BEGIN
             CREATE TRIGGER offer_version_resources_guard
                 BEFORE INSERT OR UPDATE OR DELETE ON %I.offer_version_resources
                 FOR EACH ROW EXECUTE FUNCTION registry.offer_version_resource_set_guard()
+        $f$, s);
+        EXECUTE format($f$
+            CREATE TRIGGER offer_version_resources_no_truncate
+                BEFORE TRUNCATE ON %I.offer_version_resources
+                FOR EACH STATEMENT EXECUTE FUNCTION registry.offer_version_resources_no_truncate()
         $f$, s);
         EXECUTE format($f$
             CREATE CONSTRAINT TRIGGER offer_versions_require_purchase
