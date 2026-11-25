@@ -700,7 +700,6 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
 
         my $rows = $db->query( <<~'SQL' )->hashes->to_array;
             SELECT t.id, t.slug, t.name, t.created_at, t.canonical_domain,
-                   t.billing_status, t.trial_ends_at,
                    t.stripe_connect_account_id,
                    t.stripe_charges_enabled,
                    t.stripe_details_submitted,
@@ -802,8 +801,6 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         my $tenants = $db->query( <<~'SQL' )->hashes->to_array;
             SELECT t.slug,
                    t.name,
-                   t.billing_status,
-                   t.stripe_subscription_id,
                    EXISTS (
                        SELECT 1 FROM information_schema.schemata s
                         WHERE s.schema_name = t.slug
@@ -883,12 +880,6 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
             fees_cents => $total,
             unrecorded => $unrecorded,
             unreadable => \@unreadable,
-
-            # #426: a billing_status of past_due or incomplete with nothing
-            # surfacing it. Surfaced here.
-            arrears => [ grep {
-                ( $_->{billing_status} // '' ) =~ /^(past_due|incomplete)$/
-            } @sorted ],
         };
     }
 
@@ -1041,9 +1032,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         # Callers may pass a full profile hash; extra keys (billing_*, admin_*,
         # subscription, etc.) must not reach the INSERT.
         my %TENANT_COLUMNS = map { $_ => 1 } qw(
-            name slug canonical_domain stripe_subscription_id
-            billing_status trial_ends_at subscription_started_at
-            magic_link_expiry_hours
+            name slug canonical_domain magic_link_expiry_hours
             stripe_connect_account_id stripe_charges_enabled stripe_details_submitted
             created_from_ip
         );

@@ -103,7 +103,7 @@ subtest 'Full tenant signup integration test' => sub {
 
     is $payment_config->{plan_name}, 'Registry Enterprise', 'Payment uses selected plan name';
     is $payment_config->{monthly_amount}, 0, 'Payment uses selected plan amount';
-    is $payment_config->{trial_days}, 0, 'An offer version declares no trial';
+    ok !exists $payment_config->{$_}, "An offer version declares no $_" for qw( trial_days billing_cycle );
     is $payment_config->{formatted_price}, 'Free', 'Payment formats price correctly';
     is $payment_config->{description}, '$0 a month, 4% of each payment you take',
         'Payment describes the selected version from its own terms';

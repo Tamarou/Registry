@@ -31,11 +31,10 @@ $t->app->log->unsubscribe('message');
 $t->app->log->level('info');
 $t->app->log->on( message => sub ( $log, $level, @lines ) { push @logs, [ $level, "@lines" ] } );
 
-# A tenant as the old subscription billing would have known it.
+# A tenant the old subscription events name by id.
 my $tenant_id = $db->query(
-    q{INSERT INTO registry.tenants (name, slug, stripe_customer_id, stripe_subscription_id, billing_status)
-      VALUES (?, ?, ?, ?, 'active') RETURNING id},
-    "Billing Probe $$", "billing_probe_$$", "cus_probe_$$", "sub_probe_$$" )->hash->{id};
+    q{INSERT INTO registry.tenants (name, slug) VALUES (?, ?) RETURNING id},
+    "Billing Probe $$", "billing_probe_$$" )->hash->{id};
 
 sub tenants () { $db->query('SELECT * FROM registry.tenants ORDER BY id')->hashes->to_array }
 

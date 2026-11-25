@@ -156,12 +156,10 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
             plan_name             => $offer->{name},
             monthly_amount        => $amount,
             currency              => lc $offer->{currency},
-            trial_days            => 0,
             revenue_share_percent => $percent,
             description           => format_price( $amount, $offer->{currency} )
                 . " a month, $percent% of each payment you take",
             features              => $self->_baseline_features,
-            billing_cycle         => 'monthly',
             formatted_price       => $amount
                 ? format_price( $amount, $offer->{currency}, suffix => '/month' )
                 : 'Free',
@@ -333,13 +331,6 @@ class Registry::DAO::WorkflowSteps::TenantPayment :isa(Registry::DAO::WorkflowSt
         # The new tenant accepts its chosen offer from the moment it exists.
         $provision_data{platform_entitlement} =
             { offer_version_id => $offer->{id}, payment_plan_id => $offer->{plan_id} };
-
-        # No Stripe subscription: the offer has no monthly base and the
-        # platform is paid out of the revenue share on each customer payment.
-        # The tenant is live, so 'active' -- not 'trial', which would promise an
-        # end date that never arrives.
-        $provision_data{billing_status}          = 'active';
-        $provision_data{subscription_started_at} = DateTime->now->iso8601();
 
         my $tenant;
         try { $tenant = Registry::DAO::Tenant->provision( $db, \%provision_data ) }

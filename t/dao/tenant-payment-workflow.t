@@ -20,8 +20,8 @@ my $db = $dao->db;
 
 # Create test tenant with schema cloning  
 $db->query(q{
-    INSERT INTO registry.tenants (id, name, slug, billing_status)
-    VALUES ('00000000-0000-4000-8000-000000000001', 'Test Tenant', 'test-tenant', 'active')
+    INSERT INTO registry.tenants (id, name, slug)
+    VALUES ('00000000-0000-4000-8000-000000000001', 'Test Tenant', 'test-tenant')
 });
 $db->query("SET search_path TO tenant_00000000_0000_4000_8000_000000000001, registry, public");
 
@@ -54,7 +54,7 @@ subtest 'TenantPayment workflow step creation' => sub {
 };
 
 subtest 'Subscription configuration' => sub {
-    plan tests => 6;
+    plan tests => 7;
 
     my $config = $payment_step->get_subscription_config($db, $no_plan_run);
 
@@ -62,7 +62,7 @@ subtest 'Subscription configuration' => sub {
     is($config->{plan_name}, 'Solo', 'Plan name correct');
     is($config->{monthly_amount}, 0, 'Monthly amount is $0 (Solo tier)');
     is($config->{currency}, 'usd', 'Currency is USD');
-    is($config->{trial_days}, 0, 'No trial period (Solo is already free)');
+    ok(!exists $config->{$_}, "No $_: the platform runs no subscription") for qw( trial_days billing_cycle );
     ok($config->{features} && @{$config->{features}} > 0, 'Features list provided');
 };
 
@@ -230,8 +230,7 @@ sub signup_run ($slug, %extra) {
 
 sub tenant_row ($slug) {
     return $db->query( q{
-        SELECT stripe_subscription_id, billing_status, trial_ends_at
-          FROM registry.tenants WHERE slug = ?
+        SELECT * FROM registry.tenants WHERE slug = ?
     }, $slug )->hash;
 }
 
@@ -257,9 +256,9 @@ subtest 'signup provisions with no card or subscription' => sub {
     ok !exists $data->{payment_setup}, 'and no card setup';
 
     my $tenant = tenant_row('nocard');
-    is $tenant->{stripe_subscription_id}, undef, 'the tenant has no Stripe subscription';
-    is $tenant->{billing_status}, 'active', 'it is live, not on a trial';
-    is $tenant->{trial_ends_at}, undef, 'with no trial end';
+    ok $tenant, 'the tenant row exists';
+    ok !exists $tenant->{$_}, "and carries no $_: the platform runs no subscription"
+        for qw( stripe_subscription_id billing_status trial_ends_at );
 };
 
 subtest 'client card or subscription fields ignored' => sub {
@@ -289,9 +288,9 @@ subtest 'client card or subscription fields ignored' => sub {
         for qw( setup_intent_id payment_method_id payment_setup ), 'subscription[stripe_subscription_id]';
 
     my $tenant = tenant_row('clientcard');
-    is $tenant->{stripe_subscription_id}, undef, 'no client-chosen subscription reaches the tenant';
-    is $tenant->{billing_status}, 'active', 'it is not put on a trial';
-    is $tenant->{trial_ends_at}, undef, 'with no trial end';
+    ok $tenant, 'the tenant row exists';
+    ok !exists $tenant->{$_}, "and no client-chosen $_ reaches it"
+        for qw( stripe_subscription_id billing_status trial_ends_at );
 };
 
 # Signup takes no card, so an offer with a monthly base is not one it lists.

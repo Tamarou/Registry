@@ -304,8 +304,7 @@ subtest 'tenant storefront serves at <slug>.localhost' => sub {
 # ---------------------------------------------------------------------------
 subtest 'tenant row is billable' => sub {
     my $tenant_row = $db->query(
-        q{SELECT billing_status, stripe_subscription_id
-          FROM registry.tenants WHERE slug = ?},
+        q{SELECT * FROM registry.tenants WHERE slug = ?},
         $slug
     )->hash;
     ok $tenant_row, 'tenant row accessible for billing assertions';
@@ -313,11 +312,8 @@ subtest 'tenant row is billable' => sub {
     is platform_entitlement_terms( $db, $slug )->{id}, $SOLO_V1,
         'tenant holds an entitlement to the platform offer that is on sale';
 
-    is $tenant_row->{billing_status}, 'active',
-        'billing_status is "active" -- there is no trial to end';
-
-    is $tenant_row->{stripe_subscription_id}, undef,
-        'no Stripe subscription: a $0 plan has nothing to subscribe to';
+    ok !exists $tenant_row->{$_}, "no $_: the entitlement is what it holds, not a subscription"
+        for qw( billing_status stripe_subscription_id trial_ends_at );
 };
 
 $test_db->cleanup_test_database;

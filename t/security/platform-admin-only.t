@@ -288,8 +288,6 @@ subtest 'the revenue screen is behind the guard, and admits its gaps' => sub {
     my $earning = Test::Registry::Fixtures::create_tenant( $db, {
         name => 'Revenue Screen Studio', slug => 'revenue_screen' } );
     give_tenant_terms( $db, 'revenue_screen', { rate => '0.025' } );
-    $db->query( 'UPDATE registry.tenants SET billing_status = ? WHERE id = ?',
-        'past_due', $earning->id );
 
     my $payer = Registry::DAO::User->create( $db, {
         username => 'screen_payer', name => 'Payer', user_type => 'parent',
@@ -335,7 +333,7 @@ subtest 'the revenue screen is behind the guard, and admits its gaps' => sub {
       ->content_like( qr/\$2\.50/, 'the recorded fee is shown as money' )
       ->content_like( qr/id="unrecorded-warning"/,
           'the unrecorded charge is declared, so the total reads as a floor' )
-      ->content_like( qr/id="arrears"/, 'and the past_due tenant is surfaced' )
+      ->content_unlike( qr/id="arrears"/, 'and no billing arrears are listed: the platform bills no subscription' )
       ->content_like( qr/data-rate="2\.5/,
           'with the rate read from the plan row rather than a constant' )
       ->content_like( qr/id="unreadable-warning"/,

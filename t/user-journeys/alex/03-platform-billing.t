@@ -185,8 +185,7 @@ subtest 'platform billing is solo not a subscription' => sub {
     is $terms->{amount_cents}, 0,      'Solo has no monthly base to subscribe to';
     is $terms->{fraction},     0.025,  'Solo bills 2.5% of each sale';
 
-    is $db->query( q{SELECT stripe_subscription_id FROM registry.tenants WHERE slug = ?},
-        $slug )->hash->{stripe_subscription_id}, undef,
+    ok !exists $db->query( q{SELECT * FROM registry.tenants WHERE slug = ?}, $slug )->hash->{stripe_subscription_id},
         'no Stripe subscription bills the tenant';
 };
 

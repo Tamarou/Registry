@@ -49,25 +49,6 @@
         </div>
     </div>
 
-    %# Arrears first: #426 notes a billing_status of past_due or incomplete with
-    %# nothing surfacing it anywhere.
-    % if (my @arrears = @{ $revenue->{arrears} || [] }) {
-        <div class="alert-grid mb-8" id="arrears">
-            <h2>⚠️ <%= scalar @arrears %> in arrears</h2>
-            <div class="alert-items">
-                % for my $t (@arrears) {
-                    <div class="alert-item" data-slug="<%= $t->{slug} %>">
-                        <div>
-                            <strong><%= $t->{name} %></strong>
-                            <span class="text-secondary">(<%= $t->{slug} %>)</span>
-                        </div>
-                        <div class="alert-metrics"><%= $t->{billing_status} %></div>
-                    </div>
-                % }
-            </div>
-        </div>
-    % }
-
     % if (!@tenants) {
         <p>No tenants yet.</p>
     % } else {
@@ -75,7 +56,7 @@
             <thead>
                 <tr>
                     <th>Tenant</th><th>Plan</th><th>Rate</th>
-                    <th>Billing</th><th>Charges</th><th>Revenue share</th>
+                    <th>Charges</th><th>Revenue share</th>
                 </tr>
             </thead>
             <tbody>
@@ -94,7 +75,6 @@
                                 <span data-rate="none">no rate declared</span>
                             % }
                         </td>
-                        <td><%= $t->{billing_status} // 'unknown' %></td>
                         <td>
                             <%= $t->{charges} %>
                             % if ($t->{unrecorded}) {
