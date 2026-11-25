@@ -20,6 +20,7 @@ use Registry::DAO::Payment;
 use Registry::DAO::Resource;
 use Registry::DAO::Tenant;
 use Registry::DAO::User;
+use Registry::DAO::Workflow;
 
 local $ENV{STRIPE_WEBHOOK_SECRET}         = 'whsec_local_platform_refund_moves';
 local $ENV{STRIPE_CONNECT_WEBHOOK_SECRET} = 'whsec_local_connect_refund_moves';
@@ -150,6 +151,64 @@ subtest 'full refund ends entitlement partial refund recorded' => sub {
     is reread($p)->ended_reason, "re_part2_$$", 'naming that refund';
     is $p->refunded_cents($adb), 4000, 'the two refunds sum with no double count';
     is $seats->free_units($adb), 4, 'and its seats are free';
+};
+
+sub count ( $table, $tdb = $adb ) { $tdb->query("SELECT count(*) FROM $table")->array->[0] }
+
+sub processed_at ($event_id) {
+    $db->query( 'SELECT processed_at FROM registry.webhook_events WHERE stripe_event_id = ?', $event_id )
+        ->array->[0];
+}
+
+# A run of entitlement-stripe-move in $tdb for stored event $event_id, as the
+# endpoint creates one.
+sub move_run ( $event_id, $tdb = $adb ) {
+    return Registry::DAO::Workflow->find( $tdb, { slug => 'entitlement-stripe-move' } )
+        ->new_run( $tdb, { data => { stripe_event_id => $event_id } } );
+}
+
+sub drive ( $run, $slug = $A ) {
+    my $id = $minion->enqueue( continue_workflow_run => [ { tenant => $slug, run_id => $run->id } ] );
+    $minion->perform_jobs( { id => $id } );
+    return $minion->job($id)->info;
+}
+
+subtest 'stripe refunds apply regardless of policy once' => sub {
+    my $paid = payment( 3000, "pi_once_$$" );
+    my ( $e, $occurrence ) = booking( $paid, 3000, 1 );
+    is $e->offer_version($adb)->policies->{refund}{kind}, 'none', 'sold under refund policy none';
+    my ( $payments, $runs ) = ( count('payments'), count('workflow_runs') );
+
+    my $event = refund_event( 'refund.created', $ACCOUNT_A, refund( "re_once_$$", "pi_once_$$", 3000 ) );
+    $event->{id} = "evt_once_$$";
+    deliver($event);
+    Test::Registry::StripeWebhook::post_connect( $t, {%$event} )->status_is(200)->content_is('OK (duplicate)');
+    $minion->perform_jobs;
+
+    is reread($e)->state, 'refunded', 'the Stripe refund ends it despite the policy';
+    ok processed_at("evt_once_$$"), 'the stored event is marked applied';
+    is count('workflow_runs'), $runs + 1, 'the redelivery starts no second run';
+
+    is drive( move_run("evt_once_$$") )->{state}, 'finished', 'a retried run for the event finishes';
+    deliver( charge_refunded( $ACCOUNT_A, "pi_once_$$", refund( "re_once_$$", "pi_once_$$", 3000 ) ) );
+    is $e->refunded_cents($adb), 3000, 'the refund is applied once, however often it is reported';
+    is $adb->query( 'SELECT count(*) FROM entitlement_refunds WHERE entitlement_id = ?', $e->id )->array->[0], 1,
+        'with one record';
+    is reread($e)->ended_reason, "re_once_$$", 'and the entitlement keeps how it ended';
+
+    my $part = payment( 3000, "pi_once_part_$$" );
+    my ($p) = booking( $part, 3000, 1 );
+    my $partial = refund_event( 'refund.created', $ACCOUNT_A, refund( "re_once_part_$$", "pi_once_part_$$", 1000 ) );
+    $partial->{id} = "evt_once_part_$$";
+    deliver($partial);
+    is drive( move_run("evt_once_part_$$") )->{state}, 'finished', 'a retried run for the partial refund finishes';
+    deliver( charge_refunded( $ACCOUNT_A, "pi_once_part_$$", refund( "re_once_part_$$", "pi_once_part_$$", 1000 ) ) );
+    is $p->refunded_cents($adb), 1000, 'a partial refund reported again and retried counts once';
+    is reread($p)->state, 'active', 'and leaves it in effect';
+
+    is count('payments'), $payments + 1, 'no payment is created by the moves (one was made here, by the test)';
+    is $minion->jobs( { tasks => [qw( superseded_refund instalment_schedule )] } )->total, 0,
+        'and nothing is queued to charge or refund through Stripe';
 };
 
 subtest 'entitlement-stripe-move admits admin and refuses staff' => sub {
