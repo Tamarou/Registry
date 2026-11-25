@@ -275,6 +275,30 @@ subtest 'a solo version that is no offer to tenants is refused' => sub {
     like $@, qr/no current published platform offer to tenants/, 'by the database';
 };
 
+# offer-basics now refuses moving Solo to another resource, so this goes to
+# the database directly: a current percentage version on email sending is no
+# platform offer to tenants, and only the guard's resource-name filter says so.
+subtest 'the guard refuses a solo replacement on another resource' => sub {
+    my $rdb    = $dao->db;
+    my $solo   = Registry::DAO::Offer->find( $rdb, { id => '00000000-0000-0000-0002-000000000001' } );
+    my $before = $solo->current_version($rdb);
+    my $ok     = eval {
+        my $tx = $rdb->begin;
+        $solo->draft( $rdb, {
+            resource_id => '00000000-0000-0000-0001-000000000002',    # email sending
+            conditions  => [], price_cents => 0, currency => 'usd', units_per_acceptance => 1, per_booking_cap => 1,
+            payment_plans => [ { id => 'percentage_of_sales', kind => 'percentage_of_sales', fraction => '0.025' } ],
+            policies      => { refund => { kind => 'none' }, change => { kind => 'none' },
+                               use => { kind => 'none' }, expiry => { kind => 'never' } },
+        } )->publish($rdb);    # supersedes the current Solo version
+        $tx->commit;
+        1;
+    };
+    ok !$ok, 'publishing a solo version on email sending, superseding the last, is refused';
+    like $@, qr/no current published platform offer to tenants/, 'by the guard at commit';
+    is_deeply current_versions( $solo->id, $rdb ), [ $before->version ], 'the old version stays current';
+};
+
 # Signup and the guard find the platform offer by its resource's name, so
 # renaming that resource would retire every platform offer without a retirement.
 subtest 'the resource a platform offer to tenants is for keeps its name' => sub {
