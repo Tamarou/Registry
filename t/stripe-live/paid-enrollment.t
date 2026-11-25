@@ -160,6 +160,7 @@ my $workflow = Registry::DAO::Workflow->create($tdb, {
     name        => 'C3 Test Workflow',
     slug        => "c3-workflow-$$",
     description => 'Real-Stripe end-to-end workflow for I1-I7',
+    public      => 1,    # as summer-camp-registration; the gate refuses a workflow with no entry
 });
 
 my $payment_step_row = Registry::DAO::WorkflowStep->create($tdb, {
