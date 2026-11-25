@@ -18,7 +18,9 @@ class Registry::Job::ContinueWorkflowRun {
 
     # Drives the run and returns where it stopped; the caller finishes the job,
     # so a job that drives a run as part of its work can report its own result.
-    method run ( $job, $args ) {
+    # A caller that owns the run's retries passes alert_admins => 0: a halt is
+    # then logged, not put in front of the tenant's admins.
+    method run ( $job, $args, %opt ) {
         my ( $tenant, $run_id ) = ref $args eq 'HASH' ? $args->@{qw(tenant run_id)} : ();
         die "continue_workflow_run needs a tenant and a run_id\n"
             unless defined $tenant && defined $run_id && !ref $tenant && !ref $run_id;
@@ -35,7 +37,7 @@ class Registry::Job::ContinueWorkflowRun {
         my $lock = q{SELECT %s(hashtextextended('workflow_run:' || ?, 0))};
         $db->query( sprintf( $lock, 'pg_advisory_lock' ), $run_id );
         my $done;
-        try { $done = $self->_drive( $job, $db, $tenant, $run_id ) }
+        try { $done = $self->_drive( $job, $db, $tenant, $run_id, $opt{alert_admins} // 1 ) }
         catch ($e) {
             $db->query( sprintf( $lock, 'pg_advisory_unlock' ), $run_id );
             die $e;
@@ -44,7 +46,7 @@ class Registry::Job::ContinueWorkflowRun {
         return $done;
     }
 
-    method _drive ( $job, $db, $tenant, $run_id ) {
+    method _drive ( $job, $db, $tenant, $run_id, $alert_admins ) {
         my $run = Registry::DAO::WorkflowRun->find( $db, { id => $run_id } )
             or die "continue_workflow_run: run not found: $run_id in tenant $tenant\n";
 
@@ -75,12 +77,15 @@ class Registry::Job::ContinueWorkflowRun {
                 at      => Mojo::Date->new->to_datetime,
                 ( $halted ? ( state => 'halted' ) : () ),
             } } );
+            my $why = sprintf( 'Workflow run %s stopped at step %s after %d attempts: %s',
+                $run->id, $step->slug, $attempt, "$e" =~ s/\s+\z//r );
             # Nobody is waiting on the run, so its halt is put in front of
             # the tenant's admins rather than left on the run alone.
-            Registry::DAO::Notification->alert_admins( $db, 'A background task stopped: finish it by hand',
-                sprintf( 'Workflow run %s stopped at step %s after %d attempts: %s',
-                    $run->id, $step->slug, $attempt, "$e" =~ s/\s+\z//r ),
-                { workflow_run_id => $run->id, step => $step->slug } ) if $halted;
+            if ( $halted && $alert_admins ) {
+                Registry::DAO::Notification->alert_admins( $db, 'A background task stopped: finish it by hand',
+                    $why, { workflow_run_id => $run->id, step => $step->slug } );
+            }
+            elsif ($halted) { $job->app->log->error($why) }
             die $e;
         }
 

@@ -5,12 +5,14 @@ BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
 use 5.42.0;
 use warnings;
+use experimental qw(defer);
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Mojo;
 use Mojo::File qw(path);
 use YAML::XS qw(Load);
+use Registry::DAO::User;
 
 my $test_db = Test::Registry::DB->new;
 my $t       = Test::Registry::Mojo->new('Registry');
@@ -54,6 +56,41 @@ subtest 'the run driver takes the run to its last step' => sub {
 subtest 'the old executor and its command are gone' => sub {
     ok !eval { require Registry::Job::WorkflowExecutor; 1 }, 'Registry::Job::WorkflowExecutor is deleted';
     ok !eval { require Registry::Command::workflow_job; 1 }, 'the workflow_job command is deleted';
+};
+
+# A check that keeps failing is the sweep's to retry, not an admin's to finish
+# by hand: each run is a fresh one, so an alert per run would mail every
+# registry admin each minute.
+subtest 'a check that keeps failing alerts no admin, logs, and keeps its chain' => sub {
+    my $admin = Registry::DAO::User->create( $test_db->db->db, {
+        username => "ac_admin_$$", email => "ac_admin_$$\@test.example",
+        name => 'AC Admin', user_type => 'admin' } );
+
+    # A real failure in the first step: the database refuses its tenant list.
+    $mdb->query(q{CREATE FUNCTION public.refuse_tenant_list() RETURNS trigger LANGUAGE plpgsql
+        AS $$BEGIN RAISE EXCEPTION 'tenant list refused'; END$$});
+    $mdb->query(q{CREATE TRIGGER refuse_tenant_list BEFORE UPDATE ON registry.workflow_runs
+        FOR EACH ROW WHEN (NEW.data ->> 'tenant_schemas' IS NOT NULL)
+        EXECUTE FUNCTION public.refuse_tenant_list()});
+    defer { $mdb->query('DROP FUNCTION public.refuse_tenant_list() CASCADE') }
+
+    my @errors;
+    $app->log->unsubscribe('message')->level('error');
+    $app->log->on( message => sub ( $, $level, @lines ) { push @errors, "@lines" if $level eq 'error' } );
+
+    $minion->reset( { all => 1 } );
+    my $first = $minion->enqueue('attendance_check');
+    $minion->perform_jobs_in_foreground( { id => $first } );
+    my $second = queued('attendance_check')->next->{id};
+    $mdb->query( q{UPDATE minion_jobs SET delayed = now() WHERE id = ?}, $second );
+    $minion->perform_jobs_in_foreground( { id => $second } );
+
+    is $minion->job($_)->info->{state}, 'failed', "check $_ failed" for $first, $second;
+    is $mdb->select( 'registry.notifications', 'count(*)', { user_id => $admin->id } )->array->[0], 0,
+        'no admin was alerted';
+    is scalar( grep { /process-tenants/ && /tenant list refused/ } @errors ), 2,
+        'each failure was logged with its step and error';
+    is queued('attendance_check')->total, 1, 'the next check is still queued';
 };
 
 done_testing;
