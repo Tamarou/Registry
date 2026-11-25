@@ -1,0 +1,78 @@
+%# ABOUTME: in-studio-schedule's one form: class, location, teacher, weekdays, local start, minutes and dates.
+%# ABOUTME: The location defaults to the class's own; times are read in the location's time zone.
+% extends 'layouts/workflow';
+% title 'Schedule';
+% stash description => 'Generate a class\'s occurrences from a weekly pattern.';
+
+% if (my @errors = @{ stash('errors') // [] }) {
+<div class="alert alert-error" role="alert">
+  <ul>
+  % for my $error (@errors) {
+    <li><%= ref $error ? $error->{message} : $error %></li>
+  % }
+  </ul>
+</div>
+% }
+
+<form method="POST" action="<%= $action %>">
+  <div class="form-group">
+    <label class="form-label" for="class_project_id">Class</label>
+    <select class="form-select" id="class_project_id" name="class_project_id" required>
+      <option value="">Choose a class</option>
+      % for my $class (@{ stash('classes') // [] }) {
+      <option value="<%= $class->id %>"><%= $class->name %></option>
+      % }
+    </select>
+  </div>
+
+  <div class="form-group">
+    <label class="form-label" for="location_id">Location</label>
+    <select class="form-select" id="location_id" name="location_id">
+      <option value="">The class's location</option>
+      % for my $location (@{ stash('locations') // [] }) {
+      <option value="<%= $location->id %>"><%= $location->name %> (<%= $location->time_zone %>)</option>
+      % }
+    </select>
+  </div>
+
+  <div class="form-group">
+    <label class="form-label" for="teacher_id">Teacher</label>
+    <select class="form-select" id="teacher_id" name="teacher_id" required>
+      <option value="">Choose a teacher</option>
+      % for my $teacher (@{ stash('teachers') // [] }) {
+      <option value="<%= $teacher->{id} %>"><%= $teacher->{name} %></option>
+      % }
+    </select>
+  </div>
+
+  <fieldset>
+    <legend>Weekdays</legend>
+    % for my $day (@{ stash('weekdays') // [] }) {
+    <div>
+      <input type="checkbox" id="weekday-<%= $day %>" name="weekdays" value="<%= $day %>">
+      <label for="weekday-<%= $day %>"><%= ucfirst $day %></label>
+    </div>
+    % }
+  </fieldset>
+
+  <div class="form-group">
+    <label class="form-label" for="start_time">Local start time</label>
+    <input class="form-input" type="time" id="start_time" name="start_time" required>
+  </div>
+  <div class="form-group">
+    <label class="form-label" for="duration">Minutes</label>
+    <input class="form-input" type="number" id="duration" name="duration" min="1" max="1440" step="1" required>
+  </div>
+  <div class="form-group">
+    <label class="form-label" for="first_date">First date</label>
+    <input class="form-input" type="date" id="first_date" name="first_date" required>
+  </div>
+  <div class="form-group">
+    <label class="form-label" for="last_date">Last date</label>
+    <input class="form-input" type="date" id="last_date" name="last_date" required>
+  </div>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Generate occurrences</button>
+  </div>
+</form>

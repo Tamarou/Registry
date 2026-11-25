@@ -17,12 +17,13 @@ class Registry::DAO::Resource :isa(Registry::DAO::Object) {
 
     sub table { 'resources' }
 
-    # The finite resource that is occurrence $event_id, with the event's seats.
+    # The finite resource that is occurrence $event_id, with the event's seats,
+    # or its class's default seats when the event states none.
     sub for_occurrence ( $class, $db, $event_id ) {
         $db = $db->db if $db isa Registry::DAO;
         my $row = $db->query( q{
             INSERT INTO resources (name, kind, capacity, event_id)
-            SELECT p.name || ' ' || e.time, 'finite', e.capacity, e.id
+            SELECT p.name || ' ' || e.time, 'finite', COALESCE(e.capacity, p.seats_per_occurrence), e.id
               FROM events e JOIN projects p ON p.id = e.project_id
              WHERE e.id = ?
             RETURNING *
