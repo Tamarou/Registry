@@ -19,6 +19,9 @@ use Registry::DAO::Resource;
 use Registry::DAO::Workflow;
 use Registry::Utility::WorkflowProcessor;
 use Registry::WorkflowStepClasses;
+use Registry::PriceOps::Hold;
+use Mojo::JSON qw( decode_json encode_json );
+use POSIX ();
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -188,6 +191,150 @@ subtest 'a teacher is required and must be staff or admin here' => sub {
         like errors_of($result), qr/teacher/i, "$case->[0] teacher is refused";
     }
     is scalar occurrences_of($class)->@*, 0, 'and nothing is created';
+};
+
+sub count_of ($class) { scalar occurrences_of($class)->@* }
+
+sub utc_of ($event) {
+    $tdb->query( q{SELECT to_char(time AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI"Z"') FROM events WHERE id = ?},
+        $event->id )->array->[0];
+}
+
+subtest 'invalid schedule refused creating nothing' => sub {
+    my $class = new_class();
+    for my $case (
+        [ 'an end date before the start', { first_date => '2027-01-23', last_date => '2027-01-02' }, qr/before the first/ ],
+        [ 'an empty set of days',          { weekdays => [] },                                        qr/weekday/ ],
+        [ 'a zero duration',               { duration => 0 },                                         qr/duration/ ],
+        [ 'a negative duration',           { duration => -30 },                                       qr/duration/ ],
+    ) {
+        my ( undef, $result ) = generate( pattern( $class, $case->[1]->%* ) );
+        ok $result->{stay}, "$case->[0] keeps the run on the form";
+        like errors_of($result), $case->[2], "$case->[0] is refused with a message";
+    }
+    is count_of($class), 0, 'and nothing is created';
+};
+
+subtest 'nonexistent local time follows stated rule' => sub {
+    my $class = new_class();
+    my ( undef, $result ) = eval { generate( pattern( $class, weekdays => ['sunday'], start_time => '02:30',
+        first_date => '2027-03-14', last_date => '2027-03-14' ) ) };
+    is $@, '', 'the run does not die';
+    is errors_of($result), '', 'and is accepted';
+    my @events = occurrences_of($class)->@*;
+    is scalar @events, 1, 'the occurrence is neither dropped nor doubled' or return;
+    is $events[0]->local_start($tdb)->{start}, '2027-03-14 03:30', 'it moves forward by the gap, to 03:30 local';
+    is utc_of( $events[0] ), '2027-03-14T07:30Z', 'the instant 02:30 EST names';
+    is_deeply $result->{schedule_report}{shifted}, [ { asked => '2027-03-14 02:30', local_start => '2027-03-14 03:30' } ],
+        'the run reports the shift';
+};
+
+subtest 'ambiguous local time yields one occurrence' => sub {
+    my $class = new_class();
+    my ( undef, $result ) = generate( pattern( $class, weekdays => ['sunday'], start_time => '01:30',
+        first_date => '2027-11-07', last_date => '2027-11-07' ) );
+    is errors_of($result), '', 'accepted';
+    my @events = occurrences_of($class)->@*;
+    is scalar @events, 1, 'exactly one occurrence' or return;
+    is utc_of( $events[0] ), '2027-11-07T05:30Z', 'at the earlier instant';
+    is $events[0]->local_start($tdb)->{utc_offset}, '-04:00', 'which is EDT';
+    is_deeply $result->{schedule_report}{shifted}, [], 'and is not reported shifted';
+    generate( pattern( $class, weekdays => ['sunday'], start_time => '01:30',
+        first_date => '2027-11-07', last_date => '2027-11-07' ) );
+    is count_of($class), 1, 'a re-run adds no second one';
+};
+
+# Waits until a session is blocked behind backend $holder, or child $pid
+# exits; returns whether one waited.
+sub blocked_behind ( $holder, $pid ) {
+    my ( $blocked, $deadline ) = ( 0, time + 30 );
+    until ( $blocked || waitpid( $pid, POSIX::WNOHANG() ) || time > $deadline ) {
+        select undef, undef, undef, 0.05;
+        $blocked = $tdb->query( 'SELECT count(*) FROM pg_stat_activity WHERE ? = ANY (pg_blocking_pids(pid))',
+            $holder )->array->[0];
+    }
+    return $blocked;
+}
+
+subtest 'concurrent generation creates no duplicates' => sub {
+    my $class = new_class();
+    my ( $first, $second ) = ( start(), start() );
+    my $step = schedule_step();
+    my $uri  = $test_db->uri;
+    pipe( my $child_reads, my $parent_writes ) or die "pipe: $!";
+    pipe( my $parent_reads, my $child_writes ) or die "pipe: $!";
+    my $pid = fork() // die "fork: $!";
+    unless ($pid) {
+        close $_ for $parent_writes, $parent_reads;
+        readline $child_reads;
+        my $bdb    = Registry::DAO->new( url => $uri, schema => $SLUG )->db;
+        my $result = eval { $second->process( $bdb, $step, pattern($class) ) } // { died => "$@" };
+        print $child_writes encode_json( { errors => $result->{errors}, died => $result->{died},
+            report => $result->{schedule_report} } );
+        close $child_writes;
+        POSIX::_exit(0);
+    }
+    close $_ for $child_reads, $child_writes;
+    my $adb = Registry::DAO->new( url => $uri, schema => $SLUG )->db;
+    my $tx  = $adb->begin;
+    my $a   = $first->process( $adb, $step, pattern($class) );
+    my $holder = $adb->query('SELECT pg_backend_pid()')->array->[0];
+    print $parent_writes "go\n";
+    $parent_writes->flush;
+    ok blocked_behind( $holder, $pid ), 'the second run waits for the first';
+    $tx->commit;
+    waitpid $pid, 0;
+    my $b = decode_json( do { local $/; readline $parent_reads } );
+
+    is errors_of($a), '', 'the first run shows no error';
+    is $b->{died}, undef, 'the second run does not die';
+    is_deeply $b->{errors}, undef, 'and shows no error';
+    is count_of($class), 4, 'four occurrences, none twice';
+    is_deeply [ $a->{schedule_report}{created}, $b->{report}{created}, $b->{report}{skipped} ], [ 4, 0, 4 ],
+        'the first created them and the second skipped them';
+};
+
+subtest 'regeneration leaves booked occurrences untouched' => sub {
+    my $class = new_class(8);
+    my ($run) = generate( pattern($class) );
+    my ($booked) = Registry::DAO::Resource->find( $tdb, { event_id => occurrences_of($class)->[0]->id } );
+    my $hold = Registry::PriceOps::Hold->place( $tdb, {
+        resource_id => $booked->id, units => 3, workflow_run_id => $run->id,
+        expires_at  => \"now() + interval '15 minutes'",
+    } );
+    my $snapshot = sub {
+        $tdb->query( q{
+            SELECT jsonb_build_object('events', (SELECT jsonb_agg(to_jsonb(e) ORDER BY e.time) FROM events e WHERE e.project_id = ?),
+                                      'resources', (SELECT jsonb_agg(to_jsonb(r) ORDER BY r.id) FROM resources r
+                                                      JOIN events e ON e.id = r.event_id WHERE e.project_id = ?),
+                                      'holds', (SELECT jsonb_agg(to_jsonb(h)) FROM holds h WHERE h.resource_id = ?))
+        }, $class->id, $class->id, $booked->id )->expand->array->[0];
+    };
+    my $before = $snapshot->();
+    # A later default must not reach occurrences that already exist.
+    $class->update( $tdb, { seats_per_occurrence => 10 } );
+    my ( undef, $result ) = generate( pattern( $class, last_date => '2027-01-30' ) );
+    is errors_of($result), '', 'the overlapping re-run is accepted';
+    my $after = $snapshot->();
+    is_deeply [ $after->{events}->@[ 0 .. 3 ] ],    $before->{events},    'the existing occurrences are unchanged';
+    is_deeply [ grep { $_->{event_id} ne $after->{events}[4]{id} } $after->{resources}->@* ], $before->{resources},
+        'their resources are unchanged';
+    is_deeply $after->{holds}, $before->{holds}, 'the held seats are unchanged';
+    is $booked->free_units($tdb), 5, 'five of eight seats are still free';
+    is $after->{events}[4]{capacity}, 10, 'only the new occurrence takes the new default';
+};
+
+subtest 'oversized range refused' => sub {
+    my $class = new_class();
+    my ( undef, $result ) = generate( pattern( $class, weekdays => [ qw( monday tuesday wednesday thursday friday
+        saturday sunday ) ], first_date => '2027-01-01', last_date => '2076-12-31' ) );
+    like errors_of($result), qr/at most 366 days/, 'daily for 50 years is refused with a message';
+    ( undef, $result ) = generate( pattern( $class, first_date => '2027-01-01', last_date => '2028-01-03' ) );
+    like errors_of($result), qr/at most 366 days/, '367 days is refused';
+    is count_of($class), 0, 'and nothing is inserted';
+    ( undef, $result ) = generate( pattern( $class, first_date => '2027-01-01', last_date => '2028-01-02' ) );
+    is errors_of($result), '', '366 days is accepted';
+    is count_of($class), 53, 'a Saturday each week';
 };
 
 done_testing;
