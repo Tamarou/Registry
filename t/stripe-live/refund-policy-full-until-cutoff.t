@@ -12,6 +12,7 @@ use Test::Registry::DB;
 use Test::Registry::Offers qw( offer_terms );
 use Test::Registry::PricingProbe qw( give_tenant_terms );
 use Test::Registry::Async qw( settle );
+use Test::Registry::Helpers qw( import_all_workflows );
 
 use Registry::DAO;
 use Registry::DAO::Entitlement;
@@ -21,6 +22,7 @@ use Registry::DAO::Resource;
 use Registry::DAO::Tenant;
 use Registry::DAO::User;
 use Registry::DAO::Workflow;
+use Registry::DAO::WorkflowRun;
 use Registry::DAO::WorkflowStep;
 
 plan skip_all => 'STRIPE_SECRET_KEY (sk_test_) not set'
@@ -146,6 +148,21 @@ subtest 'stripe error leaves entitlement active' => sub {
     is $after->state, 'active', 'the entitlement stays active';
     is $after->refunded_cents($tdb), 0, 'nothing is recorded as refunded against it';
     is reread($payment)->refunded_cents, 0, 'or against the payment';
+};
+
+subtest 'the entitlement-refund walk ends with the refund requested' => sub {
+    my ( $e, $payment, $intent ) = paid_entitlement(3000);
+    import_all_workflows( Registry::DAO->new( url => $test_db->uri, schema => $slug ) );
+    my $refund = Registry::DAO::Workflow->find( $tdb, { slug => 'entitlement-refund' } );
+    my $run    = $refund->new_run($tdb);
+    $run->update_data( $tdb, { user => { id => $owner->id, role => 'admin' } } );
+
+    $run->process( $tdb, $refund->get_step( $tdb, { slug => 'choose' } ), { entitlement_id => $e->id } );
+    my $result = settle( $run->process( $tdb, $refund->get_step( $tdb, { slug => 'apply' } ), {} ) );
+    like $result->{refund_requested}{refund_id}, qr/^re_/, 'Stripe answered with a refund' or diag explain $result;
+    $run = Registry::DAO::WorkflowRun->find( $tdb, { id => $run->id } );
+    is $run->next_step($tdb)->slug, 'done', 'the walk goes on to the done page';
+    is scalar @{ refunds_of($intent) }, 1, 'Stripe holds one refund';
 };
 
 done_testing;
