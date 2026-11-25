@@ -122,7 +122,8 @@ Open-source under Perl 5 licensing terms.
 Contributions welcome via GitHub pull requests.
 
 ## Getting Deeper
-1. Explore [architectural documentation](architecture/)
+1. Explore [architectural documentation](architecture/), starting with the
+   [PriceOps model](architecture/priceops-model.md) before adding a product
 2. Review [workflow schemas](../schemas/)
 3. Check [development workflows](../workflows/)
 

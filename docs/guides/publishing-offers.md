@@ -15,7 +15,7 @@ Who each section serves ([personas](../personas/README.md)):
 The workflow is defined in `workflows/offer-publishing.yml`; each screen's
 checks are in its step class under `lib/Registry/DAO/WorkflowSteps/`. The model
 behind it is described in
-[Offers and Subscriptions](../architecture/offers-and-subscriptions.md).
+[PriceOps Model](../architecture/priceops-model.md).
 
 ---
 
