@@ -69,4 +69,17 @@ subtest 'other tenants are not limited by it' => sub {
     } 'another tenant holds Solo over the same period';
 };
 
+subtest 'accepting another platform offer while one is in effect is refused readably' => sub {
+    my $third = Test::Registry::Fixtures::create_tenant( $db, {
+        name => 'Third Term Studio', slug => 'third_term_studio',
+    } );
+    my %accept = ( holder_tenant_id => $third->id, payment_plan_id => 'revenue_share' );
+    Registry::DAO::Entitlement->accept( $db, { %accept, offer_version_id => $SOLO_V1 } );
+    throws_ok { Registry::DAO::Entitlement->accept( $db, { %accept, offer_version_id => $other->id } ) }
+        'Registry::DAO::Entitlement::Refused', 'a second, different platform offer is a Refused';
+    like "$@", qr/already holds platform terms in effect/, 'saying the tenant already holds terms';
+    is $db->query( 'SELECT count(*) FROM registry.entitlements WHERE holder_tenant_id = ?', $third->id )
+        ->array->[0], 1, 'and nothing is created';
+};
+
 done_testing;
