@@ -11,7 +11,7 @@ use Registry::DAO;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowRun;
 use Registry::DAO::Tenant;
-use Registry::PriceOps::RevenueShare qw( platform_launch_fraction );
+use Registry::PriceOps::RevenueShare qw( platform_offered_fraction );
 use Registry::PriceOps::PlatformTerms qw( platform_entitlement_terms );
 
 my $t_db = Test::Registry::DB->new;
@@ -26,7 +26,7 @@ ok $workflow, 'tenant-signup workflow imported';
 # The rate the platform advertises, read from the database rather than written
 # here as a literal -- a test that hardcodes 2.5% passes on the day someone
 # changes the plan and the copy disagrees.
-my $launch_fraction = platform_launch_fraction($db);
+my $launch_fraction = platform_offered_fraction($db);
 cmp_ok $launch_fraction, '>', 0, 'the platform sells a non-zero revenue share';
 
 # The bootstrap seed's fixed id for Solo v1, the platform's offer to tenants.

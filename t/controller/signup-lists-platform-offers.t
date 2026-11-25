@@ -184,7 +184,7 @@ subtest 'retired platform plans not listed or accepted' => sub {
         ->array->[0], 0, 'the seeded Studio and Empire plans are gone';
     # Solo's legacy plan row is the one left, and it is not a published version.
     my $plan = $db->query( q{SELECT id, plan_name FROM registry.pricing_plans
-                              WHERE metadata->>'launch_rate' = 'true'} )->hash;
+                              WHERE plan_name = 'Solo' AND superseded_at IS NULL} )->hash;
     ok $plan, "Solo's legacy plan row resolved" or return;
     my $review = to_review();
     unlike $t->tx->res->body, qr/\Q$plan->{id}\E/, 'its id is not listed';

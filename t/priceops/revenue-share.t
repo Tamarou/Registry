@@ -8,10 +8,14 @@ use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Offers qw( offer_terms );
 use Test::Registry::PricingProbe qw(with_tenant_plan without_rate_check solo_linked_tenant);
-use Registry::PriceOps::RevenueShare qw(revenue_share_fraction_for_tenant);
+use Registry::PriceOps::RevenueShare qw(revenue_share_fraction_for_tenant platform_offered_fraction);
 use Registry::PriceOps::PlatformTerms qw( rate_fraction );
 use Registry::DAO::Offer;
 use Registry::DAO::Entitlement;
+use Registry::DAO::Tenant;
+use Registry::DAO::Resource;
+use Test::Registry::Fixtures;
+use Test::Registry::Helpers qw( import_all_workflows join_tenant publish_offer );
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;     # Registry::DAO
@@ -48,23 +52,23 @@ subtest 'a Solo holder is charged its entitlement rate' => sub {
 
 # The launch rate is a decision, and a decision belongs in one named place.
 # revenue_share_fraction_for_tenant answers "what is THIS tenant charged";
-# platform_launch_fraction answers "what does the platform sell", which is what
+# platform_offered_fraction answers "what does the platform sell", which is what
 # the marketing copy quotes.
 subtest 'the launch rate has one named source' => sub {
-    # Only one assertion here, deliberately. platform_launch_fraction dies on
-    # zero marked plans, on more than one, and on a rate that is undefined,
-    # non-numeric or outside [0,1] -- so `defined $launch` and a count of marked
-    # plans both restate its die conditions, and any state that would fail them
+    # Only one assertion here, deliberately. platform_offered_fraction dies on
+    # zero current published platform offers, on more than one, and on a rate
+    # that is undefined, non-numeric or outside [0,1] -- so `defined $launch`
+    # and a count of offers both restate its die conditions, and any state that would fail them
     # kills the subtest before they run. A zero rate is inside the accepted
     # range, so this is the one thing the function can return that is wrong.
-    my $launch = Registry::PriceOps::RevenueShare::platform_launch_fraction($db);
+    my $launch = Registry::PriceOps::RevenueShare::platform_offered_fraction($db);
     cmp_ok $launch, '>', 0,
         'the launch rate is not the Free-plan zero';
 };
 
 # The whole point of naming it: displayed and charged cannot drift apart.
 subtest 'a tenant holding Solo is charged the launch rate' => sub {
-    my $launch  = Registry::PriceOps::RevenueShare::platform_launch_fraction($db);
+    my $launch  = Registry::PriceOps::RevenueShare::platform_offered_fraction($db);
     my $charged = revenue_share_fraction_for_tenant($db, $seeded_slug);
     cmp_ok abs($charged - $launch), '<', 1e-9,
         'what a Solo holder is charged is what the platform advertises';
@@ -164,6 +168,63 @@ subtest 'rate rule is exact decimal arithmetic' => sub {
     is rate_fraction( $_->[0], 'a test plan' ), $_->[1], "$_->[0] reads as $_->[1]" for
         [ '0.0200' => '0.02' ], [ '0.025' => '0.025' ], [ '1.0000' => '1' ], [ '0' => '0' ], [ '0.0000' => '0' ],
         [ '.5' => '0.5' ], [ '+0.0125' => '0.0125' ], [ '1.' => '1' ], [ '25e-3' => '0.025' ], [ '0.0001' => '0.0001' ];
+};
+
+subtest 'tenant offer does not change the quoted rate' => sub {
+    Registry::DAO::Tenant->provision( $db, { name => 'RS Glaze', slug => 'rs_glaze', users => [] } );
+    my $glaze    = $dao->connect_schema('rs_glaze')->db;
+    my $resource = Registry::DAO::Resource->create( $glaze, { name => 'payment processing', kind => 'unbounded' } );
+    Registry::DAO::Offer->create( $glaze, { name => 'Glaze Membership' } )->draft( $glaze, offer_terms( $resource->id,
+        price_cents   => 0,
+        payment_plans => [ { id => 'revenue_share', kind => 'percentage_of_sales', fraction => 0.01 } ],
+    ) )->publish($glaze);
+
+    is platform_offered_fraction($db), '0.025', "a studio's 1% offer leaves the platform quoting Solo's 2.5%";
+};
+
+# Solo v2 through offer-publishing, as the platform admin publishes it.
+import_all_workflows($dao);
+my $platform_admin = Test::Registry::Fixtures::create_user( $dao,
+    { username => 'rs_admin', name => 'RS Admin', email => 'admin@rs.test', user_type => 'admin' } );
+join_tenant( $dao, $platform_admin, 'admin', 'registry' );
+
+subtest 'solo v2 leaves a v1 holders rate' => sub {
+    publish_offer( $dao, 'registry', $platform_admin, {
+        'offer-basics'                => { resource_id => '00000000-0000-0000-0001-000000000001',
+                                           offer_id    => '00000000-0000-0000-0002-000000000001' },
+        'offer-price'                 => { price_cents => 0, currency => 'usd',
+                                           units_per_acceptance => 1, per_booking_cap => 1 },
+        'one-time-payment'            => { one_time => 'declined' },
+        'percentage-of-sales-payment' => { percentage_of_sales => 'offered', rate_percent => '2.4' },
+        refund                        => 'keep_fee_with_admin_exception',
+    } );
+
+    is platform_offered_fraction($db), '0.024', 'the platform now quotes Solo v2\'s 2.4%';
+    is revenue_share_fraction_for_tenant( $db, $seeded_slug ), '0.025',
+        'a tenant holding Solo v1 is still charged v1\'s 2.5%';
+};
+
+# Last: it leaves registry with no platform offer, which the database refuses
+# outside replica mode.
+subtest 'offered rate read refuses without exactly one offer' => sub {
+    my $processing = $db->query(q{SELECT id FROM registry.resources WHERE name = 'payment processing'})
+        ->hash->{id};
+    Registry::DAO::Offer->create( $db, { name => 'Rival' } )->draft( $db, offer_terms( $processing,
+        price_cents   => 0,
+        payment_plans => [ { id => 'revenue_share', kind => 'percentage_of_sales', fraction => 0.03 } ],
+    ) )->publish($db);
+
+    my $fraction = eval { platform_offered_fraction($db) };
+    ok !defined $fraction, 'no rate with two offers: not 0, not 2.5%, not either offer\'s';
+    like $@, qr/2 current published offers.*offer-publishing/s, 'refuses naming offer-publishing';
+
+    $db->query('SET session_replication_role = replica');
+    $db->query('UPDATE registry.offer_versions SET superseded_at = now() WHERE superseded_at IS NULL');
+    $db->query('SET session_replication_role = DEFAULT');
+
+    $fraction = eval { platform_offered_fraction($db) };
+    ok !defined $fraction, 'no rate with no offer: not 0, not 2.5%';
+    like $@, qr/no current published offer.*offer-publishing/s, 'refuses naming offer-publishing';
 };
 
 done_testing;

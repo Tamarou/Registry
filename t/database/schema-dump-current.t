@@ -175,8 +175,6 @@ subtest 'the seeded money configuration matches what the migrations produce' => 
         SELECT plan_scope, plan_name, plan_type, pricing_model_type, amount_cents,
                pricing_configuration->>'description'             AS blurb,
                metadata->>'coming_soon'                          AS coming_soon,
-               metadata->>'launch_rate'                          AS launch_rate,
-               metadata->>'display_order'                        AS display_order,
                pricing_configuration->>'percentage'             AS pct,
                pricing_configuration->>'monthly_base'           AS base,
                pricing_configuration->>'refund_application_fee' AS refund_fee
