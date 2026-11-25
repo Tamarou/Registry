@@ -298,6 +298,19 @@ Registry supports multi-tenant deployments, where workflows can be copied betwee
 
 When copying workflows between tenants, it's essential to preserve the class information for specialized workflow steps. The `copy_workflow` function handles this by including the `class` column when duplicating workflow steps.
 
+Each tenant's copies are made once, at provisioning, and migrations that reset a workflow change only `registry`'s copy, so a tenant's copy can fall behind or be edited away from the platform's. To see how, run:
+
+```bash
+carton exec ./registry workflow registry divergence
+```
+
+It compares every tenant schema in `registry.tenants` with `registry`, and is read-only: it only runs `SELECT`s. For each tenant it reports:
+
+- a slug the tenant has that `registry` does not, and a `registry` slug the tenant lacks. `tenant-signup` and `registry-storefront` are never copied at provisioning, so their absence is expected and not reported; a tenant that does hold one is reported;
+- for a shared slug, the step order (the `first_step`/`depends_on` walk), and for each shared step its `class`, its template by name, and its template by exact content (no whitespace normalising; content is shown as a sha256 prefix and byte length).
+
+Every difference names the field and both values. `registry` itself is never a section, and a tenant whose schema is missing or unreadable gets an error line while the others are still compared. The output is Markdown, one section per tenant in slug order, and is what `docs/reviews/tenant-workflow-divergence.md` records.
+
 ## YAML Examples
 
 ### Basic Workflow

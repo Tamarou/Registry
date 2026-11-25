@@ -95,6 +95,9 @@ carton exec sqitch deploy
 # Import initial data
 carton exec ./registry workflow import registry
 carton exec ./registry template import registry
+
+# Report, read-only, how each tenant's workflow copies differ from registry's
+carton exec ./registry workflow registry divergence
 ```
 
 #### 4. Environment Configuration
