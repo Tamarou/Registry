@@ -83,7 +83,7 @@ subtest 'POST to completed workflow returns 201' => sub {
     # Create and complete a workflow
     my $wf = Registry::DAO::Workflow->create($dao->db, {
         name => 'Completion Test', slug => 'completion-test',
-        description => 'Test', first_step => 'only',
+        description => 'Test', first_step => 'only', public => 1,
     });
 
     my $step = Registry::DAO::WorkflowStep->create($dao->db, {

@@ -792,14 +792,30 @@ class Registry :isa(Mojolicious) {
             }
         );
 
-        # Helper: enforce whatever role a workflow slug demands, if it demands
-        # one. Shared by the /:workflow guard and by the callcc leg, which
-        # starts a run of a workflow the URL names in a different placeholder.
+        # Helper: enforce who may run a workflow, as the current tenant's own
+        # row says: its roles, or the public mark. Shared by the /:workflow
+        # guard and by the callcc leg, which starts a run of a workflow the URL
+        # names in a different placeholder. Closed by default: a slug with no
+        # row in this tenant's schema (never registry's row instead), or a row
+        # with no roles and no public mark, is refused 403 for everyone.
         # Returns true when the request may proceed.
         $self->helper(
             require_workflow_role => sub ( $c, $slug ) {
-                my $roles = $self->workflow_roles($slug) or return 1;
-                return $c->require_role(@$roles);
+                my $workflow = $slug && $c->dao->find( 'Registry::DAO::Workflow', { slug => $slug } );
+                return 1 if $workflow && $workflow->public;
+
+                my $roles = $workflow && $workflow->roles;
+                return $c->require_role(@$roles) if $roles && @$roles;
+
+                if (   $c->req->headers->header('X-Requested-With')
+                    || ( $c->req->headers->accept // '' ) =~ m{application/json} )
+                {
+                    $c->render( json => { error => 'Forbidden' }, status => 403 );
+                }
+                else {
+                    $c->render( text => 'Forbidden', status => 403 );
+                }
+                return 0;
             }
         );
 
@@ -1292,15 +1308,12 @@ class Registry :isa(Mojolicious) {
                 # not available -- asking for it is itself a 500.
                 my $slug = $c->stash('workflow');
 
-                # Serveable, which is not the same as "has a workflow row in
-                # this schema". `index` renders a legacy `{slug}/index` template
-                # without needing a row at all, and that is how a platform
-                # funnel like tenant-signup is served from a TENANT host, where
-                # the row lives only in the registry schema. Checking the row
-                # alone 404'd an anonymous prospect reaching signup from a
-                # tenant domain -- caught by
-                # t/security/workflow-route-authorization.t, which exists for
-                # exactly that visitor.
+                # Serveable: a row in this schema or a legacy `{slug}/index`
+                # template. Only a slug with neither is a 404; a template with
+                # no row here (tenant-signup on a TENANT host, whose row lives
+                # only in registry) is known, and require_workflow_role below
+                # refuses it 403, because the gate never falls back to
+                # registry's row.
                 my $serveable = $slug
                   && ( $c->dao->find( 'Registry::DAO::Workflow', { slug => $slug } )
                     || $c->app->renderer->template_path({

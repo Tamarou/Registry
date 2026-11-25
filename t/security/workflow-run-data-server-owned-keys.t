@@ -48,6 +48,7 @@ my $workflow = Registry::DAO::Workflow->create($dao->db, {
     name        => 'Run Data Test Workflow',
     slug        => 'run-data-test',
     description => 'Landing passthrough followed by a completion step',
+    public      => 1,    # the gate refuses a workflow with no entry
 });
 my $landing = Registry::DAO::WorkflowStep->create($dao->db, {
     workflow_id => $workflow->id,
