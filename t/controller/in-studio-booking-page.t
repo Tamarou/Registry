@@ -132,4 +132,24 @@ subtest 'a signed-in visitor holds the seats and reaches payment' => sub {
     check_screen( $t, 'payment' );
 };
 
+subtest 'offer text is html escaped' => sub {
+    my ( $class, $seats ) = occurrence('<b>Bold</b> class');
+    offer( $class, '<script>alert("seat")</script>' );
+    my $t = at_offers($seats);
+    $t->content_unlike( qr/<script>alert/, 'the offer name\'s markup is not rendered' )
+        ->content_like( qr/&lt;script&gt;alert/, 'it is shown escaped' )
+        ->content_unlike( qr/<b>Bold<\/b>/, 'nor is the class name\'s' );
+    is $t->tx->res->dom->find('#workflow-content script')->size, 0, 'the page body carries no script';
+};
+
+subtest 'no offer preselected' => sub {
+    my ( $class, $seats ) = occurrence('Handbuilding');
+    offer( $class, 'One seat' );
+    offer( $class, 'Couple', units_per_acceptance => 2 );
+    my $t = at_offers($seats);
+    is $t->tx->res->dom->find('#workflow-content input[name="offer_version_id"]')->size, 2, 'both offers are listed';
+    is $t->tx->res->dom->find('#workflow-content input[name="offer_version_id"][checked]')->size, 0,
+        'and neither is chosen for the visitor';
+};
+
 done_testing;
