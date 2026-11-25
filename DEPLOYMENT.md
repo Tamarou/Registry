@@ -151,7 +151,6 @@ The blueprint creates:
 
 3. **Scheduler Service** (`registry-scheduler`)
    - Runs every 5 minutes
-   - Attendance checking
    - Waitlist expiration processing
 
 #### 4. Initial Setup

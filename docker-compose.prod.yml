@@ -41,7 +41,6 @@ services:
     command: >
       sh -c "
         while true; do
-          carton exec ./registry job attendance_check;
           carton exec ./registry job waitlist_expiration;
           sleep 300;
         done

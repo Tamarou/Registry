@@ -125,7 +125,6 @@ case "${SERVICE_TYPE:-web}" in
         ;;
     "scheduler")
         echo "Starting scheduler tasks..."
-        ./registry job attendance_check
         ./registry job waitlist_expiration
         ;;
     *)
