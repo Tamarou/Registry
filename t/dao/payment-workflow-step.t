@@ -258,96 +258,12 @@ subtest 'Calculate enrollment totals' => sub {
     like $item2->{description}, qr/Bob Smith/, 'Second item mentions Bob';
 };
 
-# Note: Full Stripe integration test is skipped due to multi-tenant schema foreign key constraints
-# during testing. The async/promise handling in Registry::Service::Stripe has been verified
-# to work correctly (see t/service/stripe.t and t/dao/payment-workflow-step-e2e.t).
-# The core payment workflow functionality has been validated in the previous subtests.
-subtest 'Enrollment creation on successful payment' => sub {
-    plan skip_all => "Stripe integration test disabled due to multi-tenant schema constraints in test environment";
-
-    # Temporarily disable foreign key checks for this test due to tenant schema issue
-    $db->query('SET session_replication_role = replica');
-
-    # Ensure foreign key checks are restored even if test fails
-    local $SIG{__DIE__} = sub {
-        $db->query('SET session_replication_role = DEFAULT') if $db;
-        die @_;
-    };
-
-    my $run = $workflow->new_run($db);
-
-    # Set up run data
-    $run->update_data($db, {
-        user_id => $parent->id,
-        children => [
-            {
-                id => $child1->id,
-                first_name => 'Alice',
-                last_name => 'Smith',
-                birth_date => '2016-03-15',
-                grade => '3'
-            }
-        ],
-        session_selections => {
-            $child1->id => $session->id
-        }
-    });
-
-    # Debug: Verify user exists in tenant schema before payment
-    my $user_check = Registry::DAO::User->find($db, { id => $parent->id });
-    ok $user_check, 'Parent user exists in tenant schema before payment processing';
-
-    # Debug: Check current schema context
-    my $current_schema = $db->query('SELECT current_schema()')->hash->{current_schema};
-    diag "Current schema before payment: $current_schema";
-
-    # Debug: Try to create a payment directly to test foreign key
-    eval {
-        my $test_payment = Registry::DAO::Payment->create($db, {
-            user_id => $parent->id,
-            amount_cents => 10000,
-            metadata => { test => 'direct_payment' }
-        });
-        diag "Direct payment creation succeeded: " . $test_payment->id;
-    };
-    if ($@) {
-        diag "Direct payment creation failed: $@";
-    }
-
-    # Process payment with agreement using the workflow run
-    my $result;
-    eval {
-        $result = $run->process($db, 'payment', {
-            agreeTerms => 1,
-            stripeToken => 'tok_visa'  # Stripe test token
-        });
-    };
-
-    if ($@) {
-        diag "Payment processing failed with error: $@";
-        fail 'Payment processing threw an exception';
-        return;
-    }
-
-    # Should successfully process payment and move to next step
-    ok $result, 'Payment processing returned result';
-    isnt $result->{next_step}, 'payment', 'Moved past payment step';
-    ok !$result->{errors}, 'No errors in payment processing' or diag explain $result->{errors};
-
-    # Check that payment was created
-    my $payment_id = $run->data->{payment_id};
-    ok $payment_id, 'Payment ID stored in workflow data';
-
-    if ($payment_id) {
-        my $payment = Registry::DAO::Payment->find($db, { id => $payment_id });
-        ok $payment, 'Payment record created';
-        cmp_ok $payment->amount_cents, '==', 15000, 'Payment amount correct';
-        is $payment->user_id, $parent->id, 'Payment linked to correct user';
-    }
-
-    # Re-enable foreign key checks
-    $db->query('SET session_replication_role = DEFAULT');
-};
+# A paid run through this step in a real tenant schema is covered elsewhere:
+# t/stripe-live/paid-enrollment.t, 'direct charge lands on the tenant account
+# with the plan fee' (payment_id handed back, real intent, charged at the plan
+# price), and t/integration/tenant-paid-enrollment.t, 'ready tenant: payment
+# step passes gate and creates payment' (one row, for the parent, in the tenant
+# schema).
 
 subtest 'Demo mode: agreeTerms without Stripe creates enrollments' => sub {
     local $ENV{STRIPE_SECRET_KEY} = undef;
