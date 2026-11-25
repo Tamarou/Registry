@@ -68,6 +68,11 @@ subtest 'the seeded plans are backfilled by meaning, not blindly' => sub {
         SELECT plan_name, pricing_model_type, amount_cents,
                pricing_configuration->>'percentage' AS rate
           FROM registry.pricing_plans
+        UNION ALL
+        -- Standard and Plus were later retired; the retirement keeps them as they were.
+        SELECT plan_name, pricing_model_type, amount_cents,
+               pricing_configuration->>'percentage' AS rate
+          FROM public.retired_platform_plans
     })->hashes->@*;
 
     my $standard = $seeded{'Registry Standard - $200/month'};

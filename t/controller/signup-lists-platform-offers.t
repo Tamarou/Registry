@@ -170,17 +170,17 @@ subtest 'pages quote the chosen version' => sub {
     withdraw($kiln);
 };
 
-subtest 'studio and empire plans not listed or accepted' => sub {
-    my @plans = $db->query( q{SELECT id, plan_name FROM registry.pricing_plans
-                               WHERE plan_name ~ '^(Studio|Empire)'} )->hashes->@*;
-    ok scalar @plans, 'the old plans still exist';
+subtest 'retired platform plans not listed or accepted' => sub {
+    is $db->query( q{SELECT count(*) FROM registry.pricing_plans
+                      WHERE metadata->>'created_by_migration' = 'seed-tier-pricing-options'} )
+        ->array->[0], 0, 'the seeded Studio and Empire plans are gone';
+    # Solo's legacy plan row is the one left, and it is not a published version.
+    my $plan = $db->query( q{SELECT id, plan_name FROM registry.pricing_plans
+                              WHERE metadata->>'launch_rate' = 'true'} )->hash;
+    ok $plan, "Solo's legacy plan row resolved" or return;
     my $review = to_review();
-    my $listed = $t->tx->res->dom->at('fieldset.plan-choices')->all_text;
-    for my $plan (@plans) {
-        unlike $listed, qr/\b\Q$plan->{plan_name}\E\b/, "$plan->{plan_name} is not listed";
-        unlike $t->tx->res->body, qr/\Q$plan->{id}\E/, "nor is its id";
-        refused( $review, $plan->{id}, $plan->{plan_name} );
-    }
+    unlike $t->tx->res->body, qr/\Q$plan->{id}\E/, 'its id is not listed';
+    refused( $review, $plan->{id}, 'the legacy plan id' );
 };
 
 subtest 'other tenant offer not listed or accepted' => sub {
