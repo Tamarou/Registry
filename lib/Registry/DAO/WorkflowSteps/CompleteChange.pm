@@ -85,9 +85,9 @@ class Registry::DAO::WorkflowSteps::CompleteChange :isa(Registry::DAO::WorkflowS
     }
 
     # A paid change that cannot be made ($why): the entitlement stays where it
-    # was and the fee is kept. Recorded on the run and put before the admins,
-    # then the step dies, so the driver retries (a seat may free up) and its
-    # last attempt halts the run.
+    # was and the fee is kept. Recorded on the run and put before the admins.
+    # The person is told so; the driver is asked to retry (a seat may free
+    # up), and its last attempt halts the run.
     method _needs_admin ( $db, $tx, $run, $data, $payment, $why ) {
         unless ( $data->{change_needs_admin} ) {
             $run->update_data( $db, { change_needs_admin => {
@@ -103,7 +103,12 @@ class Registry::DAO::WorkflowSteps::CompleteChange :isa(Registry::DAO::WorkflowS
                 { workflow_run_id => $run->id, payment_id => $payment->id } );
         }
         $tx->commit if $tx;
-        die sprintf "change on run %s is paid but %s: it needs an admin\n", $run->id, $why;
+        return {
+            stay   => 1,
+            errors => ["Your change fee is paid, but $why, so your booking has not moved. "
+                . 'The studio has been told and will sort it out with you.'],
+            retry  => sprintf( "change on run %s is paid but %s: it needs an admin\n", $run->id, $why ),
+        };
     }
 
     method _stay ($why) { return { stay => 1, errors => [$why] } }

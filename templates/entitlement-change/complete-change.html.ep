@@ -1,0 +1,20 @@
+%# ABOUTME: entitlement-change step: the person confirms the move onto the held occurrence.
+%# ABOUTME: CompleteChange moves it once any fee is paid; a paid change it cannot make is explained, never an error page.
+% extends 'layouts/workflow';
+% title 'Confirm your change';
+% my $change = stash('change_hold') // {};
+%= include 'entitlement-change/_errors'
+
+<section class="card">
+  % if ($change->{fee_cents}) {
+  <p>Your change fee of $<%= sprintf '%.2f', $change->{fee_cents} / 100 %> is paid.</p>
+  % } else {
+  <p>There is no fee for this change.</p>
+  % }
+</section>
+
+<form method="POST" action="<%= $action %>">
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Move my booking</button>
+  </div>
+</form>

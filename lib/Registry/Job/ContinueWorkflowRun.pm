@@ -52,6 +52,9 @@ class Registry::Job::ContinueWorkflowRun {
                 $step = $run->next_step($db) or last;
                 my $result = _settled( $run->process( $db, $step, $run->data ) );
 
+                # A step that cannot go on yet but may later, with nobody present, is retried.
+                die $result->{retry} if $result->{retry};
+
                 # A step that did not advance the run is waiting on a person.
                 return _finish( $job, $db, $run, $step->slug, 'needs_person' )
                     if $result->{stay} || $result->{errors} || $result->{_validation_errors};

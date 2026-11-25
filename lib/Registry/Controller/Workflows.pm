@@ -628,6 +628,15 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
             );
         }
 
+        # A step with nothing to ask this run (a change's pay step on a zero
+        # fee) is processed rather than shown; one that refuses is shown.
+        while ( !$run->completed( $dao->db ) ) {
+            my $next = $run->next_step( $dao->db );
+            last unless $next && $next->can('nothing_to_ask') && $next->nothing_to_ask( $dao->db, $run );
+            my $passed = $run->process( $dao->db, $next, {} );
+            last if ref $passed ne 'HASH' || $passed->{errors} || $passed->{stay} || $passed->{redirect};
+        }
+
         # if we're still not done, redirect to the next step
         if ( !$run->completed( $dao->db ) ) {
             my ($next) = $run->next_step( $dao->db );
