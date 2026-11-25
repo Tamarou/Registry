@@ -381,4 +381,121 @@ subtest 'paid amount differing from quote refunds and alerts' => sub {
     is scalar told( $sacp, $sacp->{booker}->id, $run )->@*, 1, 'the booker is told the payment is refunded';
 };
 
+# What the app logged, for the events it acknowledges without acting on.
+my @logs;
+$t->app->log->unsubscribe('message');
+$t->app->log->level('info');
+$t->app->log->on( message => sub ( $log, $level, @lines ) { push @logs, [ $level, "@lines" ] } );
+
+sub logged ($re) { scalar grep { $_->[1] =~ $re } @logs }
+
+sub payment_status ( $s, $payment ) { Registry::DAO::Payment->find( $s->{db}, { id => $payment->id } )->status }
+
+subtest 'duplicate succeeded event grants once' => sub {
+    my ( $version, $occurrence ) = class_offer( $sacp, seats => 4 );
+    my $run     = held( $sacp, $occurrence, $version, 2 );
+    my $payment = started( $sacp, $run );
+    my $id      = "evt_isbp_dup_$$";
+    succeeded( $sacp, $payment, id => $id )->status_is(200);
+    succeeded( $sacp, $payment, id => $id )->status_is(200);    # Stripe redelivers the same event
+    succeeded( $sacp, $payment )->status_is(200);               # and a second event for the same intent
+    drive();
+    is scalar entitlements_of( $sacp, $payment )->@*, 1, 'one entitlement is created';
+    is $occurrence->free_units( $sacp->{db} ), 2, 'holding the booking\'s two seats, no more';
+    my $again = eval { $run->process( $sacp->{db}, step( $sacp, 'complete' ), {} ) };
+    ok $again && !$again->{errors}, 'completing again is not refused' or diag $@;
+    is scalar entitlements_of( $sacp, $payment )->@*, 1, 'and creates nothing more';
+};
+
+subtest 'event for unknown account ignored with 200' => sub {
+    my ( $version, $occurrence ) = class_offer($sacp);
+    my $run     = held( $sacp, $occurrence, $version, 1 );
+    my $payment = started( $sacp, $run );
+    @logs = ();
+    succeeded( $sacp, $payment, account => "acct_nobody_$$" )->status_is(200);
+    drive();
+    ok logged(qr/acct_nobody_$$/), 'the unknown account is logged';
+    is payment_status( $sacp, $payment ), 'pending', 'the payment is not completed';
+    is_deeply entitlements_of( $sacp, $payment ), [], 'and nothing is created';
+};
+
+subtest 'event for unknown payment ignored with 200' => sub {
+    my ( $version, $occurrence ) = class_offer($sacp);
+    my $run     = held( $sacp, $occurrence, $version, 1 );
+    my $payment = started( $sacp, $run );
+    my $unknown = $db->query('SELECT gen_random_uuid()::text')->array->[0];
+    @logs = ();
+    Test::Registry::StripeWebhook::post_connect( $t, {
+        type    => 'payment_intent.succeeded',
+        account => $sacp->{account},
+        data    => { object => { id => "pi_not_ours_$$", amount => 4500,
+                                 metadata => { payment_id => $unknown, tenant_slug => $sacp->{slug} } } },
+    } )->status_is(200);
+    drive();
+    ok logged(qr/pi_not_ours_$$.*not found/), 'the payment Registry did not make is logged';
+    is payment_status( $sacp, $payment ), 'pending', 'no payment is completed';
+    is $sacp->{db}->select( 'entitlements', 'count(*)', { offer_version_id => $version->id } )->array->[0], 0,
+        'and nothing is created';
+    is $occurrence->free_units( $sacp->{db} ), 5, 'the run\'s hold is untouched';
+};
+
+subtest 'event account mismatch grants nothing' => sub {
+    my $other = studio();
+    my ( $version, $occurrence ) = class_offer($sacp);
+    my $run     = held( $sacp, $occurrence, $version, 1 );
+    my $payment = started( $sacp, $run );
+    succeeded( $sacp, $payment, account => $other->{account} )->status_is(200);
+    drive();
+    is payment_status( $sacp, $payment ), 'pending', 'the payment in the hold\'s tenant is not completed';
+    is_deeply entitlements_of( $sacp, $payment ), [], 'no entitlement in the hold\'s tenant';
+    is $other->{db}->select( 'entitlements', 'count(*)' )->array->[0], 0, 'nor in the account\'s tenant';
+    ok !reload( $sacp, $run )->completed( $sacp->{db} ), 'and the run does not go on';
+};
+
+subtest 'connect event with wrong secret rejected' => sub {
+    my ( $version, $occurrence ) = class_offer($sacp);
+    my $run     = held( $sacp, $occurrence, $version, 1 );
+    my $payment = started( $sacp, $run );
+    my $event   = sub {
+        { type => 'payment_intent.succeeded', account => $sacp->{account}, data => { object => {
+            id => $payment->stripe_payment_intent_id, amount => $payment->amount_cents,
+            metadata => { payment_id => $payment->id, tenant_slug => $sacp->{slug} } } } };
+    };
+    Test::Registry::StripeWebhook::post_connect( $t, $event->(), secret => 'whsec_not_the_connect_secret' )
+        ->status_is( 400, 'a bad signature is refused' );
+    Test::Registry::StripeWebhook::post_connect( $t, $event->(), secret => $ENV{STRIPE_WEBHOOK_SECRET} )
+        ->status_is( 400, 'and so is one signed with the platform endpoint\'s secret' );
+    drive();
+    is payment_status( $sacp, $payment ), 'pending', 'the payment is not completed';
+    is_deeply entitlements_of( $sacp, $payment ), [], 'and nothing is created';
+};
+
+subtest 'no platform offer refuses charge' => sub {
+    my $unpriced = studio( no_terms => 1 );
+    my ( $version, $occurrence ) = class_offer($unpriced);
+    my $run = held( $unpriced, $occurrence, $version, 1 );
+    my @warned;
+    my $out = do {
+        local $SIG{__WARN__} = sub { push @warned, @_ };
+        settle( $run->process( $unpriced->{db}, step( $unpriced, 'payment' ), {} ) );
+    };
+    like "@{ $out->{errors} // [] }", qr/cannot be taken right now\. Nothing has been charged/, 'the charge is refused';
+    like "@warned", qr/'\Q$unpriced->{slug}\E' holds no platform entitlement/, 'and the operator is told which studio';
+    is $unpriced->{db}->select( 'payments', 'count(*)' )->array->[0], 0,
+        'before any payment row is written, so nothing reaches Stripe without a fee or with a $0 one';
+};
+
+subtest 'sub cent fee omitted never zero' => sub {
+    my %fee;
+    for my $price ( 19, 1300, 1500, 4500 ) {
+        my ( $version, $occurrence ) = class_offer( $sacp, price_cents => $price );
+        my $params = started( $sacp, held( $sacp, $occurrence, $version, 1 ) )->_intent_params( $sacp->{db}, {} );
+        is $params->{amount}, $price, "a $price cent booking is charged";
+        $fee{$price} = $params->{application_fee_amount};
+    }
+    ok !defined $fee{19}, '2.5% of 19 cents rounds to nothing, so no application_fee_amount is sent, not 0';
+    is_deeply [ @fee{ 1300, 1500, 4500 } ], [ 32, 38, 112 ], 'exact halves round to the even cent (32.5 to 32, 37.5 to 38)';
+    ok !grep( { !/\A[1-9][0-9]*\z/ } @fee{ 1300, 1500, 4500 } ), 'every fee sent is a whole number of cents above zero';
+};
+
 done_testing;
