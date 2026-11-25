@@ -137,61 +137,23 @@ subtest 'Payment for user' => sub {
 # stored and carried as integer cents end to end, so there is nothing left to
 # convert and no rounding to get wrong. See t/dao/payment-amount-cents.t.
 
-# Skip Stripe-specific tests if API key not set or SSL not available.
-# These tests require a live Stripe API connection and a valid key;
-# unhandled promise rejections from failed Stripe calls crash the
-# test process before done_testing() is reached.
-SKIP: {
-    skip "Set STRIPE_LIVE_TESTS=1 to run Stripe integration tests", 2
-        unless $ENV{STRIPE_LIVE_TESTS};
+# The calls that need a real Stripe answer -- creating an intent, and Stripe
+# refusing an intent id it does not know -- live in
+# t/stripe-live/payment-intent-dao.t, which CI's stripe-e2e job runs.
 
-    # Test if SSL is available for HTTPS requests
-    my $ssl_available = eval {
-        require IO::Socket::SSL;
-        IO::Socket::SSL->VERSION >= 2.009;
-    };
-    skip "IO::Socket::SSL 2.009+ required for Stripe API calls", 2 unless $ssl_available;
+subtest 'Process payment with no seller account fails before Stripe' => sub {
+    my $payment = Registry::DAO::Payment->create($db, {
+        user_id      => $user->id,
+        amount_cents => 2500
+    });
 
-    subtest 'Create payment intent' => sub {
-        my $payment = Registry::DAO::Payment->create($db, {
-            user_id      => $user->id,
-            amount_cents => 5000
-        });
+    my $result = $payment->process_payment($db, 'pi_never_retrieved');
 
-        my $intent_data = eval {
-            $payment->create_payment_intent($db, {
-                description => 'Test Payment',
-                receipt_email => $user->email
-            })
-        };
-
-        if ($@) {
-            diag "Stripe error: $@";
-            skip "Stripe API error", 3;
-        }
-
-        ok $intent_data->{client_secret}, 'Client secret returned';
-        ok $intent_data->{payment_intent_id}, 'Payment intent ID returned';
-
-        # Reload payment to check if intent ID was saved
-        $payment = Registry::DAO::Payment->new(id => $payment->id)->load($db);
-        is $payment->stripe_payment_intent_id, $intent_data->{payment_intent_id}, 'Intent ID saved to payment';
-    };
-
-    subtest 'Process payment' => sub {
-        my $payment = Registry::DAO::Payment->create($db, {
-            user_id      => $user->id,
-            amount_cents => 2500
-        });
-
-        # Would need a real payment intent ID from Stripe to test this properly
-        # For now, just test the error handling
-        my $result = $payment->process_payment($db, 'invalid_intent_id');
-
-        ok !$result->{success}, 'Invalid intent fails';
-        ok $result->{error}, 'Error message returned';
-        is $payment->status, 'failed', 'Payment status updated to failed';
-    };
-}
+    ok !$result->{success}, 'Payment fails';
+    like $result->{error}, qr/no seller Stripe account/, 'for want of a seller account';
+    is $payment->status, 'failed', 'Payment status updated to failed';
+    is Registry::DAO::Payment->find($db, { id => $payment->id })->status, 'failed',
+        'and the failure is saved';
+};
 
 done_testing();
