@@ -107,6 +107,41 @@ inference, not a ruling: ADR 004(b) settles the tenant's entitlement to
 create workflows, not which users may run them. It fails closed, admitting
 no one the authoring workflow would not.
 
+#### Run rights: what a tenant is entitled to run
+
+Separately from roles, a tenant's right to run a workflow is an entitlement
+it holds from the platform tenant `registry` (PriceOps spec, "The platform
+tenant's offers"). Each workflow slug the platform offers is a resource named
+`run:<slug>`. The right to create workflows is `run:workflow-creation`, and it
+also covers running the workflows the tenant wrote (ADR 004, ruling (b)).
+Nothing reads run rights yet; `01a20415-69df` makes the gate require them.
+
+- **The check.** `Registry::DAO::Entitlement->may_run($db, $tenant_id, $slug)`
+  answers from live rows through `Registry::DAO::Tenant->holds`. It is true
+  only when the tenant holds `run:$slug` in `registry`, in effect now (active,
+  its period covering now), under a single-resource version or a set version.
+  The name must match exactly, so a pattern, another case or a trailing space
+  answers false. A right a tenant records in its own schema grants nothing,
+  and neither does another tenant's right.
+- **One at a time.** A holder holds at most one in-effect run right per
+  workflow, whatever the payment plan. The `entitlement_one_run_right` trigger
+  enforces this in `registry`, looking through set versions. An ended right
+  never blocks its successor.
+- **The backfill** (`workflow-run-entitlements`). `registry` holds one run
+  right per workflow in `registry.workflows` at deploy, through its own
+  per-slug offer to itself (`holder_is_offerer`), as the bootstrap seeded the
+  five product-design rights. Those five are reused, never duplicated.
+  Workflows imported after deploy get no run right from this change.
+- **How a new workflow reaches a Solo holder.** perigrin's ruling (a) in
+  ADR 004: "(a) New Solo version". A new Solo version lists the workflow set
+  as a set version, published through offer-publishing, and holders move to
+  it. The rule for moving them waits until real holders exist. Day one still
+  sells a single-resource Solo.
+- **Studios have no run rights yet.** So the backfill refuses to deploy while
+  any studio tenant holds workflow copies, naming each. Production has none.
+  A dev database with a seeded SACP tenant must re-create it (see
+  `sql/seed/README.md`).
+
 **Changing who may run an existing workflow ships a migration.** `from_yaml`
 returns an existing row unchanged and a tenant's copies are written only by
 `copy_workflow` at provisioning, so editing a YAML's `roles` or `public` alone
