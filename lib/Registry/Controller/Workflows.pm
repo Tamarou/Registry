@@ -94,6 +94,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # as already provisioned and hand the run someone else's tenant.
         # change_hold, change_entitlement_id and change_targets are what the
         # change steps decide; the fee charge reads change_hold.fee_cents as the amount owed.
+        # change_needs_admin marks a paid change an admin must settle.
         # owed_payment is what OneTimePayment charges -- amount, offer version
         # and plan, written by the step before it -- and owed_payment_id the
         # payment it started; a posted one is a price of the client's choosing.
@@ -101,7 +102,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # a halted run or fake one.
         for my $key ( keys %$data ) {
             delete $data->{$key}
-                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_offer_version|__remote_address|stripe_account_id|tenant|change_hold|change_entitlement_id|change_targets|owed_payment|owed_payment_id|__driver)(?:\[|\z)/;
+                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_offer_version|__remote_address|stripe_account_id|tenant|change_hold|change_entitlement_id|change_targets|change_needs_admin|owed_payment|owed_payment_id|__driver)(?:\[|\z)/;
         }
 
         # Mojolicious fills remote_address from X-Forwarded-For only in

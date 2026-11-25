@@ -222,7 +222,8 @@ subtest 'selected_offer_version cannot be planted by a client' => sub {
 subtest 'a change and its targets cannot be planted by a client' => sub {
     # The change steps write these; the fee charge reads change_hold.fee_cents as
     # the amount owed, so a planted one would set its own price.
-    for my $key (qw( change_hold change_entitlement_id change_targets )) {
+    # change_needs_admin marks a paid change an admin must settle; a planted one hides it.
+    for my $key (qw( change_hold change_entitlement_id change_targets change_needs_admin )) {
         my $run = run_on_second_step();
         $t->post_ok("/run-data-test/${\ $run->id}/complete" => form => {
             "${key}[fee_cents]" => 0,

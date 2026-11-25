@@ -247,4 +247,65 @@ subtest 'failed charge or lapsed hold releases hold' => sub {
     is scalar $e->units( $studio, $from->id )->@*, 1, 'and the entitlement stays where it was';
 };
 
+sub hold_row ($run) {
+    $studio->query( 'SELECT *, expires_at - placed_at AS length FROM holds WHERE id = ?',
+        reload($run)->data->{change_hold}{hold_id} )->hash;
+}
+
+subtest 'charge start extends live hold' => sub {
+    my ( $version, $from, $to ) = occurrences( \%WINDOW, 72, 96 );
+    my $run    = held_run( booking( $version, $from ), $to );
+    my $before = hold_row($run);
+    ok !step('pay')->hold_for_charge( $studio, $run ), 'a live hold lets the charge start';
+    my $after = hold_row($run);
+    is $studio->query( 'SELECT ?::timestamptz = ?::timestamptz + ?::interval',
+        $after->{expires_at}, $before->{expires_at}, $before->{length} )->array->[0], 1,
+        'and is extended by its own length when the charge starts';
+
+    fee_payment($run);
+    ok !step('pay')->hold_for_charge( $studio, reload($run) ), 'a resubmit once the charge started is let through';
+    is hold_row($run)->{expires_at}, $after->{expires_at}, 'without extending the hold again';
+};
+
+subtest 'succeeded charge after lapse retakes seat' => sub {
+    my ( $version, $from, $to ) = occurrences( \%WINDOW, 72, 96 );
+    my $e     = booking( $version, $from, 2 );
+    my $run   = held_run( $e, $to );
+    my $first = reload($run)->data->{change_hold}{hold_id};
+    my $payment = fee_payment($run);
+    lapse($run);
+    succeeded($payment)->status_is(200);
+    drive();
+    is_deeply $e->units( $studio, $to->id ), [ 1, 2 ], 'the seats are taken again and the entitlement moves';
+    is $from->free_units($studio), 4, 'freeing the old ones';
+    is $studio->select( 'holds', 'state', { id => $first } )->array->[0], 'released', 'the lapsed hold is released';
+    is hold_state($run), 'converted', 'and the run names the converted one';
+    ok reload($run)->completed($studio), 'the run is complete';
+};
+
+subtest 'succeeded charge with full target needs admin' => sub {
+    my ( $version, $from, $to ) = occurrences( \%WINDOW, 72, 96 );
+    my $e       = booking( $version, $from );
+    my $run     = held_run( $e, $to );
+    my $payment = fee_payment($run);
+    lapse($run);
+    booking( $version, $to, 4 );    # the target sells out while the hold is lapsed
+    succeeded($payment)->status_is(200);
+    drive();
+
+    is_deeply $e->units( $studio, $from->id ), [1], 'the entitlement stays on its old seat';
+    is_deeply $e->units( $studio, $to->id ), [], 'and has none of the target';
+    my $data = reload($run)->data;
+    is $data->{change_needs_admin}{payment_id}, $payment->id, 'the run records the paid change as needing an admin';
+    like $data->{__driver}{error}, qr/admin/, 'the driver records why it stopped';
+    ok !reload($run)->completed($studio), 'the run is not complete';
+    is Registry::DAO::Payment->find( $studio, { id => $payment->id } )->status, 'completed',
+        'and the fee is kept, not refunded';
+
+    my $id = $minion->enqueue( continue_workflow_run => [ { tenant => $SLUG, run_id => $run->id } ],
+        { attempts => 1 } );
+    $minion->perform_jobs( { id => $id } );
+    is reload($run)->data->{__driver}{state}, 'halted', 'its last attempt halts the run for an admin';
+};
+
 done_testing;
