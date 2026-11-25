@@ -24,6 +24,7 @@ class Registry::DAO::Entitlement :isa(Registry::DAO::Object) {
     field $ended_reason :param :reader = undef;  # the Stripe refund or dispute id where there is one
     field $payment_id :param :reader = undef;           # the payment that created it, set at insert
     field $payment_share_cents :param :reader = undef;  # its share of that payment
+    field $terms_version :param :reader = undef;        # the /terms version its booker agreed to, set at insert
 
     sub table { 'entitlements' }
 
