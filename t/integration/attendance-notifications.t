@@ -8,7 +8,7 @@ BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test'; }
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
-use Registry::Job::AttendanceCheck;
+use Test::Registry::Mojo;
 use Registry::DAO::User;
 use Registry::DAO::Location;
 use Registry::DAO::Project;
@@ -31,6 +31,16 @@ $db_helper->deploy_sqitch_changes([
     'notifications-and-preferences',
     'summer-camp-module'
 ]);
+
+# The real attendance_check job, through Minion's own worker.
+my $app = Test::Registry::Mojo->new('Registry')->app;
+$app->import_workflows;    # attendance_check runs the attendance-check workflow
+my $minion = $app->minion;
+sub run_attendance_check {
+    my $id = $minion->enqueue('attendance_check');
+    $minion->perform_jobs_in_foreground( { id => $id } );
+    is $minion->job($id)->info->{state}, 'finished', 'the attendance check ran';
+}
 
 subtest 'End-to-end attendance notification workflow' => sub {
     # Clean up any existing data
@@ -186,37 +196,7 @@ subtest 'End-to-end attendance notification workflow' => sub {
         $db, $event_with_attendance->id, $student1->id, 'present', $teacher1->id
     );
 
-    # Run the attendance check job
-    my $mock_logger = bless {}, 'MockLogger';
-    my $mock_app = bless {
-        log => $mock_logger,
-        dao => sub { $dao }
-    }, 'MockApp';
-    my $mock_job = bless {
-        app => $mock_app
-    }, 'MockJob';
-    
-    # Mock logger and app classes
-    {
-        package MockLogger;
-        sub info { shift; say "INFO: @_" if $ENV{TEST_VERBOSE} }
-        sub debug { shift; say "DEBUG: @_" if $ENV{TEST_VERBOSE} }
-        sub error { shift; say "ERROR: @_" if $ENV{TEST_VERBOSE} }
-    }
-    
-    {
-        package MockApp;
-        sub dao { $dao }
-        sub log { shift->{log} }
-    }
-    
-    {
-        package MockJob;
-        sub app { shift->{app} }
-    }
-
-    my $job_instance = Registry::Job::AttendanceCheck->new;
-    $job_instance->check_tenant_attendance($mock_job, $db, 'public');
+    run_attendance_check();
 
     # Verify email notifications were created and sent successfully
     my $email_notifications = $db->select('notifications', 'count(*)', {
@@ -347,18 +327,7 @@ subtest 'Notification preferences respected' => sub {
         event_id => $event->id
     });
 
-    # Run job
-    my $mock_logger2 = bless {}, 'MockLogger';
-    my $mock_app2 = bless {
-        log => $mock_logger2,
-        dao => sub { $dao }
-    }, 'MockApp';
-    my $mock_job = bless {
-        app => $mock_app2
-    }, 'MockJob';
-
-    my $job_instance = Registry::Job::AttendanceCheck->new;
-    $job_instance->check_tenant_attendance($mock_job, $db, 'public');
+    run_attendance_check();
 
     # Verify no notifications were created
     my $notification_count = $db->select('notifications', 'count(*)', {
@@ -441,18 +410,7 @@ subtest 'Duplicate prevention' => sub {
         metadata => { event_id => $event->id }
     });
 
-    # Run job
-    my $mock_logger3 = bless {}, 'MockLogger';
-    my $mock_app3 = bless {
-        log => $mock_logger3,
-        dao => sub { $dao }
-    }, 'MockApp';
-    my $mock_job = bless {
-        app => $mock_app3
-    }, 'MockJob';
-
-    my $job_instance = Registry::Job::AttendanceCheck->new;
-    $job_instance->check_tenant_attendance($mock_job, $db, 'public');
+    run_attendance_check();
 
     # Should only have 1 reminder notification (no duplicates)
     my $reminder_count = $db->query(

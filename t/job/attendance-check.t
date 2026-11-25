@@ -8,7 +8,6 @@ BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test'; }
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
-use Registry::Job::AttendanceCheck;
 use Test::Registry::Mojo;
 use Registry::DAO::User;
 use Registry::DAO::Location;
@@ -30,6 +29,14 @@ my $db = $dao->db;
 # Import workflows for testing
 system('carton exec ./registry workflow import registry') == 0 
     or die "Failed to import workflows for testing";
+
+# The real attendance_check job, through Minion's own worker.
+my $minion = Test::Registry::Mojo->new('Registry')->app->minion;
+sub run_attendance_check {
+    my $id = $minion->enqueue('attendance_check');
+    $minion->perform_jobs_in_foreground( { id => $id } );
+    is $minion->job($id)->info->{state}, 'finished', 'the attendance check ran';
+}
 
 # Create test data
 sub setup_test_data {
@@ -244,55 +251,7 @@ subtest 'Job execution with notifications' => sub {
         attendance_reminder => { email => 1, in_app => 1 }
     });
 
-    # Mock minion for scheduling
-    my $scheduled_jobs = [];
-    my $mock_minion = bless {
-        enqueue => sub {
-            my ($self, $task, $args, $opts) = @_;
-            push @$scheduled_jobs, { task => $task, args => $args, opts => $opts };
-            return 'job_id_123';
-        }
-    }, 'MockMinion';
-    
-    # Mock job object for testing
-    my $mock_logger = bless {}, 'MockLogger';
-    my $mock_app = bless {
-        log => $mock_logger,
-        dao => sub { $dao },
-        minion => $mock_minion
-    }, 'MockApp';
-    my $mock_job = bless {
-        app => $mock_app
-    }, 'MockJob';
-    
-    # Mock logger methods
-    {
-        package MockLogger;
-        sub info { shift; say "INFO: @_" if $ENV{TEST_VERBOSE} }
-        sub debug { shift; say "DEBUG: @_" if $ENV{TEST_VERBOSE} }
-        sub error { shift; say "ERROR: @_" if $ENV{TEST_VERBOSE} }
-    }
-    
-    # Mock app methods
-    {
-        package MockApp;
-        sub dao { $dao }
-        sub log { shift->{log} }
-        sub minion { shift->{minion} }
-    }
-    
-    # Mock job methods
-    {
-        package MockJob;
-        sub app { shift->{app} }
-        sub id { 'test_job_123' }
-        sub fail { shift; warn "Job failed: @_" }
-        sub finish { }    # the job now finishes with the tenants it covered
-    }
-
-    # Test the job using the backward compatibility method
-    my $job_instance = Registry::Job::AttendanceCheck->new;
-    $job_instance->check_tenant_attendance($mock_job, $db, 'public');
+    run_attendance_check();
 
     # Check that notifications were created
     my $notifications = $db->select('notifications', '*', {
@@ -357,11 +316,7 @@ subtest 'Prevent duplicate reminder notifications' => sub {
         metadata => { event_id => $event_starting_soon->id }
     });
 
-    # The real job, through Minion's own worker.
-    my $minion = Test::Registry::Mojo->new('Registry')->app->minion;
-    my $id     = $minion->enqueue('attendance_check');
-    $minion->perform_jobs_in_foreground( { id => $id } );
-    is $minion->job($id)->info->{state}, 'finished', 'the attendance check ran';
+    run_attendance_check();
 
     # Should still only have 1 reminder notification (no duplicates)
     my $reminder_count = $db->query(
