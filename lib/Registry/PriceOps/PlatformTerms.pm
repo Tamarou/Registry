@@ -97,6 +97,8 @@ sub platform_version_terms ( $db, $offer_version_id, $payment_plan_id ) {
 # registry payment-processing version with a percentage-of-sales plan and
 # without the holder_is_offerer condition, which marks the platform's offers
 # to itself. Registry only: a studio's own offers live in its own schema.
+# Only versions with no price: signup takes no card, so it cannot be paid for
+# one with a monthly base, and does not offer what it cannot accept.
 sub platform_offers_to_tenants ($db) {
     $db = $db->db if $db isa Registry::DAO;
 
@@ -109,8 +111,9 @@ sub platform_offers_to_tenants ($db) {
             ON p.offer_version_id = v.id AND p.kind = 'percentage_of_sales'
          WHERE r.name = ?
            AND v.published_at IS NOT NULL AND v.superseded_at IS NULL
+           AND v.price_cents = 0
            AND NOT v.conditions \@> '[{"kind": "holder_is_offerer"}]'
-         ORDER BY v.price_cents, p.fraction, o.name
+         ORDER BY p.fraction, o.name
     }, $PAYMENT_PROCESSING )->hashes->map( sub ($row) {
         +{ %{ _entitlement_terms( $row, "offer version '$row->{id}'" ) }, currency => $row->{currency} };
     } )->to_array;

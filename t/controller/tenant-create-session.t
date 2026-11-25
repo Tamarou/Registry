@@ -2,8 +2,8 @@ use 5.42.0;
 use lib          qw(lib t/lib);
 use experimental qw(defer declared_refs);
 
-# Ensure Stripe keys are unset so the TenantPayment step uses its
-# test-mode mock path instead of calling the live Stripe API.
+# Signup calls no Stripe API; unset ambient keys all the same, so nothing
+# here can reach the live one.
 BEGIN { delete @ENV{qw(STRIPE_SECRET_KEY STRIPE_PUBLISHABLE_KEY)} }
 
 use Test::Mojo;

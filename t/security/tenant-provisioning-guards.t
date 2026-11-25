@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 # ABOUTME: Tenant provisioning must fail closed when the platform cannot reach Stripe.
-# ABOUTME: Guards the no-Stripe-keys path in production and setup-intent reuse across runs.
+# ABOUTME: Guards the no-Stripe-keys path in production, and refuses a priced offer signup cannot be paid for.
 
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
@@ -17,6 +17,7 @@ use Registry::DAO qw(Workflow);
 use Registry::DAO::Tenant;
 use Registry::DAO::Offer;
 use Test::Registry::Offers qw( offer_terms );
+use Registry::PriceOps::PlatformTerms qw( platform_offers_to_tenants );
 use Mojo::Home;
 use YAML::XS qw(Load);
 
@@ -37,13 +38,11 @@ my $step = Registry::DAO::WorkflowStep->find( $db,
     { workflow_id => $workflow->id, slug => 'review' } );
 ok $step, 'the signup commit step exists' or BAIL_OUT 'no review step';
 
-# A platform offer to tenants with a monthly base. Solo has none, so without
-# this fixture the paid branch below cannot be reached at all, and the
-# subtests that exercise its guards would pass by never running the code they
-# name.
+# A platform offer to tenants with a monthly base. Signup collects no card, so
+# it cannot be paid for: it must be neither listed nor accepted.
 my $SOLO_V1 = '00000000-0000-0000-0003-000000000001';
-my $paid_offer = Registry::DAO::Offer->create( $db, { name => 'Guard Test Monthly' } );
-my $paid_version_id = $paid_offer->draft( $db, offer_terms( '00000000-0000-0000-0001-000000000001',
+my $priced_offer = Registry::DAO::Offer->create( $db, { name => 'Guard Test Monthly' } );
+my $priced_version_id = $priced_offer->draft( $db, offer_terms( '00000000-0000-0000-0001-000000000001',
     price_cents   => 19900,
     payment_plans => [ { id => 'revenue_share', kind => 'percentage_of_sales', fraction => 0.02 } ],
 ) )->publish($db)->id;
@@ -62,9 +61,8 @@ sub new_run_with_profile ( $slug, %opt ) {
             billing_email     => "admin\@$slug.example",
         },
         users => [ { username => "admin\@$slug.example", user_type => 'admin' } ],
-        # Put the run on an offer with a monthly base, so the step takes the
-        # branch that collects a card instead of the free-plan commit.
-        $opt{paid} ? ( selected_offer_version => $paid_version_id ) : (),
+        # A choice carried in run data, as the review page stores it.
+        $opt{chosen} ? ( selected_offer_version => $opt{chosen} ) : (),
     } );
     return $run;
 }
@@ -74,39 +72,26 @@ sub tenant_exists ($slug) {
 }
 
 # The path t/user-journeys/alex/01-acquire-tenant.t drives: no keys, so no
-# payment is possible, so provision directly. That is right for development and
-# test, and catastrophic in production -- absent keys there means a
-# misconfiguration (a half-finished key rotation, say), and reading that as
-# "payment not required" turns anonymous signup into a tenant factory with live
-# wildcard subdomains and outbound invitation email.
-subtest 'without Stripe keys, production refuses to provision' => sub {
+# Stripe, and signup takes no card anyway -- so provision. That is right for
+# development and test, and catastrophic in production -- absent keys there
+# means a misconfiguration (a half-finished key rotation, say), and a tenant
+# provisioned while the platform cannot reach Stripe can never take a payment.
+subtest 'production without stripe keys refuses signup' => sub {
     local $ENV{MOJO_MODE} = 'production';
     delete local $ENV{STRIPE_SECRET_KEY};
     delete local $ENV{STRIPE_PUBLISHABLE_KEY};
 
-    my $run    = new_run_with_profile('guard_prod');
-    my $result = $step->process( $db, { collect_payment_method => 1, offer_version => $SOLO_V1 }, $run );
+    # Posting the old card-collection flag changes nothing.
+    for my $form ( { terms_accepted => 1 }, { collect_payment_method => 1 } ) {
+        my ($flag) = keys %$form;
+        my $slug   = "guard_prod_$flag";
+        my $run    = new_run_with_profile($slug);
+        my $result = $step->process( $db, { %$form, offer_version => $SOLO_V1 }, $run );
 
-    ok !$result->{tenant_created}, 'no tenant is reported as created';
-    ok !tenant_exists('guard_prod'), 'and none exists in the database';
-    ok $result->{errors} && @{ $result->{errors} }, 'an error is returned instead';
-};
-
-# The same guard, on a free plan, which is every signup today. It used to live
-# on the card-collection branch, which a free plan never reaches -- so checking
-# it there and only there would have silently stopped applying the day the
-# payment page left the funnel.
-subtest 'the production guard covers the free-plan commit too' => sub {
-    local $ENV{MOJO_MODE} = 'production';
-    delete local $ENV{STRIPE_SECRET_KEY};
-    delete local $ENV{STRIPE_PUBLISHABLE_KEY};
-
-    my $run    = new_run_with_profile('guard_prod_free');
-    my $result = $step->process( $db, { terms_accepted => 1, offer_version => $SOLO_V1 }, $run );
-
-    ok !$result->{tenant_created}, 'no tenant is reported as created';
-    ok !tenant_exists('guard_prod_free'), 'and none exists in the database';
-    ok $result->{errors} && @{ $result->{errors} }, 'an error is returned instead';
+        ok !$result->{tenant_created}, "$flag: no tenant is reported as created";
+        ok !tenant_exists($slug), "$flag: and none exists in the database";
+        ok $result->{errors} && @{ $result->{errors} }, "$flag: an error is returned instead";
+    }
 };
 
 subtest 'without Stripe keys, development still provisions' => sub {
@@ -114,38 +99,41 @@ subtest 'without Stripe keys, development still provisions' => sub {
     delete local $ENV{STRIPE_SECRET_KEY};
     delete local $ENV{STRIPE_PUBLISHABLE_KEY};
 
-    my $run    = new_run_with_profile( 'guard_dev', paid => 1 );
-    my $result = $step->process( $db, { collect_payment_method => 1 }, $run );
+    my $run    = new_run_with_profile('guard_dev');
+    my $result = $step->process( $db, { offer_version => $SOLO_V1 }, $run );
 
     ok $result->{tenant_created}, 'the development path is untouched';
     ok tenant_exists('guard_dev'), 'and the tenant is provisioned';
 };
 
-# handle_setup_completion compared the submitted id against the stored one only
-# when a stored one existed, so a run that never reached create_setup_intent
-# skipped the comparison and was left with nothing but Stripe's own lookup --
-# which happily resolves a setup intent belonging to a DIFFERENT run on the
-# same account.
-subtest 'a run that never started payment setup cannot complete one' => sub {
+# Signup takes no card, so an offer with a monthly base is one it cannot be
+# paid for. Fail closed: never listed, and refused however it is chosen.
+subtest 'a priced platform offer is not listed and is refused' => sub {
     local $ENV{MOJO_MODE} = 'development';
-    local $ENV{STRIPE_SECRET_KEY}      = 'sk_test_guard_not_a_real_key';
-    local $ENV{STRIPE_PUBLISHABLE_KEY} = 'pk_test_guard_not_a_real_key';
+    delete local $ENV{STRIPE_SECRET_KEY};
+    delete local $ENV{STRIPE_PUBLISHABLE_KEY};
 
-    my $run = new_run_with_profile( 'guard_replay', paid => 1 );
-    is $run->data->{payment_setup}, undef, 'the run stored no setup intent';
+    ok !( grep { $_->{id} eq $priced_version_id } platform_offers_to_tenants($db)->@* ),
+        'a published priced version is not listed';
 
-    my $result = $step->process( $db,
-        { setup_intent_id => 'seti_1SomethingTheClientChose' }, $run );
+    my $posted = new_run_with_profile('guard_priced_posted');
+    my $result = $step->process( $db, { offer_version => $priced_version_id }, $posted );
+    ok !$result->{tenant_created}, 'posted: no tenant is reported as created';
+    ok !tenant_exists('guard_priced_posted'), 'posted: and none exists';
+    like "@{ $result->{errors} // [] }", qr/choose one of the plans/i, 'posted: the review page asks for a listed plan';
 
-    ok !$result->{tenant_created}, 'no tenant is reported as created';
-    ok !tenant_exists('guard_replay'), 'and none exists in the database';
-    # Asserting the specific message, because without it this subtest passes
-    # either way: an unreachable Stripe throws and the flow fails closed by
-    # accident. That is not a guard -- it is a dependency on the network being
-    # down. Only the explicit check produces this text.
-    like join( ' ', @{ $result->{errors} // [] } ),
-        qr/Payment setup was not started/,
-        'refused by the run-owns-its-intent check, not by a failed Stripe call';
+    my $planted = new_run_with_profile( 'guard_priced_planted', chosen => $priced_version_id );
+    $result = $step->process( $db, {}, $planted );
+    ok !$result->{tenant_created}, 'planted: no tenant is reported as created';
+    ok !tenant_exists('guard_priced_planted'), 'planted: and none exists';
+    like "@{ $result->{errors} // [] }", qr/choose one of the plans/i, 'planted: the review page asks for a listed plan';
+
+    # The provisioning re-check, past the commit's own: a choice that is not
+    # a listed offer never reaches the accept.
+    $result = $step->_provision_tenant( $db, $planted );
+    ok !$result->{tenant_created}, 'provisioning directly: no tenant is reported as created';
+    ok !tenant_exists('guard_priced_planted'), 'provisioning directly: and none exists';
+    like "@{ $result->{errors} // [] }", qr/no longer offered/i, 'provisioning directly: the terms are re-quoted';
 };
 
 done_testing;

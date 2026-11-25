@@ -17,20 +17,21 @@ my $dao = $test_db->db;
 # The resource every platform offer to tenants buys.
 my $PAYMENT_PROCESSING = '00000000-0000-0000-0001-000000000001';
 
-# A platform offer to tenants: a draft, published unless asked otherwise.
-sub platform_offer ( $name, $cents, %opt ) {
+# A platform offer to tenants at its own rate: a draft, published unless asked
+# otherwise. No monthly base: signup lists no offer it would need a card for.
+sub platform_offer ( $name, $fraction, %opt ) {
     my $offer = Registry::DAO::Offer->create( $dao->db, { name => $name } );
     my $version = $offer->draft( $dao->db, offer_terms( $PAYMENT_PROCESSING,
-        price_cents   => $cents,
-        payment_plans => [ { id => 'revenue_share', kind => 'percentage_of_sales', fraction => 0.02 } ],
+        price_cents   => 0,
+        payment_plans => [ { id => 'revenue_share', kind => 'percentage_of_sales', fraction => $fraction } ],
     ) );
     return $opt{draft} ? $version : $version->publish( $dao->db );
 }
 
 subtest 'Test data setup' => sub {
-    ok platform_offer( 'Registry Basic',        10000 )->id, 'Basic offer published';
-    ok platform_offer( 'Registry Professional', 20000 )->id, 'Professional offer published';
-    ok platform_offer( 'Registry Enterprise',   50000 )->id, 'Enterprise offer published';
+    ok platform_offer( 'Registry Basic',        0.03 )->id, 'Basic offer published';
+    ok platform_offer( 'Registry Professional', 0.04 )->id, 'Professional offer published';
+    ok platform_offer( 'Registry Enterprise',   0.05 )->id, 'Enterprise offer published';
 };
 
 subtest 'Create workflow with pricing plan selection step' => sub {
@@ -105,9 +106,9 @@ subtest 'PricingPlanSelection step functionality' => sub {
     # Verify plan data structure
     my $basic_plan = $plans->[ $pos{'Registry Basic'} ];
     ok $basic_plan->{id}, 'Plan has ID';
-    is $basic_plan->{amount_cents}, 10000, 'Plan amount correct';
+    is $basic_plan->{amount_cents}, 0, 'Plan has no monthly base';
     is $basic_plan->{currency}, 'usd', 'Plan currency correct';
-    is $basic_plan->{pricing_configuration}{percentage}, '0.02', 'Plan carries its version rate';
+    is $basic_plan->{pricing_configuration}{percentage}, '0.03', 'Plan carries its version rate';
 };
 
 subtest 'Plan selection processing' => sub {
@@ -170,7 +171,7 @@ subtest 'Error handling' => sub {
     like $result->{_validation_errors}->[0], qr/not available/i, 'Appropriate error message for invalid plan';
 
     # An offer version that exists but is not published
-    my $inactive_plan = platform_offer( 'Inactive Plan', 15000, draft => 1 );
+    my $inactive_plan = platform_offer( 'Inactive Plan', 0.035, draft => 1 );
 
     $result = $pricing_step->process($dao->db, {
         selected_plan_id => $inactive_plan->id
@@ -178,6 +179,18 @@ subtest 'Error handling' => sub {
 
     ok $result->{_validation_errors}, 'Error when plan not available for platform';
     like $result->{_validation_errors}->[0], qr/not available/i, 'Appropriate error message for unavailable plan';
+
+    # A published offer with a monthly base: signup takes no card, so it is
+    # neither listed nor selectable.
+    my $priced = Registry::DAO::Offer->create( $dao->db, { name => 'Priced Plan' } )->draft( $dao->db,
+        offer_terms( $PAYMENT_PROCESSING,
+            price_cents   => 15000,
+            payment_plans => [ { id => 'revenue_share', kind => 'percentage_of_sales', fraction => 0.02 } ],
+        ) )->publish( $dao->db );
+    ok !( grep { $_->{id} eq $priced->id } $pricing_step->process( $dao->db, {} )->{data}{pricing_plans}->@* ),
+        'a priced plan is not listed';
+    $result = $pricing_step->process( $dao->db, { selected_plan_id => $priced->id } );
+    like $result->{_validation_errors}->[0], qr/not available/i, 'and selecting it is refused';
 };
 
 subtest 'Template method' => sub {

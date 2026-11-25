@@ -9,8 +9,8 @@
 # enumerated in #426, and this suite should be reshaped only when they exist.
 
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
-# The payment step provisions directly when no Stripe keys are configured.
-# Ambient keys would send it to create_setup_intent and a live API call.
+# Signup calls no Stripe API; unset ambient keys all the same, so nothing
+# here can reach the live one.
 BEGIN { delete @ENV{qw(STRIPE_SECRET_KEY STRIPE_PUBLISHABLE_KEY)} }
 
 use 5.42.0;

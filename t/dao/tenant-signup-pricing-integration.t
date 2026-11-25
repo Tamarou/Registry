@@ -19,11 +19,12 @@ my $dao = $test_db->db;
 my $PAYMENT_PROCESSING = '00000000-0000-0000-0001-000000000001';
 
 subtest 'Integration test setup' => sub {
-    # A published platform offer to tenants with a monthly base.
+    # A published platform offer to tenants beside Solo. No monthly base:
+    # signup takes no card, so it lists no offer that would need one.
     my $offer = Registry::DAO::Offer->create( $dao->db, { name => 'Registry Enterprise' } );
     my $enterprise = $offer->draft( $dao->db, offer_terms( $PAYMENT_PROCESSING,
-        price_cents   => 50000,    # $500.00 in cents
-        payment_plans => [ { id => 'revenue_share', kind => 'percentage_of_sales', fraction => 0.01 } ],
+        price_cents   => 0,
+        payment_plans => [ { id => 'revenue_share', kind => 'percentage_of_sales', fraction => 0.04 } ],
     ) )->publish( $dao->db );
 
     ok $enterprise->id, 'Enterprise offer published';
@@ -81,7 +82,7 @@ subtest 'Full tenant signup integration test' => sub {
     my ($enterprise_plan) = grep { $_->{plan_name} eq 'Registry Enterprise' }
         @{ $pricing_result->{data}->{pricing_plans} };
     ok $enterprise_plan, 'Enterprise plan available';
-    is $enterprise_plan->{amount_cents}, 50000, 'Plan amount correct';
+    is $enterprise_plan->{amount_cents}, 0, 'Plan has no monthly base';
 
     # Select the enterprise plan through the run (which merges returned data)
     my $selection_result = $run->process($dao->db, $pricing_step_obj, {
@@ -101,10 +102,10 @@ subtest 'Full tenant signup integration test' => sub {
     my $payment_config = $payment_step_obj->get_subscription_config($dao->db, $run);
 
     is $payment_config->{plan_name}, 'Registry Enterprise', 'Payment uses selected plan name';
-    is $payment_config->{monthly_amount}, 50000, 'Payment uses selected plan amount';
+    is $payment_config->{monthly_amount}, 0, 'Payment uses selected plan amount';
     is $payment_config->{trial_days}, 0, 'An offer version declares no trial';
-    is $payment_config->{formatted_price}, '$500/month', 'Payment formats price correctly';
-    is $payment_config->{description}, '$500 a month, 1% of each payment you take',
+    is $payment_config->{formatted_price}, 'Free', 'Payment formats price correctly';
+    is $payment_config->{description}, '$0 a month, 4% of each payment you take',
         'Payment describes the selected version from its own terms';
 
     # Test payment data preparation
@@ -113,7 +114,7 @@ subtest 'Full tenant signup integration test' => sub {
     ok $payment_data->{billing_summary}, 'Billing summary prepared';
     is $payment_data->{billing_summary}->{organization_name}, 'Test Enterprise Organization', 'Organization name correct';
     is $payment_data->{billing_summary}->{plan_details}->{plan_name}, 'Registry Enterprise', 'Plan details use selected plan';
-    is $payment_data->{billing_summary}->{plan_details}->{formatted_price}, '$500/month', 'Plan price formatted correctly';
+    is $payment_data->{billing_summary}->{plan_details}->{formatted_price}, 'Free', 'Plan price formatted correctly';
 };
 
 subtest 'Backwards compatibility test' => sub {

@@ -60,11 +60,6 @@ subtest 'provisioning grants the published platform offer' => sub {
             admin_username        => "planadmin_$$",
             admin_user_type       => 'admin',
             selected_offer_version => '00000000-0000-0000-0003-000000000001',
-            subscription          => {
-                stripe_subscription_id => 'sub_test_' . time(),
-                trial_ends_at          => time() + (30 * 24 * 60 * 60),
-                status                 => 'trialing',
-            },
         },
     });
 
