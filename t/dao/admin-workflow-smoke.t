@@ -442,6 +442,7 @@ subtest 'Pricing: PricingPlanBasics step' => sub {
         class => 'Registry::DAO::WorkflowStep' });
 
     my $run  = $workflow->new_run($db);
+    $run->update_data($db, { __tenant_slug => q{registry} });
     my $step = Registry::DAO::WorkflowSteps::PricingPlanBasics->find($db, {
         workflow_id => $workflow->id,
         slug        => 'plan-basics',

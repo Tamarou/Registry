@@ -67,6 +67,7 @@ my $step5 = Registry::DAO::WorkflowStep->create($db, {
 
 # Create a workflow run
 my $run = $workflow->new_run($db);
+$run->update_data($db, { __tenant_slug => q{registry} });
 
 subtest 'Step 1: Plan Basics' => sub {
     my $step = Registry::DAO::WorkflowSteps::PricingPlanBasics->new(
