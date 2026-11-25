@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
-# ABOUTME: The summer-camp payment page with no Stripe key says what will happen, never "demo".
-# ABOUTME: A $0 cart offers plain "Complete Registration"; a priced cart shows the refusal and no submit.
+# ABOUTME: The summer-camp payment page says what will happen, never "demo": a $0 cart completes plainly,
+# ABOUTME: a priced cart with no Stripe key and a cart that cannot be priced show their refusal and no submit.
 use 5.42.0;
 use warnings;
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
@@ -32,11 +32,14 @@ my $t = Test::Registry::Mojo->new('Registry');
 my $workflow     = $dao->find( Workflow => { slug => 'summer-camp-registration' } );
 my $payment_step = Registry::DAO::WorkflowStep->find( $db, { workflow_id => $workflow->id, slug => 'payment' } );
 
+# A session priced at $cents, or with no plan at all when $cents is undef.
 sub session_at ($cents) {
     my $session = Registry::DAO::Session->create( $db, {
-        name => "Week at $cents", start_date => '2099-07-02', end_date => '2099-07-09', status => 'published' } );
+        name => 'Week at ' . ( $cents // 'no price' ), start_date => '2099-07-02', end_date => '2099-07-09',
+        status => 'published' } );
     Registry::DAO::PricingPlan->create( $db, {
-        session_id => $session->id, plan_name => "At $cents", plan_type => 'standard', amount_cents => $cents } );
+        session_id => $session->id, plan_name => "At $cents", plan_type => 'standard', amount_cents => $cents } )
+        if defined $cents;
     return $session;
 }
 
@@ -70,6 +73,16 @@ subtest 'a priced cart with no key shows the refusal' => sub {
         ->content_like( qr/\Q$refusal\E/, 'the refusal is shown' )
         ->element_exists_not( 'button[type="submit"]', 'with nothing to submit' )
         ->content_unlike( qr/Proceed to Payment/, 'and no offer to pay' );
+};
+
+subtest 'a cart that cannot be priced shows its refusal' => sub {
+    # Even with a key: the refusal is about the price, not Stripe.
+    local $ENV{STRIPE_SECRET_KEY} = 'sk_test_placeholder';
+    my $refusal = Registry::DAO::WorkflowSteps::Payment->unpriced_cart_refusal( {}, [] );
+    page_for( session_at(undef) )
+        ->content_like( qr/\Q$refusal\E/, 'the refusal is shown' )
+        ->content_unlike( qr/No payment is needed/, 'not that it is free' )
+        ->element_exists_not( 'button[type="submit"]', 'with nothing to submit' );
 };
 
 done_testing;

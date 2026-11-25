@@ -122,6 +122,9 @@ method prepare_payment_data ($db, $run) {
     return {
         total => $payment_info->{total},
         items => $payment_info->{items},
+        # Shown instead of the agreement form: submitting would be refused.
+        unpriced_refusal => __PACKAGE__->unpriced_cart_refusal(
+            $payment_info, $run->data->{enrollment_items} ),
         # The ways this cart may be paid. The template shows the choice only
         # when there is more than one.
         schedule_options => $payment_info->{schedule_options},

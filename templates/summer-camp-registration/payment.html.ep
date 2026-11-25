@@ -247,10 +247,13 @@
                 }
             }
         </script>
-    <% } elsif (($step_data->{total} // 0) > 0 && !$ENV{STRIPE_SECRET_KEY}) { %>
-        %# A priced cart with no Stripe key is refused at submit; say so here.
+    <% } elsif (my $refusal = $step_data->{unpriced_refusal}
+            // ( ($step_data->{total} // 0) > 0 && !$ENV{STRIPE_SECRET_KEY}
+                 ? Registry::DAO::WorkflowSteps::Payment->payment_unavailable_message : undef )) { %>
+        %# A cart that cannot be priced, or a priced cart with no Stripe key, is
+        %# refused at submit; say so here instead of offering the form.
         <div class="alert alert-error" role="alert">
-            <p><%= Registry::DAO::WorkflowSteps::Payment->payment_unavailable_message %></p>
+            <p><%= $refusal %></p>
         </div>
         <a href="<%= url_for("workflow_step", workflow => $workflow, run => $run->id, step => 'session-selection') %>"
            class="btn" data-variant="secondary">Back</a>
