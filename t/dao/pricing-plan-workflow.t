@@ -416,6 +416,7 @@ subtest 'Integration: Complete Workflow Flow' => sub {
     is $created_plan->plan_name, 'Integration Test Plan', 'Plan name persisted';
     is $created_plan->amount_cents + 0, 4999, 'Amount persisted in cents';
     is $created_plan->pricing_configuration->{resources}{classes_per_month}, 20, 'Resource quota persisted';
+    is $created_plan->metadata->{offering_tenant_id}, $registry_id, 'Authored by the registry row';
 };
 
 subtest 'Step 4 can actually render' => sub {

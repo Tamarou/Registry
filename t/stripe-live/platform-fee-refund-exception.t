@@ -149,7 +149,7 @@ subtest 'method refunds the given amount once per key and writes no fee column' 
     my ( $direct, $direct_fee ) = refunded_charge();
     my $before = $tdb->select( 'payments', '*', { id => $direct->id } )->hash;
     my $send   = sub { settle( $direct->refund_platform_fee_async( $tdb,
-        { amount_cents => 40, idempotency_key => "fee-direct:$$" } ) ) };
+        { amount_cents => 40, idempotency_key => "fee-direct:$direct_fee" } ) ) };
 
     my $first = $send->();
     like $first->{id}, qr/^fr_/, 'Stripe answered with a fee refund';

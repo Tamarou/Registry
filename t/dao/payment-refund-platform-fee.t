@@ -68,6 +68,8 @@ subtest 'fee refund plan' => sub {
 
     is_deeply $plan->( $fee->(), 'ch_plan', 250 ), { send => 250 }, 'the recorded amount is sent';
     is_deeply $plan->( $fee->(), 'ch_plan', undef ), { send => 250 }, 'no amount sends what is left';
+    is_deeply $plan->( $fee->( amount_refunded => 50 ), 'ch_plan', undef ), { send => 200 },
+        'no amount sends what is left after a partial return';
     is_deeply $plan->( $fee->( amount_refunded => 250 ), 'ch_plan', 250 ), { returned => 250 },
         'a fee already returned in full sends nothing';
     is_deeply $plan->( $fee->( amount_refunded => 200 ), 'ch_plan', 150 ), { send => 50 },
