@@ -24,7 +24,7 @@ $ENV{DB_URL} = $test_db->uri;
 import_all_workflows($dao);
 
 my %user;
-for my $role (qw( admin staff )) {
+for my $role (qw( admin staff parent )) {
     $user{$role} = Test::Registry::Fixtures::create_user( $dao,
         { username => "sched_$role", name => "Sched \u$role", email => "$role\@sched.test", user_type => $role } );
     join_tenant( $dao, $user{$role}, $role );
@@ -33,9 +33,10 @@ my $room  = Test::Registry::Fixtures::create_location( $db, { name => 'Kiln room
 my $class = Registry::DAO::Project->create( $db,
     { name => 'Raku', seats_per_occurrence => 6, metadata => { location_id => $room->id } } );
 
-sub client ($user) {
+# A client with its own session, signed in as $user (none for anonymous).
+sub client ( $user = undef ) {
     my $t = Test::Registry::Mojo->new('Registry');
-    authenticate_as( $t, $user );
+    authenticate_as( $t, $user ) if $user;
     return $t;
 }
 
@@ -87,8 +88,31 @@ subtest 'a refused schedule stays on the form with its message' => sub {
     $t->get_ok($back)->status_is(200)->content_like( qr/Choose at least one weekday/, 'no weekday is refused with a message' );
 };
 
-subtest 'staff are refused at the route' => sub {
-    client( $user{staff} )->get_ok('/in-studio-schedule')->status_is(403);
+subtest 'staff and parents are refused at the route' => sub {
+    client( $user{$_} )->get_ok('/in-studio-schedule')->status_is( 403, "$_ is refused" ) for qw( staff parent );
+};
+
+subtest 'an anonymous visitor is sent to log in' => sub {
+    my $t = client();
+    $t->get_ok('/in-studio-schedule')->status_is(302)->header_is( Location => '/auth/login', 'a GET is sent to log in' );
+    $t->post_ok( '/in-studio-schedule' => form => {} )->status_is(302)
+        ->header_is( Location => '/auth/login', 'and so is a POST' );
+};
+
+subtest 'staff posting to an admin\'s run are refused and create nothing' => sub {
+    my $admin = client( $user{admin} );
+    $admin->get_ok('/in-studio-schedule')->status_is(200);
+    my $action = $admin->tx->res->dom->at('#workflow-content form')->attr('action');
+    my $events = sub { $db->query( 'SELECT count(*) FROM events WHERE project_id = ?', $class->id )->array->[0] };
+    my $before = $events->();
+    my $staff  = client( $user{staff} );
+    $staff->post_ok( $action => form => {
+        class_project_id => $class->id, location_id => '', teacher_id => $user{staff}->id,
+        weekdays => 'saturday', start_time => '10:00', duration => 60,
+        first_date => '2027-05-01', last_date => '2027-05-29',
+    } )->status_is( 403, 'the POST is refused' );
+    $staff->content_unlike( qr/CSRF token validation failed/, 'for the role, not for a missing token' );
+    is $events->(), $before, 'and no occurrence is created';
 };
 
 done_testing;
