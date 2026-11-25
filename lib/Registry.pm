@@ -1441,6 +1441,11 @@ class Registry :isa(Mojolicious) {
             # of any tenant but the one holding it gets no further.
             'platform-fee-refund-exception' => ['admin'],
 
+            # Applies refunds Stripe reported to entitlements. A background
+            # workflow the Connect endpoint starts and the driver runs, guarded
+            # as attendance-check is, for admins only: nobody walks into it.
+            'entitlement-stripe-move' => ['admin'],
+
             # A parent acts on their own enrollment; staff and admins reach the
             # same flows on a family's behalf.
             ( map { $_ => [ 'parent', 'admin', 'staff' ] } qw(

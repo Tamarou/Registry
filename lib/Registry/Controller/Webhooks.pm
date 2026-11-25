@@ -7,6 +7,8 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
     use Digest::SHA qw(hmac_sha256_hex);
     use Mojo::Promise;
     use Registry::Service::Stripe;
+    use Registry::DAO::Workflow;
+    use Registry::DAO::WorkflowSteps::ApplyStripeRefund;
 
     method stripe() {
         my $event = $self->_verified_event('STRIPE_WEBHOOK_SECRET') or return;
@@ -197,7 +199,31 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             return;
         }
 
+        $self->_start_stripe_move( $tenant->{slug}, $event ) if $tenant;
         $self->render( status => 200, text => 'OK' );
+    }
+
+    # A stored refund of a payment Registry made in $slug is applied by an
+    # entitlement-stripe-move run that the driver continues; nobody waits on
+    # it. One whose intent is on none of $slug's payments starts nothing.
+    method _start_stripe_move ($slug, $event) {
+        my @intents = map { $_->{payment_intent} }
+            Registry::DAO::WorkflowSteps::ApplyStripeRefund->refunds($event);
+        return unless @intents;
+        my $dao = $self->app->dao;
+        $self->_enqueue_after_commit( $dao, $slug, sub ($minion) {
+            my $tdb = $dao->connect_schema($slug)->db;
+            return unless $tdb->select( 'payments', 'id',
+                { stripe_payment_intent_id => { -in => \@intents } } )->rows;
+            my $workflow = Registry::DAO::Workflow->find( $tdb, { slug => 'entitlement-stripe-move' } )
+                or die "tenant $slug has no entitlement-stripe-move workflow\n";
+            my $run = $workflow->new_run( $tdb, { data => { stripe_event_id => $event->{id} } } );
+            # Three attempts: the driver marks the run halted only on the last.
+            $minion->enqueue( continue_workflow_run =>
+                [ { tenant => $slug, run_id => $run->id } ], { attempts => 3 } );
+        }, 'entitlement-stripe-move', "event $event->{id}",
+           "Stripe event $event->{id} was stored but not applied to entitlements: apply it by hand.",
+           { stripe_event_id => $event->{id} } );
     }
 
     # Events that happened on a connected account. Stripe names that account

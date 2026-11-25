@@ -1,0 +1,9 @@
+%# ABOUTME: entitlement-stripe-move's only screen, for an admin who opens it: the workflow runs in the background.
+%# ABOUTME: Refunds Stripe reports are applied by the Connect endpoint's runs; there is nothing to fill in here.
+% extends 'layouts/workflow';
+% title 'Stripe refunds';
+
+<section class="card">
+  <h2>Stripe refunds are applied automatically</h2>
+  <p>When Stripe reports a refund on your account, Registry applies it to the bookings that payment bought. There is nothing to do here.</p>
+</section>
