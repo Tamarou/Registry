@@ -188,10 +188,6 @@ subtest 'a workflow with the public mark imports without a public column' => sub
         delete $from_db->{first_step};
     }
 
-    # The public mark is a declaration in the file, never stored, so it
-    # cannot come back out of the database.
-    delete $original->{public};
-
             is_deeply $from_db, $original, "able to round trip $file";
         }
         catch ($e) {
