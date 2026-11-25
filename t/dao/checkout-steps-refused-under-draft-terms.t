@@ -109,7 +109,7 @@ subtest 'change fee refused before any write' => sub {
 
 subtest 'enrollment payment refused before any write' => sub {
     my $location = Registry::DAO::Location->create( $tdb, {
-        name => 'DS Studio', metadata => {},
+        name => 'DS Studio', metadata => {}, time_zone => 'America/New_York',
         address_info => { street_address => '1 Way', city => 'T', state => 'TX', postal_code => '78701' } } );
     my $teacher = Registry::DAO::User->create( $tdb, {
         name => 'DS Teacher', username => "ds_teacher_$$", email => "ds_teacher_$$\@test.example", user_type => 'staff' } );

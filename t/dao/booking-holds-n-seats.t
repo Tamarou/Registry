@@ -44,7 +44,8 @@ sub run_id () {
 sub occurrences ( $count, %terms ) {
     my $class = $studio->insert( 'projects', { name => 'Class ' . ++$made, slug => "class-$made" },
         { returning => 'id' } )->hash->{id};
-    my $room = $studio->insert( 'locations', { name => 'Room ' . ++$made, slug => "room-$made" },
+    my $room = $studio->insert( 'locations', { name => 'Room ' . ++$made, slug => "room-$made",
+            time_zone => 'America/New_York' },
         { returning => 'id' } )->hash->{id};
     my @resources = map {
         my $event = $studio->insert( 'events', {
