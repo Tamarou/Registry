@@ -577,7 +577,7 @@ every refund (ADR 003).
 - **Late payment after the hold lapsed (7a).** When a booking's payment
   succeeds after its seat hold lapsed, `CompleteBooking` takes the seats again
   under the occurrence's lock if they still fit, and books them. If they do
-  not, nothing is booked: it records `booking_refund` on the run, emails the
+  not, or the class has already started or ended, nothing is booked: it records `booking_refund` on the run, emails the
   booker and alerts the studio's admins ("A paid booking could not be made: it
   is being refunded"), and refunds the whole charge through
   `Payment->refund_async` under `Idempotency-Key: refund:booking:<run id>`,
