@@ -68,7 +68,7 @@ Summer camps are implemented using this architecture as follows:
 ```
 events
 ├── id (uuid, PK)
-├── time (timestamp)
+├── time (timestamptz: an instant, no zone recorded)
 ├── duration (integer, minutes)
 ├── location_id (uuid, FK)
 ├── project_id (uuid, FK, optional)
@@ -169,6 +169,28 @@ For date-based operations:
 - Session date range is derived from the earliest and latest Event dates
 - System should provide helper methods to calculate these derived properties
 - When displaying Sessions, date ranges should be calculated dynamically or cached
+
+### Local Time
+
+An event's `time` is an instant (`timestamptz`); it records no zone. The
+studio's IANA time zone (e.g. `America/New_York`) lives on its location, as
+`locations.time_zone`: NOT NULL, checked against Postgres's
+`pg_timezone_names` (sqitch `location-time-zone`). Changing a location's zone
+moves no stored instant, only how it reads locally.
+
+Read an occurrence's local start through the DAO:
+
+```perl
+my $local = $event->local_start($db);
+# { start => '2027-03-14 01:30', date => '2027-03-14',
+#   utc_offset => '-05:00', time_zone => 'America/New_York' }
+```
+
+From `t/dao/studio-time-zone.t`, at a New York location: `2027-03-14T06:30:00Z`
+reads `2027-03-14 01:30` (`-05:00`, EST) and `2027-03-14T07:30:00Z` reads
+`2027-03-14 03:30` (`-04:00`, EDT, after the spring change), both on local date
+`2027-03-14`. In the fall-back hour `2027-11-07T05:30:00Z` and
+`2027-11-07T06:30:00Z` both read `01:30`; `utc_offset` tells them apart.
 
 ### Status Workflow
 
