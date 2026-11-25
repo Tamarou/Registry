@@ -1018,6 +1018,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     #
     # All or nothing; joins the caller's transaction. Returns { entitlement,
     # workflows => { <slug> => copied | identical | replaced | kept: <why> } }.
+    # Expects $db on the registry search path: on a tenant's, the accept finds no such version and refuses.
     sub accept_platform_offer ( $class, $db, $tenant, $grant, $rulings = undef ) {
         $db = $db->db if $db isa Registry::DAO;
         my $tx = $db->dbh->{AutoCommit} ? $db->begin : undef;
@@ -1039,6 +1040,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
                     WHERE v.id = ?)
              ORDER BY w.slug
         }, $version_id )->hashes->each ) {
+            next if Registry::WorkflowDivergence::never_copied( $wf->{slug} );    # the platform's alone, granted or not
             my $schema = $db->dbh->quote_identifier( $tenant->slug );
             my $held   = $db->query( "SELECT id FROM $schema.workflows WHERE slug = ?", $wf->{slug} )->array;
             if ($held) {
@@ -1125,7 +1127,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
 
     # provision: single canonical path for creating a fully-provisioned tenant.
     # Creates the tenant row, clones the schema, copies seed data, copies all
-    # workflows from registry (except tenant-signup), copies users, and copies
+    # workflows from registry (except those never_copied), copies users, and copies
     # OutcomeDefinitions.  The entire operation runs inside a single transaction
     # so a failure partway through does not leave orphaned rows or a half-cloned
     # schema.  Returns the created Tenant object.
@@ -1247,8 +1249,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
             # tenant-signup onboards tenants; registry-storefront is the
             # platform's own shop window. Handing either to a tenant is the
             # mirror of the bug that made the apex serve a tenant's storefront.
-            next if $wf->{slug} eq 'tenant-signup';
-            next if $wf->{slug} eq 'registry-storefront';
+            next if Registry::WorkflowDivergence::never_copied( $wf->{slug} );
             $class->_copy_platform_workflow( $db, $tenant->slug, $wf );
         }
 

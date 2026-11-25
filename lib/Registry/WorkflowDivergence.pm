@@ -12,6 +12,10 @@ use Mojo::File;
 # Provisioning never copies these to a tenant, so their absence is expected.
 my %NOT_COPIED = map { $_ => 1 } qw( tenant-signup registry-storefront );
 
+# Is workflow $slug the platform's alone, never copied to a tenant? The one
+# list provisioning and accepting the platform's offer both read.
+sub never_copied ($slug) { $NOT_COPIED{$slug} ? 1 : 0 }
+
 # Steps whose template provisioning unlinks in the tenant on purpose (refs #173
 # #229): registry's is the platform's marketing page, and the tenant must fall
 # back to the disk catalog. Only the tenant having no template is expected.
@@ -22,7 +26,7 @@ my %UNLINKED = ( 'tenant-storefront' => { 'program-listing' => 1 } );
 # any step the chain does not reach, by slug.
 sub _workflows ( $db, $schema ) {
     my %by_id = map { $_->{id} => { %$_, steps => [] } }
-      $db->query("SELECT id, slug, first_step FROM $schema.workflows")->hashes->each;
+      $db->query("SELECT id, slug, first_step, roles, public FROM $schema.workflows")->hashes->each;
 
     my ( %steps, %children );
     for my $s ( $db->query( qq{
@@ -63,6 +67,12 @@ sub _compare ( $slug, $platform, $copy ) {
     my @order = map { join ', ', map { $_->{slug} } $_->{steps}->@* } $platform, $copy;
     push @lines, "- `$slug`: steps: registry `$order[0]`; tenant `$order[1]`"
       if $order[0] ne $order[1];
+
+    # Who may run it is the gate's data, so part of what the workflow is.
+    my @roles = map { _name( $_->{roles} && join ', ', sort $_->{roles}->@* ) } $platform, $copy;
+    push @lines, "- `$slug`: roles: registry $roles[0]; tenant $roles[1]" if $roles[0] ne $roles[1];
+    my @public = map { $_->{public} ? 'true' : 'false' } $platform, $copy;
+    push @lines, "- `$slug`: public: registry `$public[0]`; tenant `$public[1]`" if $public[0] ne $public[1];
 
     my %mine = map { $_->{slug} => $_ } $copy->{steps}->@*;
     for my $p ( sort { $a->{slug} cmp $b->{slug} } $platform->{steps}->@* ) {

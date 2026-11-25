@@ -300,6 +300,31 @@ subtest 'copied workflow keeps roles or public mark' => sub {
     ok $row->( 'accept_roles', 'tenant-storefront' )->{public}, 'which is set';
 };
 
+subtest 'platform-only workflow never copied by accept' => sub {
+    Registry::DAO::Workflow->from_yaml( $dao, $home->child(qw( workflows registry-storefront.yaml ))->slurp );
+    my $tenant = bare_tenant('accept_platform_only');
+    my $result = Registry::DAO::Tenant->accept_platform_offer( $db, $tenant,
+        grant( platform_bundle(qw( session-creation registry-storefront )) ) );
+    is copies( 'accept_platform_only', 'registry-storefront' ), 0, "the platform's storefront is not copied";
+    ok !exists $result->{workflows}{'registry-storefront'}, 'nor reported as copied';
+    is copies( 'accept_platform_only', 'session-creation' ), 1, 'the rest of the grant is';
+};
+
+subtest 'a copy differing only in roles is diverged' => sub {
+    my $tenant = bare_tenant('accept_roles_differ');
+    held_copy( 'accept_roles_differ', 'session-creation' );
+    $db->query(q{UPDATE accept_roles_differ.workflows SET roles = '{admin}' WHERE slug = 'session-creation'});
+    my $result = Registry::DAO::Tenant->accept_platform_offer( $db, $tenant, grant(), {} );
+    like $result->{workflows}{'session-creation'}, qr/^kept: diverged, no ruling\n.*roles/s,
+        'not kept as identical: reported as diverged, naming roles';
+
+    my $public = bare_tenant('accept_public_differs');
+    held_copy( 'accept_public_differs', 'session-creation' );
+    $db->query(q{UPDATE accept_public_differs.workflows SET public = true, roles = NULL WHERE slug = 'session-creation'});
+    like Registry::DAO::Tenant->accept_platform_offer( $db, $public, grant(), {} )->{workflows}{'session-creation'},
+        qr/^kept: diverged, no ruling\n.*public/s, 'a public mark the platform lacks is a difference too';
+};
+
 subtest 'the recorded report rules nothing today' => sub {
     is_deeply Registry::WorkflowDivergence::rulings(), {}, '"Ruling: none needed" names no tenant or slug';
 };
