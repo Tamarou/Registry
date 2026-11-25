@@ -57,7 +57,9 @@ subtest 'full create flow with inline new-user contact' => sub {
 
     $t->post_ok($action => form => { action => 'new' })
       ->status_is(200)
-      ->content_like(qr/New Location/, 'landed on details form');
+      ->content_like(qr/New Location/, 'landed on details form')
+      ->element_exists('select[name="time_zone"][required] option[value="America/New_York"]',
+          'details form asks for the time zone from the real zone list');
 
     # Step 2: submit details
     $body = $t->tx->res->body;
@@ -71,6 +73,7 @@ subtest 'full create flow with inline new-user contact' => sub {
         state          => 'FL',
         postal_code    => '32819',
         capacity       => 20,
+        time_zone      => 'America/New_York',
     })->status_is(200)
       ->content_like(qr/Contact Person/, 'landed on contact form');
 
@@ -90,6 +93,7 @@ subtest 'full create flow with inline new-user contact' => sub {
     my $loc = Registry::DAO::Location->find($dao->db, { name => 'Riverside School' });
     ok($loc, 'location created');
     is($loc->capacity, 20, 'capacity stored');
+    is($loc->time_zone, 'America/New_York', 'time zone stored');
     ok($loc->contact_person_id, 'contact_person_id set');
 
     my $user = Registry::DAO::User->find($dao->db, { id => $loc->contact_person_id });

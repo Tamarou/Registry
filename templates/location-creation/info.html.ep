@@ -1,5 +1,11 @@
 <form action="<%= $action %>">
     <input type="text" name="name" placeholder="Location Name" />
+    <select name="time_zone" required>
+        <option value="">Choose the location's time zone</option>
+        % for my $zone (@{ Registry::DAO::Location->time_zones(dao) }) {
+            <option value="<%= $zone %>"><%= $zone %></option>
+        % }
+    </select>
     <!-- TODO: add notes textarea -->
     <input type="submit>Save</input>
 </form>

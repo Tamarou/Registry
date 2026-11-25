@@ -33,7 +33,7 @@ my $existing_user = Registry::DAO::User->create($db, {
     password  => 'x',
 });
 
-my $seeded_location = Registry::DAO::Location->create($db, {
+my $seeded_location = Registry::DAO::Location->create($db, { time_zone => 'America/New_York',
     name              => 'Dr Phillips Elementary',
     address_info      => { city => 'Orlando' },
     capacity          => 25,
@@ -145,6 +145,7 @@ subtest 'details step stores form data in run data for next step' => sub {
         state          => 'FL',
         postal_code    => '32819',
         capacity       => 15,
+        time_zone      => 'America/Chicago',
     }, $run);
 
     ok(!$result->{errors}, 'no errors') or diag(explain($result));
@@ -155,6 +156,20 @@ subtest 'details step stores form data in run data for next step' => sub {
     is($pending->{name}, 'New Studio', 'name carried forward');
     is($pending->{address_info}{city}, 'Orlando', 'address_info carried');
     is($pending->{capacity}, 15, 'capacity carried');
+    is($pending->{time_zone}, 'America/Chicago', 'time zone carried');
+};
+
+subtest 'details step refuses a missing or unknown time zone' => sub {
+    my $step = Registry::DAO::WorkflowStep->find($db, {
+        workflow_id => $workflow->id, slug => 'location-details',
+    });
+    for my $zone (undef, '', 'Mars/Olympus', '+05:00', 'america/new_york') {
+        my $run    = $workflow->new_run($db);
+        my $result = $step->process($db, { name => 'Zoneless', time_zone => $zone }, $run);
+        ok((any { /time zone/i } @{ $result->{errors} // [] }),
+           'refused: ' . ($zone // 'undef'));
+        ok(!$run->data->{location_pending}, '... and nothing pending');
+    }
 };
 
 subtest 'details step pre-populates form when editing' => sub {
@@ -169,6 +184,8 @@ subtest 'details step pre-populates form when editing' => sub {
     is($data->{city}, 'Orlando', 'city pre-filled');
     is($data->{capacity}, 25, 'capacity pre-filled');
     ok($data->{editing}, 'editing flag set');
+    is($data->{time_zone}, 'America/New_York', 'time zone pre-filled');
+    ok((grep { $_ eq 'America/New_York' } @{ $data->{time_zones} }), 'zone list offered');
 };
 
 subtest 'contact step picks an existing user and creates the location' => sub {
@@ -184,6 +201,7 @@ subtest 'contact step picks an existing user and creates the location' => sub {
             slug         => 'studio_a',
             address_info => { city => 'Orlando' },
             capacity     => 10,
+            time_zone    => 'America/New_York',
         },
     });
 
@@ -212,6 +230,7 @@ subtest 'contact step creates a new user inline when asked' => sub {
             slug         => 'studio_b',
             address_info => {},
             capacity     => 8,
+            time_zone    => 'America/New_York',
         },
     });
 
@@ -284,6 +303,7 @@ subtest 'editing a location updates it and keeps the same row' => sub {
         name     => 'Dr Phillips Elementary (Renamed)',
         city     => 'Orlando',
         capacity => 30,
+        time_zone => 'America/Los_Angeles',
     }, $run);
     $contact_step->process($db, {
         contact_mode => 'existing',
@@ -293,6 +313,7 @@ subtest 'editing a location updates it and keeps the same row' => sub {
     my $updated = Registry::DAO::Location->find($db, { id => $seeded_location->id });
     is($updated->name, 'Dr Phillips Elementary (Renamed)', 'name updated');
     is($updated->capacity, 30, 'capacity updated');
+    is($updated->time_zone, 'America/Los_Angeles', 'time zone updated');
 };
 
 done_testing();

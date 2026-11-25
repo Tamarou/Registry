@@ -13,7 +13,8 @@ class Registry::DAO::WorkflowSteps::CreateLocationWithAddress :isa(Registry::DAO
         # Get basic location data
         my %data = (
             name => $form_data->{name} || $run->data->{name}, 
-            metadata => $run->data->{metadata} || {}
+            metadata => $run->data->{metadata} || {},
+            time_zone => $form_data->{time_zone} || $run->data->{time_zone},
         );
         
         # Extract address info from form data
