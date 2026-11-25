@@ -23,13 +23,22 @@ class Registry::DAO::WorkflowSteps::ChoosePlatformOffer :isa(Registry::DAO::Work
         return { platform_offer_version => $offer->{id} };
     }
 
+    # The tenant's platform terms now, with their rate as a percent; undef when
+    # it holds none, the one refusal that means nothing is held. Any other error dies.
+    method _held ( $db, $slug ) {
+        my $terms = eval { platform_terms_for_tenant( $db, $slug ) };
+        unless ($terms) {
+            return undef if $@ =~ /\ATenant '\Q$slug\E' holds no platform entitlement /;
+            die $@;
+        }
+        return { %$terms, rate => Registry::DAO::WorkflowSteps::PublishOfferVersion->percent_of( $terms->{fraction} ) };
+    }
+
     method prepare_template_data ( $db, $run, $params = {} ) {
         my $slug = $db->query('SELECT current_schema()')->array->[0];
         return {
             offers => [ map { __PACKAGE__->listed( $db, $_->{id} ) } platform_offers_to_tenants($db)->@* ],
-            # Dies when the tenant holds none: absence, so there is nothing held to show.
-            held => scalar eval { my $terms = platform_terms_for_tenant( $db, $slug );
-                +{ %$terms, rate => Registry::DAO::WorkflowSteps::PublishOfferVersion->percent_of( $terms->{fraction} ) } },
+            held => $self->_held( $db, $slug ),
         };
     }
 }
