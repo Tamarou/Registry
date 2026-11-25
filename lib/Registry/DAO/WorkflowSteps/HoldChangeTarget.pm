@@ -21,6 +21,10 @@ class Registry::DAO::WorkflowSteps::HoldChangeTarget :isa(Registry::DAO::Workflo
         # refusal below returns before $tx commits, so nothing is left behind.
         my $data = $db->query( 'SELECT data FROM workflow_runs WHERE id = ? FOR UPDATE', $run->id )
             ->expand->hash->{data} // {};
+        # Once a fee charge started against the hold, whatever became of it,
+        # the hold stays: a charge never ends up pointing at a released one.
+        return { stay => 1, errors => ['The change fee is already being paid for this occurrence'] }
+            if defined $data->{owed_payment_id};
         my $entitlement_id = $data->{change_entitlement_id};
         my $entitlement    = $entitlement_id && Registry::DAO::Entitlement->find( $db, { id => $entitlement_id } );
         return { stay => 1, errors => ['Choose a booking to change'] } unless $entitlement;

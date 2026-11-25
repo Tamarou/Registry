@@ -308,4 +308,122 @@ subtest 'succeeded charge with full target needs admin' => sub {
     is reload($run)->data->{__driver}{state}, 'halted', 'its last attempt halts the run for an admin';
 };
 
+# The fee payment, completed as the Connect webhook completes it.
+sub completed ($payment) {
+    $payment->mark_completed( $studio, $payment->stripe_payment_intent_id ) or die 'not completed';
+    return $payment;
+}
+
+# Nothing moved for $e: still on $from's seat, none of $to's, $run's hold held.
+sub unmoved ( $e, $from, $to, $run, $what ) {
+    is scalar $e->units( $studio, $from->id )->@*, 1, "$what: the entitlement keeps its old seat";
+    is_deeply $e->units( $studio, $to->id ), [], "$what: and has none of the target";
+    is hold_state($run), 'held', "$what: the hold is still held, not converted";
+}
+
+subtest 'pending payment does not move' => sub {
+    my ( $version, $from, $to ) = occurrences( \%WINDOW, 72, 96 );
+    my $e   = booking( $version, $from );
+    my $run = held_run( $e, $to );
+    fee_payment($run);
+    ok $run->process( $studio, step('complete'), {} )->{errors}, 'completing with the fee still pending is refused';
+    unmoved( $e, $from, $to, $run, 'pending' );
+};
+
+subtest 'foreign or wrong amount payment does not move' => sub {
+    my ( $version, $from, $to ) = occurrences( \%WINDOW, 72, 96 );
+    my $other = held_run( booking( $version, $from ), $to );
+    my $theirs = completed( fee_payment($other) );
+
+    my $e   = booking( $version, $from );
+    my $run = held_run( $e, $to );
+    $run->update_data( $studio, { owed_payment_id => $theirs->id } );
+    ok $run->process( $studio, step('complete'), {} )->{errors}, "another run's paid fee is refused";
+    unmoved( $e, $from, $to, $run, 'foreign' );
+
+    completed( fee_payment( $run, 999 ) );
+    ok $run->process( $studio, step('complete'), {} )->{errors}, 'a paid amount other than the stamped fee is refused';
+    unmoved( $e, $from, $to, $run, 'wrong amount' );
+};
+
+subtest 'partial move failure rolls back' => sub {
+    my ( $version, $from, $to ) = occurrences( \%WINDOW, 72, 96 );
+    my $e   = booking( $version, $from );
+    my $run = held_run( $e, $to );
+    completed( fee_payment($run) );
+    # The period move is the last write of the move: fail it, after the seats moved.
+    $studio->query( q{CREATE FUNCTION refuse_period() RETURNS trigger LANGUAGE plpgsql
+                      AS $$ BEGIN RAISE EXCEPTION 'period move refused'; END $$} );
+    $studio->query( q{CREATE TRIGGER refuse_period BEFORE UPDATE OF in_effect ON entitlements
+                      FOR EACH ROW EXECUTE FUNCTION refuse_period()} );
+    my $died = !eval { $run->process( $studio, step('complete'), {} ); 1 };
+    my $error = $@;
+    $studio->query('DROP TRIGGER refuse_period ON entitlements');
+    $studio->query('DROP FUNCTION refuse_period()');
+    ok $died, 'the move dies' and like $error, qr/period move refused/, 'where the period moves';
+    unmoved( $e, $from, $to, $run, 'rolled back' );
+    is $to->free_units($studio), 3, 'and the target has only the held seat taken';
+};
+
+subtest 'client payment status ignored' => sub {
+    my ( $version, $from, $to ) = occurrences( \%WINDOW, 72, 96 );
+    my $other  = held_run( booking( $version, $from ), $to );
+    my $theirs = completed( fee_payment($other) );
+    my $e      = booking( $version, $from );
+    my $run    = held_run( $e, $to );
+    fee_payment($run);
+    my $out = $run->process( $studio, step('complete'), {
+        payment_status => 'completed', status => 'completed', paid => 1,
+        payment_id     => $theirs->id, owed_payment_id => $theirs->id, payment_intent_id => 'pi_forged',
+        change_hold    => { fee_cents => 0, hold_id => reload($run)->data->{change_hold}{hold_id} },
+    } );
+    ok $out->{errors}, 'a posted payment status or id does not complete the change';
+    unmoved( $e, $from, $to, $run, 'posted status' );
+};
+
+subtest 'hold refused once charge started' => sub {
+    my ( $version, $from, $to, $later ) = occurrences( \%WINDOW, 72, 96, 120 );
+    my $e    = booking( $version, $from );
+    my $run  = held_run( $e, $to );
+    my $hold = reload($run)->data->{change_hold}{hold_id};
+    fee_payment($run);
+    my $again = $run->process( $studio, step('hold-target'), { target_occurrence_id => $later->id } );
+    ok $again->{errors}, 'holding again once the fee charge started is refused';
+    is reload($run)->data->{change_hold}{hold_id}, $hold, 'the run keeps the hold the charge is for';
+    is $studio->select( 'holds', 'state', { id => $hold } )->array->[0], 'held', 'which stays held';
+    is $later->free_units($studio), 4, 'and no other seat is held';
+};
+
+subtest 'no path refunds change fee' => sub {
+    my ( $version, $from, $to ) = occurrences( \%WINDOW, 72, 96 );
+    my @runs;
+
+    my $failed = held_run( booking( $version, $from ), $to );
+    fee_payment($failed)->_record_intent_failure_write( $studio, 'Your card was declined.' );
+    lapse($failed);
+    $failed->process( $studio, step('complete'), {} );
+    push @runs, $failed;
+
+    my $early = held_run( booking( $version, $from ), $to );
+    lapse($early);
+    $early->process( $studio, step('pay'), {} );
+    push @runs, $early;
+
+    my $full = held_run( booking( $version, $from ), $to );
+    my $paid = fee_payment($full);
+    lapse($full);
+    booking( $version, $to, $to->free_units($studio) );
+    succeeded($paid)->status_is(200);
+    drive();
+    push @runs, $full;
+
+    my @payments = map { payments_of($_)->@* } @runs;
+    ok !grep( { $_->{status} =~ /refund/ } @payments ), 'no fee payment is refunded or owed a refund'
+        or diag explain [ map { $_->{status} } @payments ];
+    is_deeply [ map { $_->{status} } grep { $_->{id} eq $paid->id } @payments ], ['completed'],
+        'the paid fee with no seat left stays completed';
+    my $refunds = $minion->jobs( { tasks => [ grep { /refund/ } keys $minion->tasks->%* ] } )->total;
+    is $refunds, 0, 'and no refund job is queued';
+};
+
 done_testing;
