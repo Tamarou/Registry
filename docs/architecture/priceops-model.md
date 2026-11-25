@@ -89,10 +89,10 @@ A version carries:
   `family_holds_entitlement` (a sibling rate) and `holder_is_offerer` (the
   platform's offers to itself).
 
-**Immutable once published, enforced in the database.** The trigger
+**Immutable once published, enforced in the database.** The trigger function
 `offer_version_immutable` (`sql/deploy/priceops-offer-versions.sql`) refuses
 any change to a published version except setting `superseded_at` once, and
-refuses deleting one. `offer_version_payment_plan_immutable`
+refuses deleting one. The function `offer_version_payment_plan_immutable`
 (`sql/deploy/priceops-offer-policies.sql`) does the same for its payment
 plans. A version is published only with at least one payment plan and a refund
 policy. A change to an offer is a new version. `OfferVersion->publish`
@@ -111,7 +111,7 @@ An entitlement records:
 - **the payer**, `payer_user_id`, set only when someone other than the holder
   paid, such as a parent for a child;
 - **the stamp**: `offer_version_id` and `payment_plan_id`, with `offer_id` and
-  `plan_kind` copied at insert. The trigger `entitlement_stamp` refuses a draft
+  `plan_kind` copied at insert. The trigger function `entitlement_stamp` refuses a draft
   version and refuses any later change to the stamp;
 - **the in-effect period**, `in_effect`, a half-open `tstzrange`. A period
   ending at T and one starting at T do not overlap;
@@ -370,13 +370,14 @@ Never add a branch on an offer's name or a plan's name.
 ## Not yet built
 
 - Metering (step 9).
-- Instalment, recurring and pay-as-you-go payment plans.
+- Instalment, recurring and pay-as-you-go as PriceOps payment plan kinds.
+  (After-school instalments exist on the separate `pricing_plans` path.)
 - Evaluating conditions at acceptance. `family_holds_entitlement` is stored and
   shape-checked but nothing reads it yet. `holder_is_offerer` is enforced by
   its trigger in `registry`.
 - A workflow that sells a seat. `OneTimePayment`, holds and
-  `RecordEntitlementUse` are built and tested, and in-studio booking (step 7)
-  composes them.
+  `RecordEntitlementUse` are built and tested; in-studio booking (step 7)
+  will compose them.
 - Workflows as entitlements. The bootstrap seeds `run:<slug>` resources and
   `registry`'s entitlements to them, but the workflow gate reads each
   workflow's `roles` and `public` mark, not entitlements. See
@@ -404,3 +405,7 @@ Never add a branch on an offer's name or a plan's name.
 - **Signup lists only $0 platform offers.** `platform_offers_to_tenants` lists
   versions with no price, because signup takes no card.
 - **Conditions are stored, not evaluated**, except `holder_is_offerer`.
+- **A failed change charge does not release the hold.** The spec says the hold
+  is released when the charge fails. In the code a failed charge leaves the
+  run on the pay step, and the hold lapses at its `expires_at`. A failed
+  Stripe charge can still be retried and paid, so it is not released early.
