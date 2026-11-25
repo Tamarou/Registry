@@ -15,6 +15,7 @@ use Registry::DAO::Template;
 use Registry::DAO::Resource;
 use Registry::DAO::Offer;
 use Registry::DAO::Entitlement;
+use Registry::WorkflowDivergence;
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -103,6 +104,59 @@ subtest 'a tenant without a copy gains it by accepting' => sub {
     is $result->{workflows}{'session-creation'}, 'copied', 'the accept reports the copy';
     is scalar( grep { defined $_->{template} } definition( 'accept_fresh', 'session-creation' )->{steps}->@* ), 3,
         'every step brought its template';
+};
+
+# Tenant $schema already holds a copy of $slug, as provisioning left it.
+sub held_copy ( $schema, $slug ) {
+    my $id = $db->query( 'SELECT id FROM registry.workflows WHERE slug = ?', $slug )->array->[0];
+    my $q  = $db->dbh->quote_identifier($schema);
+    $db->query( "INSERT INTO $q.outcome_definitions (id, name, schema)
+                 SELECT id, name, schema FROM registry.outcome_definitions ON CONFLICT DO NOTHING" );
+    $db->query( 'SELECT copy_workflow(dest_schema => ?, workflow_id => ?)', $schema, $id );
+}
+
+# Edits tenant $schema's copy of $slug away from the platform's.
+sub diverge ( $schema, $slug ) {
+    my $q = $db->dbh->quote_identifier($schema);
+    $db->query( qq{UPDATE $q.workflow_steps s SET class = 'Registry::DAO::WorkflowStep'
+                     FROM $q.workflows w WHERE w.id = s.workflow_id AND w.slug = ? AND s.slug = 'complete'}, $slug );
+}
+
+subtest 'an identical copy is kept as the one copy' => sub {
+    my $tenant = bare_tenant('accept_same');
+    held_copy( 'accept_same', 'session-creation' );
+    my $result = Registry::DAO::Tenant->accept_platform_offer( $db, $tenant, grant() );
+    is copies( 'accept_same', 'session-creation' ), 1, 'one copy, no duplicate';
+    is_deeply definition( 'accept_same', 'session-creation' ), definition( 'registry', 'session-creation' ),
+        "still the platform's definition";
+    is $result->{workflows}{'session-creation'}, 'identical', 'reported as identical';
+    is $result->{workflows}{'event-creation'}, 'copied', 'the missing one is copied';
+};
+
+subtest 'a diverged copy with no ruling is kept and reported' => sub {
+    my $tenant = bare_tenant('accept_unruled');
+    held_copy( 'accept_unruled', 'session-creation' );
+    diverge( 'accept_unruled', 'session-creation' );
+    my $before = definition( 'accept_unruled', 'session-creation' );
+    my $result = Registry::DAO::Tenant->accept_platform_offer( $db, $tenant, grant(), {} );
+    is_deeply definition( 'accept_unruled', 'session-creation' ), $before, 'its copy is left as it was';
+    like $result->{workflows}{'session-creation'}, qr/^kept: diverged, no ruling\n.*step `complete`: class/s,
+        'the accept records why, naming the difference';
+    ok( Registry::DAO::Entitlement->may_run( $db, $tenant->id, 'session-creation' ), 'it still holds the run right' );
+};
+
+subtest 'a replace ruling gets the platform definition' => sub {
+    my $tenant = bare_tenant('accept_replace');
+    held_copy( 'accept_replace', 'session-creation' );
+    diverge( 'accept_replace', 'session-creation' );
+    my $result = Registry::DAO::Tenant->accept_platform_offer( $db, $tenant, grant(),
+        Registry::WorkflowDivergence::rulings("Ruling: replace accept_replace/session-creation\n") );
+    is_deeply definition( 'accept_replace', 'session-creation' ), definition( 'registry', 'session-creation' ),
+        "the platform's definition replaced the copy";
+    is copies( 'accept_replace', 'session-creation' ), 1, 'one copy';
+    is $db->query('SELECT count(*) FROM accept_replace.templates')->array->[0], 6,
+        "the old copy's templates went with it";
+    is $result->{workflows}{'session-creation'}, 'replaced', 'reported as replaced';
 };
 
 subtest 'signup accepting the offer copies each workflow once' => sub {

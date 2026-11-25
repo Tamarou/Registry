@@ -7,6 +7,7 @@ package Registry::WorkflowDivergence;
 
 use Digest::SHA qw( sha256_hex );
 use Encode      qw( encode_utf8 );
+use Mojo::File;
 
 # Provisioning never copies these to a tenant, so their absence is expected.
 my %NOT_COPIED = map { $_ => 1 } qw( tenant-signup registry-storefront );
@@ -93,6 +94,23 @@ sub _differences ( $db, $platform, $tenant ) {
         push @lines, _compare( $slug, $platform->{$slug}, $copy->{$slug} ) if $copy->{$slug};
     }
     return @lines;
+}
+
+# How $tenant's copy of workflow $slug differs from registry's, as the
+# report's lines for it: none when they are the same.
+sub differences_for ( $db, $tenant, $slug ) {
+    my ( $platform, $copy ) = map { _workflows( $db, $_ )->{$slug} } 'registry', $db->dbh->quote_identifier($tenant);
+    return _compare( $slug, $platform, $copy );
+}
+
+# perigrin's rulings, as { "<tenant>/<slug>" => 'replace' | 'merge' }, from the
+# `Ruling: replace <tenant>/<slug>` and `Ruling: merge <tenant>/<slug>` lines of
+# $text, by default the recorded report. Any other line rules nothing.
+sub rulings ( $text = Mojo::File::curfile->dirname->dirname->dirname
+                          ->child(qw( docs reviews tenant-workflow-divergence.md ))->slurp ) {
+    my %ruled;
+    $ruled{"$2/$3"} = $1 while $text =~ m{^Ruling: (replace|merge) ([^\s/]+)/(\S+)[ \t]*$}mg;
+    return \%ruled;
 }
 
 # The Markdown report: a section per tenant schema, registry excluded.

@@ -10,6 +10,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     use Registry::DAO::Payment;
     use Registry::DAO::Entitlement;
     use Registry::PriceOps::PlatformTerms ();
+    use Registry::WorkflowDivergence ();
     field $id :param :reader = undef;
     field $name :param :reader;
     field $slug :param :reader //= __PACKAGE__->slug_for_name($name);
@@ -1008,9 +1009,16 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     # holder and the copy's target are $tenant whatever else it names. Throws
     # Registry::DAO::Entitlement::Refused, creating and copying nothing, as
     # Entitlement->accept does, or when the version is not one of registry's.
+    #
+    # A copy the tenant already holds is kept when it is the same as the
+    # platform's (Registry::WorkflowDivergence). One that differs is replaced
+    # only by a `replace` ruling for this tenant and slug in $rulings
+    # (default: the recorded divergence report's); under a `merge` ruling or
+    # none it is kept, and the result says why.
+    #
     # All or nothing; joins the caller's transaction. Returns { entitlement,
-    # workflows => { <slug> => what happened to its copy } }.
-    sub accept_platform_offer ( $class, $db, $tenant, $grant ) {
+    # workflows => { <slug> => copied | identical | replaced | kept: <why> } }.
+    sub accept_platform_offer ( $class, $db, $tenant, $grant, $rulings = undef ) {
         $db = $db->db if $db isa Registry::DAO;
         my $tx = $db->dbh->{AutoCommit} ? $db->begin : undef;
         my ( $version_id, $plan_id ) = @{$grant}{qw( offer_version_id payment_plan_id )};
@@ -1031,12 +1039,40 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
                     WHERE v.id = ?)
              ORDER BY w.slug
         }, $version_id )->hashes->each ) {
+            my $schema = $db->dbh->quote_identifier( $tenant->slug );
+            my $held   = $db->query( "SELECT id FROM $schema.workflows WHERE slug = ?", $wf->{slug} )->array;
+            if ($held) {
+                my @differs = Registry::WorkflowDivergence::differences_for( $db, $tenant->slug, $wf->{slug} );
+                if ( !@differs ) { $workflows{ $wf->{slug} } = 'identical'; next }
+                $rulings //= Registry::WorkflowDivergence::rulings();
+                my $ruling = $rulings->{ $tenant->slug . "/$wf->{slug}" } // '';
+                if ( $ruling ne 'replace' ) {
+                    $workflows{ $wf->{slug} } = join "\n", ( $ruling eq 'merge'
+                        ? 'kept: merge ruling, needs a hand merge' : 'kept: diverged, no ruling' ), @differs;
+                    next;
+                }
+                $class->_drop_workflow_copy( $db, $schema, $held->[0] );
+            }
             $class->_copy_platform_workflow( $db, $tenant->slug, $wf );
-            $workflows{ $wf->{slug} } = 'copied';
+            $workflows{ $wf->{slug} } = $held ? 'replaced' : 'copied';
         }
 
         $tx->commit if $tx;
         return { entitlement => $entitlement, workflows => \%workflows };
+    }
+
+    # Deletes workflow $workflow_id from $schema (quoted): its steps, the
+    # templates only they used, and its row.
+    # shortcut: a copy with runs is refused by their foreign keys, rolling the
+    # accept back; keep or move the runs once a replaced copy can have some.
+    sub _drop_workflow_copy ( $class, $db, $schema, $workflow_id ) {
+        my $templates = $db->query( "SELECT array_agg(DISTINCT template_id) FROM $schema.workflow_steps
+                                      WHERE workflow_id = ?", $workflow_id )->array->[0] // [];
+        $db->query( "DELETE FROM $schema.workflow_steps WHERE workflow_id = ?", $workflow_id );
+        $db->query( "DELETE FROM $schema.templates t WHERE t.id = ANY(?::uuid[])
+                        AND NOT EXISTS (SELECT 1 FROM $schema.workflow_steps s WHERE s.template_id = t.id)",
+            [ grep { defined } @$templates ] );
+        $db->query( "DELETE FROM $schema.workflows WHERE id = ?", $workflow_id );
     }
 
     # Copies registry's outcome definitions into tenant $slug's schema, those
