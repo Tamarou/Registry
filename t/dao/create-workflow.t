@@ -1,7 +1,7 @@
 use 5.42.0;
 use lib          qw(lib t/lib);
 use experimental qw(defer);
-use Test::More import => [qw(done_testing is is_deeply ok diag skip)];
+use Test::More import => [qw(done_testing is is_deeply ok)];
 defer { done_testing };
 
 use Mojo::Home;
@@ -106,14 +106,8 @@ else {
     is $run->next_step( $dao->db )->slug, 'complete', 'Next step is complete';
 
     # Complete the workflow creation process
-    # Note: We need the CreateWorkflow class to be implemented for this to work
-    eval { $run->process( $dao->db, $run->next_step( $dao->db ), {} ); };
-    if ($@) {
-        diag "Error processing complete step: $@";
-
-   # If the CreateWorkflow class isn't implemented yet, we'll skip further tests
-        skip "CreateWorkflow implementation required for further tests", 5;
-    }
+    ok $run->process( $dao->db, $run->next_step( $dao->db ), {} ),
+      'Processed complete step, which creates the workflow';
 
     # Verify the workflow was created
     my ($created_workflow) = $dao->find( Workflow => { slug => 'test-workflow' } );
