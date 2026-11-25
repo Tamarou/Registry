@@ -36,6 +36,24 @@ class Registry::DAO::WorkflowSteps::CompleteBooking :isa(Registry::DAO::Workflow
         my $terms = $data->{agreed_terms_version};
         return _stay('Agree to the terms of service to book.') unless defined $terms && !ref $terms && length $terms;
 
+        my $live = Registry::PriceOps::Hold->live_sql('holds');
+        unless ( $db->query( "SELECT $live FROM holds WHERE id = ?", $hold->id )->array->[0] ) {
+            # Paid after the hold lapsed: the seats are taken again, under the
+            # occurrence's lock, if they still fit (ADR 005, ruling 7a).
+            $hold->release($db);
+            my $again = eval {
+                Registry::PriceOps::Hold->place( $db, {
+                    resource_id     => $hold->resource_id,
+                    units           => $hold->units,
+                    workflow_run_id => $run->id,
+                    expires_at      => \"clock_timestamp() + interval '1 minute'",    # converted below
+                } );
+            };
+            die $@ unless $again;
+            $hold = $again;
+            $run->update_data( $db, { booking_hold => { %$booking, hold_id => $hold->id } } );
+        }
+
         my $version = Registry::DAO::OfferVersion->find( $db, { id => $payment->offer_version_id } );
         my $ends;
         if ( ( $version->policies->{expiry}{kind} // '' ) eq 'end_of_occurrence' ) {

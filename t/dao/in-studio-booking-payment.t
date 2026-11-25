@@ -234,4 +234,58 @@ subtest 'booking without agreed terms not converted' => sub {
     ok !reload( $sacp, $run )->completed( $sacp->{db} ), 'and the run is not complete';
 };
 
+sub lapse ( $s, $run ) {
+    $s->{db}->query( q{UPDATE holds SET expires_at = clock_timestamp() - interval '1 second'
+                        WHERE workflow_run_id = ?}, $run->id );
+}
+
+sub hold_state ( $s, $id ) { $s->{db}->select( 'holds', 'state', { id => $id } )->array->[0] }
+
+subtest 'failed payment releases hold and grants nothing' => sub {
+    my ( $version, $occurrence ) = class_offer( $sacp, seats => 4 );
+    my $run     = held( $sacp, $occurrence, $version, 2 );
+    my $payment = started( $sacp, $run );
+    Test::Registry::StripeWebhook::post_connect( $t, {
+        type    => 'payment_intent.payment_failed',
+        account => $sacp->{account},
+        data    => { object => {
+            id                 => $payment->stripe_payment_intent_id,
+            amount             => $payment->amount_cents,
+            last_payment_error => { message => 'Your card was declined.' },
+            metadata           => { payment_id => $payment->id, tenant_slug => $sacp->{slug} },
+        } },
+    } )->status_is(200);
+    drive();
+    ok !reload( $sacp, $run )->completed( $sacp->{db} ), 'the run does not go on';
+    ok $run->process( $sacp->{db}, step( $sacp, 'complete' ), {} )->{errors}, 'completing it is refused';
+    is_deeply entitlements_of( $sacp, $payment ), [], 'no entitlement is created';
+    is $occurrence->free_units( $sacp->{db} ), 2, 'the seats stay held while the booker may try another card';
+
+    lapse( $sacp, $run );
+    is $occurrence->free_units( $sacp->{db} ), 4, 'and are released when the hold lapses';
+    ok $run->process( $sacp->{db}, step( $sacp, 'complete' ), {} )->{errors}, 'completing it is still refused';
+    is_deeply entitlements_of( $sacp, $payment ), [], 'and no entitlement is created';
+    is hold_state( $sacp, $run->data->{booking_hold}{hold_id} ), 'held', 'the lapsed hold is never converted';
+};
+
+subtest 'late payment after lapse retakes seats' => sub {
+    my ( $version, $occurrence ) = class_offer( $sacp, seats => 4 );
+    my $run     = held( $sacp, $occurrence, $version, 2 );
+    my $first   = $run->data->{booking_hold}{hold_id};
+    my $payment = started( $sacp, $run );
+    lapse( $sacp, $run );
+    succeeded( $sacp, $payment )->status_is(200);
+    drive();
+
+    my ($e) = entitlements_of( $sacp, $payment )->@*;
+    ok $e, 'the seats still fit, so the booking is made' or return;
+    is_deeply $e->units( $sacp->{db}, $occurrence->id ), [ 1, 2 ], 'holding the two seats';
+    is hold_state( $sacp, $first ), 'released', 'the lapsed hold is released';
+    my $again = reload( $sacp, $run )->data->{booking_hold}{hold_id};
+    isnt $again, $first, 'the run names the hold taken again';
+    is hold_state( $sacp, $again ), 'converted', 'which is converted';
+    ok reload( $sacp, $run )->completed( $sacp->{db} ), 'the run is complete';
+    is Registry::DAO::Payment->find( $sacp->{db}, { id => $payment->id } )->status, 'completed', 'nothing is refunded';
+};
+
 done_testing;
