@@ -36,7 +36,7 @@ for my $file (@files) {
         }
     );
     my $location = $dao->create(
-        Location => {
+        Location => { time_zone => 'America/New_York',
             name => 'Event Venue',
         }
     );

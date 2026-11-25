@@ -103,7 +103,7 @@ my $tdb  = $tdao->db;
 # ---------------------------------------------------------------------------
 # Location (tenant schema)
 # ---------------------------------------------------------------------------
-my $location = Registry::DAO::Location->create($tdb, {
+my $location = Registry::DAO::Location->create($tdb, { time_zone => 'America/New_York',
     name         => "Payment Smoke Studio $ts",
     address_info => {
         street_address => '100 Payment Ave',

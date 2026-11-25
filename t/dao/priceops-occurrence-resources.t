@@ -42,7 +42,7 @@ sub event_of ( $class, $time = '2099-03-0' . ( $made % 9 + 1 ) . 'T10:00:00Z', %
     my $handle  = delete $more{handle} // $studio;
     my $teacher = $handle->insert( 'users', { username => 'teacher-' . ++$made }, { returning => 'id' } )
         ->hash->{id};
-    my $where = $handle->insert( 'locations', { name => "Room $made", slug => "room-$made" },
+    my $where = $handle->insert( 'locations', { time_zone => 'America/New_York', name => "Room $made", slug => "room-$made" },
         { returning => 'id' } )->hash->{id};
     return $handle->insert( 'events', {
         project_id  => $class,

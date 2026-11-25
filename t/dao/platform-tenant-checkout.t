@@ -27,7 +27,7 @@ my $dao     = $test_db->db;
 my $db      = $dao->db;    # the registry schema: the platform tenant's own
 state_platform_terms( $db, 'registry', { rate => 0 } );
 
-my $location = Registry::DAO::Location->create( $db, {
+my $location = Registry::DAO::Location->create( $db, { time_zone => 'America/New_York',
     name         => 'Platform Checkout Location',
     address_info => { street_address => '1 Platform St', city => 'T', state => 'TS', postal_code => '12345' },
     metadata     => {},

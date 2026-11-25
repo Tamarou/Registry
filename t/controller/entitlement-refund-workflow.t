@@ -44,7 +44,7 @@ my $teacher = member('staff');
 sub offer ( $refund, $name = 'Wheel class ' . ++$made ) {
     my $class = $db->insert( 'projects', { name => 'Class ' . ++$made, slug => "er-class-$made" },
         { returning => 'id' } )->hash->{id};
-    my $room = $db->insert( 'locations', { name => 'Room ' . ++$made, slug => "er-room-$made" },
+    my $room = $db->insert( 'locations', { time_zone => 'America/New_York', name => 'Room ' . ++$made, slug => "er-room-$made" },
         { returning => 'id' } )->hash->{id};
     my $event = $db->insert( 'events', {
         project_id => $class, location_id => $room, teacher_id => $teacher->id,
@@ -198,7 +198,7 @@ subtest 'other tenant entitlement not found' => sub {
     my $owner = member('admin');
     Registry::DAO::Tenant->provision( $db, { name => "ER Other $$", slug => $slug, users => [$owner] } );
     my $other = $dao->connect_schema($slug)->db;
-    my $room  = $other->insert( 'locations', { name => 'Far room', slug => 'far-room' }, { returning => 'id' } )->hash->{id};
+    my $room  = $other->insert( 'locations', { time_zone => 'America/New_York', name => 'Far room', slug => 'far-room' }, { returning => 'id' } )->hash->{id};
     my $class = $other->insert( 'projects', { name => 'Far class', slug => 'far-class' }, { returning => 'id' } )->hash->{id};
     my $teach = $other->insert( 'users', { username => "er-far-$$" }, { returning => 'id' } )->hash->{id};
     my $occurrence = Registry::DAO::Resource->for_occurrence( $other, $other->insert( 'events', {

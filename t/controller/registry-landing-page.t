@@ -43,7 +43,7 @@ for my $file (@tmpl_files) {
 }
 
 # Seed registry-like data: project with registration_workflow metadata
-my $location = $dao->create(Location => {
+my $location = $dao->create(Location => { time_zone => 'America/New_York',
     name => 'Online RegLP Test', slug => 'online-reglp-test',
     address_info => { type => 'virtual' }, metadata => {},
 });

@@ -38,7 +38,7 @@ my $jordan = $dao->create(User => {
     user_type => 'admin',
 });
 
-my $location = $dao->create(Location => {
+my $location = $dao->create(Location => { time_zone => 'America/New_York',
     name         => 'Main Studio',
     slug         => 'main-studio',
     address_info => { street => '100 Art Lane', city => 'Orlando', state => 'FL' },

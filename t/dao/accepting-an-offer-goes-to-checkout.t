@@ -34,7 +34,7 @@ for my $file ( Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/
     Registry::DAO::Workflow->from_yaml( $dao, $file->slurp );
 }
 
-my $loc = $dao->create(Location => {
+my $loc = $dao->create(Location => { time_zone => 'America/New_York',
     name => 'Checkout Studio', slug => 'checkout-studio',
     address_info => {}, metadata => {} });
 my $prog = $dao->create(Project => {

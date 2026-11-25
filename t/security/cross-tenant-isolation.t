@@ -50,7 +50,7 @@ my $dao_b = Registry::DAO->new(url => $test_db->uri, schema => 'tenant_beta');
 # Populate Tenant A with data
 # ============================================================
 
-my $loc_a = Registry::DAO::Location->create($dao_a->db, {
+my $loc_a = Registry::DAO::Location->create($dao_a->db, { time_zone => 'America/New_York',
     name => 'Alpha Studio', slug => 'alpha-studio',
     address_info => { city => 'Orlando' }, metadata => {},
 });
@@ -94,7 +94,7 @@ my $enrollment_a = Registry::DAO::Enrollment->create($dao_a->db, {
 # Populate Tenant B with different data
 # ============================================================
 
-my $loc_b = Registry::DAO::Location->create($dao_b->db, {
+my $loc_b = Registry::DAO::Location->create($dao_b->db, { time_zone => 'America/New_York',
     name => 'Beta Studio', slug => 'beta-studio',
     address_info => { city => 'Tampa' }, metadata => {},
 });

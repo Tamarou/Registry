@@ -51,7 +51,7 @@ $t->app->helper(dao => sub { $dao });
 
 # --- Test Data Setup: Returning Parent ---
 
-my $location = $dao->create(Location => {
+my $location = $dao->create(Location => { time_zone => 'America/New_York',
     name         => 'Pottery Studio',
     address_info => { street => '930 Hoffner Ave', city => 'Orlando', state => 'FL' },
     metadata     => {},

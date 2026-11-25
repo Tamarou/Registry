@@ -49,7 +49,7 @@ sub occurrences ( $db, @starts ) {
     my $class = $db->insert( 'projects', { name => 'Class ' . ++$made, slug => "class-$made" },
         { returning => 'id' } )->hash->{id};
     my @resources = map {
-        my $room = $db->insert( 'locations', { name => 'Room ' . ++$made, slug => "room-$made" },
+        my $room = $db->insert( 'locations', { time_zone => 'America/New_York', name => 'Room ' . ++$made, slug => "room-$made" },
             { returning => 'id' } )->hash->{id};
         my $event = $db->insert( 'events', {
             project_id => $class, location_id => $room, teacher_id => person($db),

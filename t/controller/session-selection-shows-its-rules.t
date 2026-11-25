@@ -25,7 +25,7 @@ my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 my $db      = $dao->db;
 
-my $location = Registry::DAO::Location->create( $db, {
+my $location = Registry::DAO::Location->create( $db, { time_zone => 'America/New_York',
     name => 'Rules Studio', slug => 'rules-studio', address_info => {}, metadata => {},
 } );
 my $teacher = Registry::DAO::User->create( $db, {

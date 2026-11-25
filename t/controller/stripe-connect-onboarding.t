@@ -188,7 +188,7 @@ subtest 'the publish refusal names the screen that fixes it' => sub {
         status => 'published', name => 'Connect Door Camp',
         program_type_slug => 'summer-camp', metadata => {},
     } );
-    my $location = $dao->create( Location => {
+    my $location = $dao->create( Location => { time_zone => 'America/New_York',
         name => 'Connect Door Studio', slug => 'connect-door-studio',
         address_info => { street => '1 Main', city => 'Orlando', state => 'FL' },
         metadata => {},

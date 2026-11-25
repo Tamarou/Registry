@@ -57,7 +57,7 @@ sub person () {
 sub offer_version () {
     my $class = $tdb->insert( 'projects', { name => 'Class ' . ++$made, slug => "rp-live-class-$made" },
         { returning => 'id' } )->hash->{id};
-    my $room = $tdb->insert( 'locations', { name => 'Room ' . ++$made, slug => "rp-live-room-$made" },
+    my $room = $tdb->insert( 'locations', { time_zone => 'America/New_York', name => 'Room ' . ++$made, slug => "rp-live-room-$made" },
         { returning => 'id' } )->hash->{id};
     my $event = $tdb->insert( 'events', {
         project_id => $class, location_id => $room, teacher_id => person(),

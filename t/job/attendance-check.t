@@ -60,7 +60,7 @@ sub setup_test_data {
     });
 
     # Create a location
-    my $location = Registry::DAO::Location->create($db, {
+    my $location = Registry::DAO::Location->create($db, { time_zone => 'America/New_York',
         name => 'Test Location ' . $unique_id,
         slug => 'test-location-' . $unique_id,
         address_info => { street => '123 Test St' }

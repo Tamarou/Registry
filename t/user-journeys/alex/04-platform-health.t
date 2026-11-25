@@ -74,7 +74,7 @@ my $db_a    = $dao_a->db;
 $dao->db->query('SELECT copy_user(dest_schema => ?, user_id => ?)', $slug_a, $student_a->id);
 $dao->db->query('SELECT copy_user(dest_schema => ?, user_id => ?)', $slug_a, $student_a2->id);
 
-my $location_a = Registry::DAO::Location->create( $db_a, {
+my $location_a = Registry::DAO::Location->create( $db_a, { time_zone => 'America/New_York',
     name         => 'PH Test Location A',
     slug         => 'ph-loc-a-' . $$,
     address_info => { street => '1 Test St' },

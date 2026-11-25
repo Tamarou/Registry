@@ -24,7 +24,7 @@ Test::Registry::Fixtures::create_tenant( $test_db->db->db,
 my $dao = Registry::DAO->new( url => $test_db->uri, schema => 'offered_set' );
 my $db  = $dao->db;
 
-my $location = Registry::DAO::Location->create( $db, {
+my $location = Registry::DAO::Location->create( $db, { time_zone => 'America/New_York',
     name => 'Offered Studio',
     address_info => { street_address => '1 Main', city => 'X', state => 'TS', postal_code => '1' },
     metadata => {},

@@ -33,7 +33,7 @@ $dao = Registry::DAO->new(url => $test_db->uri, schema => 'test_payment');
 my $db = $dao->db;
 
 # Create test data
-my $location = Registry::DAO::Location->create($db, {
+my $location = Registry::DAO::Location->create($db, { time_zone => 'America/New_York',
     name => 'Test Location',
     address_info => {
         street_address => '123 Main St',

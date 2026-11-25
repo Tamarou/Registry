@@ -74,7 +74,7 @@ subtest 'overview reports done when pieces exist' => sub {
         name => 'Admin', username => 'admin_orch',
         email => 'admin@orch.local', user_type => 'staff', password => 'x',
     });
-    Registry::DAO::Location->create($db, {
+    Registry::DAO::Location->create($db, { time_zone => 'America/New_York',
         name => 'Test Loc', address_info => {}, capacity => 10,
         contact_person_id => $user->id,
     });

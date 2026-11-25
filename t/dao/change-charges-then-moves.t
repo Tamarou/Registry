@@ -62,7 +62,7 @@ sub occurrences ( $change, @hours ) {
     my $class = $studio->insert( 'projects', { name => 'Class ' . ++$made, slug => "class-$made" },
         { returning => 'id' } )->hash->{id};
     my @resources = map {
-        my $room = $studio->insert( 'locations', { name => 'Room ' . ++$made, slug => "room-$made" },
+        my $room = $studio->insert( 'locations', { time_zone => 'America/New_York', name => 'Room ' . ++$made, slug => "room-$made" },
             { returning => 'id' } )->hash->{id};
         my $event = $studio->insert( 'events', {
             project_id => $class, location_id => $room, teacher_id => person(),

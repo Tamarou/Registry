@@ -70,7 +70,7 @@ my $child = Registry::DAO::Family->add_child($tdb, $parent->id, {
 });
 
 # Session/event fixtures in the tenant schema.
-my $loc = Registry::DAO::Location->create($tdb, {
+my $loc = Registry::DAO::Location->create($tdb, { time_zone => 'America/New_York',
     name         => "WH Studio $$",
     slug         => "wh_studio_$$",
     address_info => {},
@@ -323,7 +323,7 @@ subtest 'registry-schema payment without tenant_slug finalizes on registry conne
     });
 
     # Build session fixtures in the registry schema.
-    my $reg_loc = Registry::DAO::Location->create($db, {
+    my $reg_loc = Registry::DAO::Location->create($db, { time_zone => 'America/New_York',
         name         => "Reg WH Studio $$",
         slug         => "reg_wh_studio_$$",
         address_info => {},

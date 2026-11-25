@@ -30,7 +30,7 @@ sub a_child () {
 }
 sub a_session ($capacity = 10) {
     $n++;
-    my $loc = Registry::DAO::Location->create($db, {
+    my $loc = Registry::DAO::Location->create($db, { time_zone => 'America/New_York',
         name => "FS Loc $n$$", slug => "fs_loc_$n$$", address_info => {}, metadata => {} });
     my $proj = Registry::DAO::Project->create($db, {
         name => "FS Proj $n$$", status => 'published',

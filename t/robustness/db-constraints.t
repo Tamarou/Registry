@@ -53,7 +53,7 @@ subtest 'duplicate username gives clear error' => sub {
 # Test: Duplicate enrollment prevented
 # ============================================================
 subtest 'duplicate enrollment gives clear error' => sub {
-    my $location = $dao->create(Location => {
+    my $location = $dao->create(Location => { time_zone => 'America/New_York',
         name => 'Constraint Studio', slug => 'constraint-studio',
         address_info => {}, metadata => {},
     });

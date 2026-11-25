@@ -16,10 +16,17 @@ class Registry::DAO::Location :isa(Registry::DAO::Object) {
     field $facilities :param :reader = {};
     field $latitude :param :reader = undef;
     field $longitude :param :reader = undef;
+    field $time_zone :param :reader = undef;
     field $created_at :param :reader = undef;
     field $updated_at :param :reader = undef;
 
     sub table { 'locations' }
+
+    # The IANA zone names locations.time_zone is checked against, in order.
+    sub time_zones ( $class, $db ) {
+        $db = $db->db if $db isa Registry::DAO;
+        return $db->query('SELECT name FROM pg_timezone_names ORDER BY name')->arrays->flatten->to_array;
+    }
 
     # List all locations, ordered by name.
     sub list ($class, $db) {
@@ -146,6 +153,7 @@ class Registry::DAO::Location :isa(Registry::DAO::Object) {
                 address_info => $address_info,
                 metadata => $metadata,
                 notes => $notes,
+                time_zone => $time_zone,
             );
             # Remove undefined values
             my %clean_data = map { defined $instance_data{$_} ? ($_ => $instance_data{$_}) : () } keys %instance_data;

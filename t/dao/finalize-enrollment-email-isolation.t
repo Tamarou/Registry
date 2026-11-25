@@ -20,7 +20,7 @@ my $db      = $dao->db;
 # Fixtures: two sessions, one parent, one child
 # ---------------------------------------------------------------------------
 
-my $loc = $dao->create( Location => {
+my $loc = $dao->create( Location => { time_zone => 'America/New_York',
     name         => 'F13 Studio',
     slug         => 'f13-studio',
     address_info => {},

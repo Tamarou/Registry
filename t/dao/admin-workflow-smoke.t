@@ -51,7 +51,7 @@ my $program_type = Registry::DAO::ProgramType->create($db, {
     }),
 });
 
-my $location = Registry::DAO::Location->create($db, {
+my $location = Registry::DAO::Location->create($db, { time_zone => 'America/New_York',
     name         => 'Dr Phillips Elementary',
     address_info => {
         street_address => '123 School Rd',

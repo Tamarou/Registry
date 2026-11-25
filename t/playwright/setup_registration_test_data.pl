@@ -58,7 +58,7 @@ unless ($tenant) {
 # ---------------------------------------------------------------------------
 # Location
 # ---------------------------------------------------------------------------
-my $location = $dao->create( Location => {
+my $location = $dao->create( Location => { time_zone => 'America/New_York',
     name => "Super Awesome Cool Pottery Studio $ts",
     slug => "sacp-studio-$ts",
     address_info => {

@@ -32,7 +32,7 @@ my $teacher = Registry::DAO::User->create( $db, {
 my $parent = Registry::DAO::User->create( $db, {
     username => 'alert_parent', name => 'Alert Parent',
     email => 'alertp@test.local', user_type => 'parent' } );
-my $location = Registry::DAO::Location->create( $db, {
+my $location = Registry::DAO::Location->create( $db, { time_zone => 'America/New_York',
     name => 'Alert Room', slug => 'alert-room',
     address_info => { street_address => '1 Alert St', city => 'Orlando', state => 'FL', postal_code => '32801' },
     metadata => {} } );

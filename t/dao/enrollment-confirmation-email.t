@@ -56,7 +56,7 @@ my $teacher = Registry::DAO::User->create($db, {
     password  => 'x',
 });
 
-my $location = Registry::DAO::Location->create($db, {
+my $location = Registry::DAO::Location->create($db, { time_zone => 'America/New_York',
     name         => 'Riverside Elementary',
     address_info => { city => 'Orlando', state => 'FL' },
     capacity     => 20,

@@ -137,7 +137,7 @@ subtest 'retried driver moves money once and completes run' => sub {
 
 subtest 'idempotency key stable across retries' => sub {
     # A priced cart the Payment step charges for itself.
-    my $location = Registry::DAO::Location->create( $tdb, {
+    my $location = Registry::DAO::Location->create( $tdb, { time_zone => 'America/New_York',
         name => 'Loc', address_info => { street_address => '1 A', city => 'T', state => 'TS',
                                          postal_code => '12345' }, metadata => {} } );
     my $teacher = Registry::DAO::User->create( $tdb, {

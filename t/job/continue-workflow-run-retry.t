@@ -43,7 +43,7 @@ my $t      = Test::Registry::Mojo->new('Registry');
 my $minion = $t->app->minion;
 
 # A $0 session a child can be enrolled in without the gateway.
-my $location = Registry::DAO::Location->create( $adb, {
+my $location = Registry::DAO::Location->create( $adb, { time_zone => 'America/New_York',
     name => 'Loc', address_info => { street_address => '1 A', city => 'T', state => 'TS',
                                      postal_code => '12345' }, metadata => {} } );
 my $teacher = Registry::DAO::User->create( $adb, {

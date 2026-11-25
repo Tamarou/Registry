@@ -44,7 +44,7 @@ sub person () {
 sub occurrence () {
     my $class = $tdb->insert( 'projects', { name => 'Class ' . ++$made, slug => "rp-class-$made" },
         { returning => 'id' } )->hash->{id};
-    my $room = $tdb->insert( 'locations', { name => 'Room ' . ++$made, slug => "rp-room-$made" },
+    my $room = $tdb->insert( 'locations', { time_zone => 'America/New_York', name => 'Room ' . ++$made, slug => "rp-room-$made" },
         { returning => 'id' } )->hash->{id};
     my $event = $tdb->insert( 'events', {
         project_id => $class, location_id => $room, teacher_id => person(),

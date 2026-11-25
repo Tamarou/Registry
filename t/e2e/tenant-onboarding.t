@@ -59,7 +59,7 @@ $t->app->helper(dao => sub { $dao });
 # ============================================================
 
 subtest 'tenant has programs and sessions' => sub {
-    my $location = $dao->create(Location => {
+    my $location = $dao->create(Location => { time_zone => 'America/New_York',
         name         => 'Super Awesome Cool Pottery Studio',
         slug         => 'sacp-studio',
         address_info => { street => '930 Hoffner Ave', city => 'Orlando', state => 'FL' },

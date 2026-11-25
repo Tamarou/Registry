@@ -43,7 +43,7 @@ my $t = Test::Mojo->new('Registry');
 $t->app->helper(dao => sub { $db });
 
 # Create test data so the storefront has programs to display
-my $location = $db->create(Location => {
+my $location = $db->create(Location => { time_zone => 'America/New_York',
     name         => 'Test Studio',
     slug         => 'test-studio-cta',
     address_info => { street => '123 Main St' },

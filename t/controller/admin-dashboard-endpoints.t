@@ -27,7 +27,7 @@ my $t = Test::Registry::Mojo->new('Registry');
 $t->app->helper(dao => sub { $dao });
 
 # --- Seed a full enrollment chain -----------------------------------------
-my $location = $dao->create(Location => {
+my $location = $dao->create(Location => { time_zone => 'America/New_York',
     name => 'Dashboard Studio', slug => 'dashboard-studio',
     address_info => { street => '1 Main', city => 'Orlando', state => 'FL' },
     metadata => {},

@@ -26,7 +26,7 @@ my $t = Test::Registry::Mojo->new('Registry');
 $t->app->helper(dao => sub { $dao });
 
 # --- Seed one published program a parent can browse and enrol in -----------
-my $location = $dao->create(Location => {
+my $location = $dao->create(Location => { time_zone => 'America/New_York',
     name => 'Kiln Room', slug => 'kiln-room',
     address_info => { street => '2 Elm', city => 'Orlando', state => 'FL' },
     metadata => {},

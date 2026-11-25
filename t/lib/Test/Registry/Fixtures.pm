@@ -45,6 +45,7 @@ package Test::Registry::Fixtures {
     
     sub create_location ($db, $data) {
         require Registry::DAO::Location;
+        $data->{time_zone} //= q{America/New_York};
         Registry::DAO::Location->create($db, $data);
     }
     

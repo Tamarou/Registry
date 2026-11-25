@@ -51,7 +51,7 @@ sub setup_test_data {
     });
 
     # Create location
-    $setup->{location} = $dao->create(Location => {
+    $setup->{location} = $dao->create(Location => { time_zone => 'America/New_York',
         name => "Test School $test_suffix",
         slug => "test-school-$test_suffix",
         address_info => { street => '123 Test St', city => 'Test City', state => 'TS', zip => '12345' }

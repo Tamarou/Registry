@@ -41,14 +41,14 @@ $dao->db->insert('program_types', {
 
 # --- Test Data: Two locations, two program types, multiple programs ---
 
-my $loc_lincoln = $dao->create(Location => {
+my $loc_lincoln = $dao->create(Location => { time_zone => 'America/New_York',
     name         => 'Lincoln Elementary',
     slug         => 'lincoln-elem-filter',
     address_info => { city => 'Orlando' },
     metadata     => {},
 });
 
-my $loc_sunset = $dao->create(Location => {
+my $loc_sunset = $dao->create(Location => { time_zone => 'America/New_York',
     name         => 'Sunset Middle School',
     slug         => 'sunset-middle-filter',
     address_info => { city => 'Orlando' },

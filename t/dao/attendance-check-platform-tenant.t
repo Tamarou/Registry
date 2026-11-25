@@ -74,7 +74,7 @@ sub plant_event ($sdb, %opt) {
     my $student = Registry::DAO::User->create($sdb, {
         username => "platform_student_$n", passhash => 'x',
     });
-    my $location = Registry::DAO::Location->create($sdb, {
+    my $location = Registry::DAO::Location->create($sdb, { time_zone => 'America/New_York',
         name => "Platform Location $n", slug => "platform-location-$n",
         address_info => { street => '1 Test St' },
     });

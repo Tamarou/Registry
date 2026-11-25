@@ -80,7 +80,7 @@ subtest 'session publish toggle' => sub {
     # the session.
     require Registry::DAO::Location;
     require Registry::DAO::Event;
-    my $location = Registry::DAO::Location->create($dao->db, {
+    my $location = Registry::DAO::Location->create($dao->db, { time_zone => 'America/New_York',
         name => 'Session Toggle Location', address_info => {},
     });
     my $published_program = Registry::DAO::Project->create($dao->db, {
@@ -110,7 +110,7 @@ subtest 'session publish toggle' => sub {
 subtest 'cannot publish a session under a draft program' => sub {
     require Registry::DAO::Location;
     require Registry::DAO::Event;
-    my $location = Registry::DAO::Location->create($dao->db, {
+    my $location = Registry::DAO::Location->create($dao->db, { time_zone => 'America/New_York',
         name => 'Draft Parent Location', address_info => {},
     });
     my $draft_program = Registry::DAO::Project->create($dao->db, {

@@ -41,7 +41,7 @@ sub class_in ( $db = $tdb ) {
 sub event_of ( $class, $db = $tdb ) {
     my $teacher = $db->insert( 'users', { username => 'teacher-' . ++$made }, { returning => 'id' } )
         ->hash->{id};
-    my $where = $db->insert( 'locations', { name => "Room $made", slug => "room-$made" },
+    my $where = $db->insert( 'locations', { time_zone => 'America/New_York', name => "Room $made", slug => "room-$made" },
         { returning => 'id' } )->hash->{id};
     return $db->insert( 'events', {
         project_id => $class, location_id => $where, teacher_id => $teacher,

@@ -37,7 +37,7 @@ my $dao = $test_db->db;
     ok $morgan, 'Morgan found by email';
     
     # Create multiple locations
-    my $elementary = $dao->create( Location => {
+    my $elementary = $dao->create( Location => { time_zone => 'America/New_York',
         name => 'Riverside Elementary',
         slug => 'riverside-elementary',
         address_info => {
@@ -49,7 +49,7 @@ my $dao = $test_db->db;
         }
     });
     
-    my $middle_school = $dao->create( Location => {
+    my $middle_school = $dao->create( Location => { time_zone => 'America/New_York',
         name => 'Valley Middle School',
         slug => 'valley-middle',
         address_info => {

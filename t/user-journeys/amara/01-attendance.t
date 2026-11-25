@@ -37,7 +37,7 @@ my $amara = $dao->create(User => {
     user_type => 'staff',
 });
 
-my $location = $dao->create(Location => {
+my $location = $dao->create(Location => { time_zone => 'America/New_York',
     name         => 'Art Studio',
     slug         => 'art-studio',
     address_info => { street => '200 Creative Way', city => 'Orlando', state => 'FL' },

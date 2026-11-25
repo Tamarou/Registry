@@ -242,7 +242,7 @@ subtest 'deleting an assigned teacher is refused: unassign them first' => sub {
     my $teacher = make_user( 'delete_teacher', 'staff' );
     my $parent  = make_user( 'delete_parent',  'parent' );
 
-    my $loc = $dao->create( Location => {
+    my $loc = $dao->create( Location => { time_zone => 'America/New_York',
         name => 'Delete Studio', slug => 'delete-studio',
         address_info => {}, metadata => {},
     } );

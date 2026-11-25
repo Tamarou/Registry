@@ -35,7 +35,7 @@ my $event = $dao->create(
         time        => '2021-12-31',
         teacher_id  => $dao->create( User => { username => 'JohnnyTest' } )->id,
         location_id =>
-          $dao->create( Location => { name => 'Event Venue' } )->id,
+          $dao->create( Location => { time_zone => 'America/New_York', name => 'Event Venue' } )->id,
         project_id =>
           $dao->create( Project => { name => 'Event Curriculum' } )->id,
     }
@@ -171,7 +171,7 @@ my $acting_user = $dao->create(
       $t->get_ok($events_link)->status_is(200)->element_exists('form[action]')
       ->tx->res->dom->at('form[action]')->{action};
     my $location = $dao->create(
-        Location => {
+        Location => { time_zone => 'America/New_York',
             name => 'Location ' . $$,
         }
     );

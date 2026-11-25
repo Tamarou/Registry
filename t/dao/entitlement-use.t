@@ -41,7 +41,7 @@ sub person ( $handle = $studio ) {
 sub occurrence ( $hours = 24, $handle = $studio ) {
     my $class = $handle->insert( 'projects', { name => 'Class ' . ++$made, slug => "class-$made" },
         { returning => 'id' } )->hash->{id};
-    my $room = $handle->insert( 'locations', { name => 'Room ' . ++$made, slug => "room-$made" },
+    my $room = $handle->insert( 'locations', { time_zone => 'America/New_York', name => 'Room ' . ++$made, slug => "room-$made" },
         { returning => 'id' } )->hash->{id};
     my $event = $handle->insert( 'events', {
         project_id => $class, location_id => $room, teacher_id => person($handle),

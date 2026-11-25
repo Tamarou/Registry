@@ -52,7 +52,7 @@ my $tenant_db  = $tenant_dao->db;
 
 # ---- build shared fixtures in the tenant schema ----------------------------
 
-my $location = Registry::DAO::Location->create($tenant_db, {
+my $location = Registry::DAO::Location->create($tenant_db, { time_zone => 'America/New_York',
     name         => 'Gate Test Location',
     address_info => { street_address => '1 Gate St', city => 'T', state => 'TS', postal_code => '12345' },
     metadata     => {},

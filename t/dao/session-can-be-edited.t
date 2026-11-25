@@ -35,7 +35,7 @@ my $parent = $dao->create( User => {
 my $n = 0;
 sub a_session ( $capacity = 10 ) {
     $n++;
-    my $loc = Registry::DAO::Location->create( $db, {
+    my $loc = Registry::DAO::Location->create( $db, { time_zone => 'America/New_York',
         name => "SE Loc $n$$", slug => "se_loc_$n$$", address_info => {}, metadata => {} } );
     my $proj = Registry::DAO::Project->create( $db, {
         name => "SE Proj $n$$", status => 'published',

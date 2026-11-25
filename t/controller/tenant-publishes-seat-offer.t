@@ -43,7 +43,7 @@ sub occurrence_in ($schema_db) {
         { returning => 'id' } )->hash->{id};
     my $teacher = $schema_db->insert( 'users', { username => "wheel-teacher-$n" }, { returning => 'id' } )
         ->hash->{id};
-    my $room = $schema_db->insert( 'locations', { name => "Wheel room $n", slug => "wheel-room-$n" },
+    my $room = $schema_db->insert( 'locations', { time_zone => 'America/New_York', name => "Wheel room $n", slug => "wheel-room-$n" },
         { returning => 'id' } )->hash->{id};
     return $schema_db->insert( 'events', {
         project_id => $class, location_id => $room, teacher_id => $teacher,

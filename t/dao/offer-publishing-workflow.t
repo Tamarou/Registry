@@ -85,7 +85,7 @@ sub new_class ($name) {
     my $slug    = lc $name =~ s/\W+/-/gr;
     my $class   = $tdb->insert( 'projects', { name => $name, slug => $slug }, { returning => 'id' } )->hash->{id};
     my $teacher = $tdb->insert( 'users', { username => "$slug-teacher" }, { returning => 'id' } )->hash->{id};
-    my $room    = $tdb->insert( 'locations', { name => "$name room", slug => "$slug-room" }, { returning => 'id' } )->hash->{id};
+    my $room    = $tdb->insert( 'locations', { time_zone => 'America/New_York', name => "$name room", slug => "$slug-room" }, { returning => 'id' } )->hash->{id};
     return ( $class, sub ( $time, $capacity ) {
         my $event = $tdb->insert( 'events', {
             project_id => $class, location_id => $room, teacher_id => $teacher,

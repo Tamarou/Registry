@@ -30,7 +30,7 @@ my $tenant_dao = Registry::DAO->new(url => $tdb->uri, schema => 'storefront_filt
 my $tdb_conn   = $tenant_dao->db;
 
 # Common fixtures: location and teacher.
-my $location = Registry::DAO::Location->create($tdb_conn, {
+my $location = Registry::DAO::Location->create($tdb_conn, { time_zone => 'America/New_York',
     name         => 'Downtown Studio',
     address_info => {},
 });
@@ -156,7 +156,7 @@ subtest 'filter dropdown locations only include published programs' => sub {
     # Create a separate location used ONLY by the draft program so we
     # can prove filtering works. Downtown Studio is also used by the
     # published program and would appear either way.
-    my $draft_only_location = Registry::DAO::Location->create($tdb_conn, {
+    my $draft_only_location = Registry::DAO::Location->create($tdb_conn, { time_zone => 'America/New_York',
         name         => 'Draft Only Studio',
         address_info => {},
     });

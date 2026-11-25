@@ -27,7 +27,7 @@ my $dao     = $test_db->db;
 
 # --- Setup ---
 
-my $location = $dao->create(Location => {
+my $location = $dao->create(Location => { time_zone => 'America/New_York',
     name => 'Accuracy Studio', slug => 'accuracy-studio',
     address_info => { city => 'Orlando' }, metadata => {},
 });

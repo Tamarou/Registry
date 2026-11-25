@@ -94,13 +94,13 @@ subtest 'End-to-end attendance notification workflow' => sub {
     });
 
     # Create locations and projects
-    my $location1 = Registry::DAO::Location->create($db, {
+    my $location1 = Registry::DAO::Location->create($db, { time_zone => 'America/New_York',
         name => 'Main Classroom',
         slug => 'main-classroom',
         address_info => { building => 'A', room => '101' }
     });
 
-    my $location2 = Registry::DAO::Location->create($db, {
+    my $location2 = Registry::DAO::Location->create($db, { time_zone => 'America/New_York',
         name => 'Art Studio',
         slug => 'art-studio',
         address_info => { building => 'B', room => '202' }
@@ -287,7 +287,7 @@ subtest 'Notification preferences respected' => sub {
         passhash => 'fake_hash'
     });
 
-    my $location = Registry::DAO::Location->create($db, {
+    my $location = Registry::DAO::Location->create($db, { time_zone => 'America/New_York',
         name => 'Quiet Classroom',
         slug => 'quiet-classroom',
         address_info => {}
@@ -360,7 +360,7 @@ subtest 'Duplicate prevention' => sub {
         passhash => 'fake_hash'
     });
 
-    my $location = Registry::DAO::Location->create($db, {
+    my $location = Registry::DAO::Location->create($db, { time_zone => 'America/New_York',
         name => 'Dup Test Classroom',
         slug => 'dup-test-classroom',
         address_info => {}

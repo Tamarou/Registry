@@ -49,7 +49,7 @@ sub occurrences ( $count, $capacity = 2 ) {
         { returning => 'id' } )->hash->{id};
     my @resources = map {
         my $teacher = person();
-        my $room = $studio->insert( 'locations', { name => 'Room ' . ++$made, slug => "room-$made" },
+        my $room = $studio->insert( 'locations', { time_zone => 'America/New_York', name => 'Room ' . ++$made, slug => "room-$made" },
             { returning => 'id' } )->hash->{id};
         my $event = $studio->insert( 'events', {
             project_id => $class, location_id => $room, teacher_id => $teacher,

@@ -88,7 +88,7 @@ my $SESSION_END   = sprintf '%04d-%02d-%02d', $E[5] + 1900, $E[4] + 1, $E[3];
 
 # --- fixtures in the tenant schema ---
 
-my $location = Registry::DAO::Location->create($tdb, {
+my $location = Registry::DAO::Location->create($tdb, { time_zone => 'America/New_York',
     name         => 'C3 Studio',
     address_info => { street_address => '1 C3 Blvd', city => 'T', state => 'TX', postal_code => '78701' },
     metadata     => {},

@@ -70,7 +70,7 @@ state_platform_terms( $db, $slug, { rate => 0 } );
 my $tdao = Registry::DAO->new( url => $test_db->uri, schema => $slug );
 my $tdb  = $tdao->db;
 
-my $location = Registry::DAO::Location->create($tdb, {
+my $location = Registry::DAO::Location->create($tdb, { time_zone => 'America/New_York',
     name         => 'Async Studio',
     address_info => { street_address => '1 Async Way', city => 'T', state => 'TX', postal_code => '78701' },
     metadata     => {},

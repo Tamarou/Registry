@@ -28,7 +28,7 @@ $dao->db->query( 'SELECT clone_schema(?)', 'test_free_by_total' );
 $dao = Registry::DAO->new( url => $test_db->uri, schema => 'test_free_by_total' );
 my $db = $dao->db;
 
-my $location = Registry::DAO::Location->create( $db, {
+my $location = Registry::DAO::Location->create( $db, { time_zone => 'America/New_York',
     name => 'Loc', address_info => { street_address => '1 A', city => 'T', state => 'TS', postal_code => '12345' }, metadata => {},
 } );
 my $teacher = Registry::DAO::User->create( $db, {

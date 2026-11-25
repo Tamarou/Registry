@@ -25,7 +25,7 @@ $dao->db->query( 'SELECT clone_schema(?)', 'test_gen_pricing' );
 $dao = Registry::DAO->new( url => $test_db->uri, schema => 'test_gen_pricing' );
 my $db = $dao->db;
 
-my $location = Registry::DAO::Location->create( $db, {
+my $location = Registry::DAO::Location->create( $db, { time_zone => 'America/New_York',
     name         => 'Test Location',
     address_info => { street_address => '1 Main', city => 'Town', state => 'TS', postal_code => '12345' },
     metadata     => {},

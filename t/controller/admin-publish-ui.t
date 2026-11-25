@@ -35,7 +35,7 @@ authenticate_as($t, $admin);
 
 # A program with at least one session/event so get_program_overview will
 # actually return it.
-my $location = $dao->create(Location => {
+my $location = $dao->create(Location => { time_zone => 'America/New_York',
     name         => 'UI Test Location',
     address_info => {},
     metadata     => {},

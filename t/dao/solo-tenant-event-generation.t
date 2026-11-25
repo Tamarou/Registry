@@ -34,7 +34,7 @@ is $db->query('SELECT count(*) AS n FROM users')->hash->{n}, 1,
     'the tenant really does contain one person';
 
 my $project  = Registry::DAO::Project->create( $db, { name => 'Solo Pottery', status => 'published', metadata => {} } );
-my $location = Registry::DAO::Location->create( $db, {
+my $location = Registry::DAO::Location->create( $db, { time_zone => 'America/New_York',
     name => 'Home Studio', slug => 'home-studio',
     address_info => { street_address => '2 Wheel Ln', city => 'Orlando', state => 'FL', postal_code => '32801' },
     metadata => {},
@@ -89,7 +89,7 @@ subtest 'an explicit choice still wins over the fallback' => sub {
     } );
     # A second location, because the session name is derived as
     # "<project> at <location>" and sessions.name is unique.
-    my $annexe = Registry::DAO::Location->create( $db, {
+    my $annexe = Registry::DAO::Location->create( $db, { time_zone => 'America/New_York',
         name => 'The Annexe', slug => 'the-annexe',
         address_info => { street_address => '3 Kiln Way', city => 'Orlando', state => 'FL', postal_code => '32801' },
         metadata => {},
@@ -132,7 +132,7 @@ subtest 'an explicit choice still wins over the fallback' => sub {
 # other side -- and has to reach the session that generation creates, or it
 # is a control that does nothing.
 subtest 'the waitlist choice reaches the session' => sub {
-    my $off = Registry::DAO::Location->create( $db, {
+    my $off = Registry::DAO::Location->create( $db, { time_zone => 'America/New_York',
         name => 'No Queue Room', slug => 'no-queue-room',
         address_info => { street_address => '9 Quiet Way', city => 'Orlando', state => 'FL', postal_code => '32801' },
         metadata => {},

@@ -62,7 +62,7 @@ my $tdb  = $tdao->db;
 
 # --- fixtures in the tenant schema ---
 
-my $location = Registry::DAO::Location->create($tdb, {
+my $location = Registry::DAO::Location->create($tdb, { time_zone => 'America/New_York',
     name         => 'E2E Studio',
     address_info => { street_address => '1 E2E Blvd', city => 'T', state => 'TX', postal_code => '78701' },
     metadata     => {},

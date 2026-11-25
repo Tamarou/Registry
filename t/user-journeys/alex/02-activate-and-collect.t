@@ -118,7 +118,7 @@ my ($reg_wf) = $tenant_dao->find(Workflow => { slug => 'summer-camp-registration
 ok $reg_wf, 'summer-camp-registration workflow present in tenant schema';
 
 # Build location / program / event / session / pricing fixtures.
-my $location = Registry::DAO::Location->create($tenant_db, {
+my $location = Registry::DAO::Location->create($tenant_db, { time_zone => 'America/New_York',
     name         => 'AC Studio',
     address_info => { street_address => '1 AC Blvd', city => 'T', state => 'TX', postal_code => '78701' },
     metadata     => {},
