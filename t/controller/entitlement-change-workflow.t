@@ -304,6 +304,8 @@ sub booking_room ( $version, $like ) {
 }
 
 subtest 'resubmitted payment page creates no second payment' => sub {
+    # A priced payment is refused outright without a key; no call is made with this one.
+    local $ENV{STRIPE_SECRET_KEY} = 'sk_test_placeholder';
     my ( $version, $from, $to ) = occurrences( 1000, 4, 72, 96 );
     my $holder = member('parent');
     my ( $t, $run ) = to_payment( $holder, booking( $version, $from, $holder ), $to );
@@ -322,6 +324,8 @@ subtest 'resubmitted payment page creates no second payment' => sub {
 };
 
 subtest 'paid change with no seat left shows a friendly page' => sub {
+    # A priced payment is refused outright without a key; no call is made with this one.
+    local $ENV{STRIPE_SECRET_KEY} = 'sk_test_placeholder';
     my ( $version, $from, $to ) = occurrences( 1000, 1, 72, 96 );
     my $holder = member('parent');
     my $e      = booking( $version, $from, $holder );
