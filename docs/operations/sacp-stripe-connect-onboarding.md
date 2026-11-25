@@ -387,7 +387,11 @@ export STRIPE_CONNECT_WEBHOOK_SECRET=whsec_...      # test Connect endpoint's se
 
    **Check:** it passes. Its refund tests make a full and a partial refund on
    the tenant account and assert the refund is found with `Stripe-Account` and
-   the fee's `amount_refunded` stays 0.
+   the fee's `amount_refunded` stays 0. `in-studio-booking-payment.t` books
+   seats through `in-studio-booking` and asserts the PaymentIntent is on the
+   studio's account with `application_fee_amount` 2.5% of the amount, no
+   `transfer_data`, and one PaymentIntent however often the payment step is
+   retried.
 
 Once all six checks pass, SACP can be switched from test to live keys.
 
@@ -524,8 +528,9 @@ When a parent pays an intent Registry had already replaced (an old browser
 tab), the Connect endpoint settles nothing, alerts staff ("A replaced card
 payment was charged and is being refunded"), and after commit queues the
 `superseded_refund` job (10 attempts). It refunds the whole charge on the
-account the payment names, as in the table above, and emails the parent. This
-is the one refund Registry starts on its own. If Stripe refuses the request or
+account the payment names, as in the table above, and emails the parent. It is
+one of the three refunds Registry starts on its own; the other two are the
+in-studio money rules below. If Stripe refuses the request or
 the last attempt fails, staff get "Refund failed: refund it by hand".
 
 To refund it by hand:
@@ -562,6 +567,37 @@ To refund it by hand:
    **Check:** the response's `status` is `succeeded` (or `pending`; list again
    later). Nothing in Registry records this refund: the payment row is not
    touched by the job either.
+
+### In-studio booking money rules
+
+perigrin's answers to the in-studio money questions (ADR 005, rulings 7a-7c),
+as Registry applies them. Each system refund keeps the platform's fee, like
+every refund (ADR 003).
+
+- **Late payment after the hold lapsed (7a).** When a booking's payment
+  succeeds after its seat hold lapsed, `CompleteBooking` takes the seats again
+  under the occurrence's lock if they still fit, and books them. If they do
+  not, nothing is booked: it records `booking_refund` on the run, emails the
+  booker and alerts the studio's admins ("A paid booking could not be made: it
+  is being refunded"), and refunds the whole charge through
+  `Payment->refund_async` under `Idempotency-Key: refund:booking:<run id>`,
+  despite a refund-none policy. A failed refund is recorded on the payment
+  (`refund_last_failure`) and retried by the run's driver; its last attempt
+  halts the run and alerts the admins. To refund it by hand, list refunds for
+  the intent first, as in "A paid superseded intent".
+- **Paid amount differs from the quote (7b).** A `payment_intent.succeeded`
+  whose amount differs from an offer payment's `amount_cents` (the quote) books
+  nothing. The Connect endpoint fails the payment, emails the payer, alerts the
+  studio's admins and the platform's admins ("A payment for the wrong amount
+  was refused and is being refunded"), and after commit queues
+  `superseded_refund` with kind `wrong_amount`, which refunds the whole charge
+  under `Idempotency-Key: refund:wrong_amount:<pi_...>`. Staff book by hand at
+  the right price if the customer still wants the seats. A cart payment (no
+  offer version) is unchanged: the event answers 500 and Stripe retries.
+- **Fee rounding (7c).** The 2.5% fee is computed once, when the payment row
+  is written, in integer cents, rounding an exact half to the even cent
+  (`Registry::DAO::Payment::application_fee_cents`: 32.5 ¢ is 32 ¢, 37.5 ¢ is
+  38 ¢). A fee that rounds to 0 is not sent at all, never as 0.
 
 ### Clearing a stranded `refund_pending` payment
 
@@ -1026,6 +1062,11 @@ every tenant payment is made on the tenant's own connected account:
   is made on the tenant account and leaves `application_fee.amount_refunded`
   at 0; the same idempotency key returns the same intent; plus the unready
   gate, a declined card, and the browser return.
+- `in-studio-booking-payment.t` -- an in-studio booking's PaymentIntent is
+  on the studio's account (retrieved with `Stripe-Account`), with
+  `application_fee_amount` 2.5% of the amount and no `transfer_data` or
+  `on_behalf_of`; paying and returning books the seats; retrying the payment
+  step makes one PaymentIntent.
 - `instalment-schedule.t` -- the schedule for instalments two onwards is on
   the tenant account with the fee percent and no transfer destination, and is
   not found on the platform account.
