@@ -42,6 +42,20 @@ Production (Render):
 Safe to re-run on either. Run from a trusted shell (Render shell /
 deploy job / your admin laptop), not a developer's CI environment.
 
+### A dev database that already has `sacp`
+
+The `workflow-run-entitlements` migration refuses to deploy while any
+studio tenant holds workflow copies, and names each one. No platform offer
+grants a studio run rights yet; a later Solo version will list them (ADR 004,
+ruling (a)). A dev database where `sacp` was signed up before that migration
+stops there. To get past it:
+
+1. Run `make reset`, which drops, re-creates and deploys the dev database.
+2. Sign `sacp` up again through `/tenant-signup`.
+3. Re-run this script.
+
+Production has no studio tenants, so it deploys cleanly.
+
 ### Data currency
 
 This script captures SACP's offerings as of 2026-04-20, scraped from

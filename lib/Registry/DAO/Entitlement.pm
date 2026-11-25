@@ -169,6 +169,17 @@ active and the period covers T (in_effect_sql).
         }, $resource_id, $holder_id )->array->[0];
     }
 
+    # May tenant $tenant_id run workflow $slug? Only when it holds, in effect
+    # now, the run:$slug resource from the platform tenant registry, by a
+    # single-resource or a set version. Exact name match, live rows; through
+    # Tenant->holds, the one seam, so a right recorded in a tenant's own schema
+    # grants nothing.
+    sub may_run ( $class, $db, $tenant_id, $slug ) {
+        return 0 unless defined $slug && !ref $slug && length $slug;
+        require Registry::DAO::Tenant;
+        return Registry::DAO::Tenant->holds( $db, $tenant_id, "run:$slug" );
+    }
+
     # The one in-effect rule, as SQL over entitlement row $e (an alias or table
     # name): it is active and its period meets $when, a tstzrange expression.
     # A point T is tstzrange(T, T, '[]').
