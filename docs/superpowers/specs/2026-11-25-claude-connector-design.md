@@ -115,7 +115,7 @@ Any of these makes the feature a failure, even if it works:
   ~269-395): subdomain, then verified custom domain, then `registry`. The
   `X-As-Tenant` header and `as-tenant` cookie also apply when a user is set.
   The MCP and OAuth routes must not honour `X-As-Tenant` or `as-tenant`: a
-  token is bound to the host it was issued at.
+  token is bound to the tenant it was issued for (see Host and token binding).
 - **Credentials live in the tenant schema.** The `passkeys`,
   `magic_link_tokens` and `api_keys` tables are copied into every tenant
   schema, and lookups go through `$c->dao`. OAuth tables follow the same
