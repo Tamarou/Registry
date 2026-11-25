@@ -80,4 +80,58 @@ subtest 'two studios report different local dates for one instant near midnight 
     is $tokyo->{start}, '2027-06-01 11:00', 'Tokyo local start';
 };
 
+subtest 'malformed zone names refused' => sub {
+    my $room = location_in( $db, 'America/New_York' );
+    for my $zone ( '', undef, 'Mars/Olympus', '+05:00', 'america/new_york' ) {
+        my $shown = $zone // 'undef';
+        ok !eval { location_in( $db, $zone ); 1 }, "create refuses '$shown'";
+        ok !eval { $room->update( $db, { time_zone => $zone } ); 1 }, "update refuses '$shown'";
+    }
+    is scalar( Registry::DAO::Location->find( $db, { id => $room->id } ) )->time_zone, 'America/New_York',
+        'the stored zone is unchanged';
+};
+
+subtest 'zone value with sql is refused' => sub {
+    my $events = $db->query('SELECT count(*) FROM events')->array->[0];
+    ok !eval { location_in( $db, q{UTC'; DROP TABLE events;--} ); 1 }, 'refused';
+    ok $db->query(q{SELECT to_regclass('events') IS NOT NULL})->array->[0], 'the events table still exists';
+    is $db->query('SELECT count(*) FROM events')->array->[0], $events, 'with every row';
+};
+
+subtest 'zone change keeps occurrence instants' => sub {
+    my $room  = location_in( $db, 'America/New_York' );
+    my $event = occurrence_at( $db, $room, '2027-03-14T06:30:00Z' );
+    my $was   = $db->select( 'events', 'time', { id => $event->id } )->array->[0];
+
+    $room->update( $db, { time_zone => 'Europe/London' } );
+    is $db->select( 'events', 'time', { id => $event->id } )->array->[0], $was, 'the stored instant is unchanged';
+    is $event->local_start($db)->{start}, '2027-03-14 06:30', 'only its local reading moves';
+};
+
+subtest 'ambiguous fall back hour reports both instants' => sub {
+    my $room = location_in( $db, 'America/New_York' );
+    my $edt  = occurrence_at( $db, $room, '2027-11-07T05:30:00Z' )->local_start($db);
+    my $est  = occurrence_at( $db, $room, '2027-11-07T06:30:00Z' )->local_start($db);
+    is $edt->{start}, '2027-11-07 01:30', 'first 01:30';
+    is $est->{start}, '2027-11-07 01:30', 'second 01:30';
+    is $edt->{utc_offset}, '-04:00', 'first is EDT';
+    is $est->{utc_offset}, '-05:00', 'second is EST';
+};
+
+subtest 'zone read from own studio only' => sub {
+    my $here  = location_in( $db, 'America/New_York' );
+    my $event = occurrence_at( $db, $here, '2027-06-01T02:00:00Z' );
+
+    my $west  = $studio{west_studio};
+    my $there = location_in( $west, 'Asia/Tokyo' );
+    occurrence_at( $west, $there, '2027-06-01T02:00:00Z' );
+    # A newer location in the same schema, so a reader that took any row would show.
+    location_in( $db, q{Pacific/Auckland} );
+    $there->update( $west, { time_zone => 'Australia/Sydney' } );
+
+    my $read = $event->local_start($db);
+    is $read->{time_zone}, 'America/New_York', 'reads its own location';
+    is $read->{date},      '2027-05-31',       'its local date is unchanged';
+};
+
 done_testing;
