@@ -273,6 +273,19 @@ subtest 'an agreed terms version cannot be planted by a client' => sub {
     ok !exists data_for($run_id)->{agreed_terms_version}, 'nor at run creation';
 };
 
+subtest 'a booking refund cannot be planted by a client' => sub {
+    # booking_refund names the payment CompleteBooking refunds; only it writes
+    # it, for the run's own payment, when the paid booking cannot be made.
+    for my $form ( { booking_refund => 'planted' }, { 'booking_refund[payment_id]' => 'planted' } ) {
+        my $run = run_on_second_step();
+        $t->post_ok("/run-data-test/${\ $run->id}/complete" => form => $form)->status_is(201);
+        ok !exists data_for($run->id)->{booking_refund}, 'a posted booking_refund is not stored';
+    }
+    $t->post_ok('/run-data-test' => form => { booking_refund => 'planted' })->status_is(302);
+    my ($run_id) = $t->tx->res->headers->location =~ m{/run-data-test/([^/]+)/};
+    ok !exists data_for($run_id)->{booking_refund}, 'nor at run creation';
+};
+
 subtest 'a stored Stripe event cannot be named by a client' => sub {
     # stripe_event_id names the stored Connect event an entitlement-stripe-move
     # run applies; only the Connect endpoint sets it, when it creates the run.

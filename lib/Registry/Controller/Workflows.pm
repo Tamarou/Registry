@@ -111,9 +111,10 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # booking_hold names the hold a booking's completion converts; only HoldSeats writes it.
         # agreed_terms_version is the /terms version a booking is stamped with;
         # only Registry::Terms::record_agreement writes it.
+        # booking_refund names the payment CompleteBooking refunds; only it writes it.
         for my $key ( keys %$data ) {
             delete $data->{$key}
-                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_offer_version|__remote_address|stripe_account_id|tenant|change_hold|change_entitlement_id|change_targets|change_needs_admin|owed_payment|owed_payment_id|__driver|retry|stripe_event_id|refund_entitlement_id|booking_hold|agreed_terms_version)(?:\[|\z)/;
+                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_offer_version|__remote_address|stripe_account_id|tenant|change_hold|change_entitlement_id|change_targets|change_needs_admin|owed_payment|owed_payment_id|__driver|retry|stripe_event_id|refund_entitlement_id|booking_hold|agreed_terms_version|booking_refund)(?:\[|\z)/;
         }
 
         # Mojolicious fills remote_address from X-Forwarded-For only in

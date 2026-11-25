@@ -8,11 +8,13 @@ use Object::Pad;
 class Registry::DAO::WorkflowSteps::CompleteBooking :isa(Registry::DAO::WorkflowStep) {
     use Registry::DAO::Entitlement;
     use Registry::DAO::Event;
+    use Registry::DAO::Notification;
     use Registry::DAO::OfferVersion;
     use Registry::DAO::WorkflowSteps::ChooseOfferAndUnits;
     use Registry::DAO::Payment;
     use Registry::DAO::Resource;
     use Registry::PriceOps::Hold;
+    use Mojo::Promise;
 
     my $UUID = qr/\A[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\z/i;
 
@@ -29,6 +31,11 @@ class Registry::DAO::WorkflowSteps::CompleteBooking :isa(Registry::DAO::Workflow
             && Registry::PriceOps::Hold->find( $db, { id => $hold_id, workflow_run_id => $run->id }, 'id' );
         return _stay('Choose the seats to book') unless $hold;
         return {} if $hold->state eq 'converted';
+        # Decided once: the booking was not made and its payment is refunded.
+        if ( ref $data->{booking_refund} eq 'HASH' ) {
+            $tx->commit if $tx;
+            return $self->_refund( $db, $run, $data->{booking_refund} );
+        }
 
         my $payment = $self->_paid( $db, $run, $data );
         return _stay('This booking has not been paid for yet') unless $payment;
@@ -49,7 +56,21 @@ class Registry::DAO::WorkflowSteps::CompleteBooking :isa(Registry::DAO::Workflow
                     expires_at      => \"clock_timestamp() + interval '1 minute'",    # converted below
                 } );
             };
-            die $@ unless $again;
+            unless ($again) {
+                die $@ unless $@ =~ /units free/;
+                # They do not: nothing is booked and the whole charge is
+                # refunded, despite a refund-none policy, which governs the
+                # booker's cancellations, not this race (ruling 7a).
+                my $refund = {
+                    payment_id      => $payment->id,
+                    amount_cents    => $payment->amount_cents,
+                    idempotency_key => 'refund:booking:' . $run->id,
+                };
+                $run->update_data( $db, { booking_refund => $refund } );
+                $self->_tell( $db, $run, $payment, $hold->units );
+                $tx->commit if $tx;
+                return $self->_refund( $db, $run, $refund );
+            }
             $hold = $again;
             $run->update_data( $db, { booking_hold => { %$booking, hold_id => $hold->id } } );
         }
@@ -71,6 +92,49 @@ class Registry::DAO::WorkflowSteps::CompleteBooking :isa(Registry::DAO::Workflow
         } );
         $tx->commit if $tx;
         return {};
+    }
+
+    # The booker and the studio's admins, told once, when the refund is decided.
+    method _tell ( $db, $run, $payment, $seats ) {
+        my $sum  = sprintf '$%.2f', $payment->amount_cents / 100;
+        my $meta = { workflow_run_id => $run->id, payment_id => $payment->id };
+        Registry::DAO::Notification->create( $db, {
+            user_id  => $payment->user_id, type => 'general', channel => 'email',
+            subject  => 'Your booking could not be made: your payment is refunded',
+            message  => "Your payment went through after the seats we held for you were let go, and the class "
+                      . "has no room left, so you are not booked. Your payment of $sum is being refunded in full; "
+                      . 'it can take 5-10 business days to show on your statement.',
+            metadata => $meta,
+        } );
+        Registry::DAO::Notification->alert_admins( $db,
+            'A paid booking could not be made: it is being refunded',
+            sprintf( 'Payment %s (%s) was made after its seat hold lapsed, and the class had no room left for %d '
+                . 'seats. Nothing was booked. Registry is refunding the payment in full; the platform fee is kept.',
+                $payment->id, $sum, $seats ),
+            $meta );
+    }
+
+    # Refunds a paid booking that was not made, in full, under a key for the
+    # run, so the driver's retries and the person's return ask Stripe once.
+    # The platform's fee is kept, as on every refund (ADR 003). A failure is
+    # recorded on the payment and handed to the driver to retry; its last
+    # attempt puts the run before the admins.
+    method _refund ( $db, $run, $refund ) {
+        my $payment = Registry::DAO::Payment->find( $db, { id => $refund->{payment_id} } );
+        my $told = sprintf 'The class filled up before your payment went through, so you are not booked. '
+            . 'Your payment of $%.2f is being refunded in full.', $refund->{amount_cents} / 100;
+        # From a resolved promise, so a guard's die is a rejection handled below.
+        return Mojo::Promise->resolve->then( sub {
+            $payment->refund_async( $db, { $refund->%{qw( amount_cents idempotency_key )} } );
+        } )->then(
+            sub ($) { _stay($told) },
+            sub ($error) {
+                $payment->record_refund_failure( $db, $error );
+                return { %{ _stay($told) },
+                    retry => sprintf( "booking refund of payment %s on run %s failed: %s\n",
+                        $payment->id, $run->id, "$error" =~ s/\s+\z//r ) };
+            },
+        );
     }
 
     # Nothing to ask: the controller completes it as soon as the run reaches it.

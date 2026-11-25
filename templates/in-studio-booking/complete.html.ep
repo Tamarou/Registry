@@ -4,6 +4,7 @@
 % title 'Your booking';
 %= include 'in-studio-booking/_errors'
 
+% unless (@{ stash('errors') // [] }) {
 <section class="card">
   <p>We are confirming your payment. This page will show your booking once it is made.</p>
 </section>
@@ -13,6 +14,7 @@
     <button type="submit" class="btn btn-primary">Check again</button>
   </div>
 </form>
+% }
 
 <form method="POST" action="<%= url_for('workflow_start', workflow => 'in-studio-booking') %>">
   <div class="form-actions">

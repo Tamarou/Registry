@@ -13,6 +13,7 @@ use Test::Registry::Helpers qw( import_all_workflows );
 use Test::Registry::PricingProbe qw( give_tenant_terms );
 use Test::Registry::Offers qw( offer_terms );
 use Test::Registry::StripeWebhook;
+use Test::Registry::Async qw( settle );
 
 use Registry::DAO;
 use Registry::DAO::Tenant;
@@ -286,6 +287,59 @@ subtest 'late payment after lapse retakes seats' => sub {
     is hold_state( $sacp, $again ), 'converted', 'which is converted';
     ok reload( $sacp, $run )->completed( $sacp->{db} ), 'the run is complete';
     is Registry::DAO::Payment->find( $sacp->{db}, { id => $payment->id } )->status, 'completed', 'nothing is refunded';
+};
+
+# Notifications to $user_id about $run.
+sub told ( $s, $user_id, $run ) {
+    return $s->{db}->query( q{SELECT subject, message FROM notifications
+                               WHERE user_id = ? AND metadata->>'workflow_run_id' = ? ORDER BY created_at},
+        $user_id, $run->id )->hashes->to_array;
+}
+
+subtest 'late payment with seats gone refunds and notifies' => sub {
+    my ( $version, $occurrence ) = class_offer( $sacp, seats => 4 );
+    my $run     = held( $sacp, $occurrence, $version, 2 );
+    my $first   = $run->data->{booking_hold}{hold_id};
+    my $payment = started( $sacp, $run );
+    lapse( $sacp, $run );
+    my $other = held( $sacp, $occurrence, $version, 3 );    # the seats sell while the hold is lapsed
+    succeeded( $sacp, $payment )->status_is(200);
+    {
+        # No key: the refund is refused before any request reaches Stripe,
+        # the same failure branch a Stripe error takes.
+        local $ENV{STRIPE_SECRET_KEY} = '';
+        drive();
+    }
+
+    is_deeply entitlements_of( $sacp, $payment ), [], 'no booking is made';
+    is hold_state( $sacp, $first ), 'released', 'the lapsed hold is released';
+    is $occurrence->free_units( $sacp->{db} ), 1, 'and the other booking keeps its seats';
+    my $data = reload( $sacp, $run )->data;
+    is_deeply $data->{booking_refund}, {
+        payment_id      => $payment->id,
+        amount_cents    => 9000,
+        idempotency_key => 'refund:booking:' . $run->id,
+    }, 'the run records the refund owed: the whole charge, under a key for the run';
+    like $data->{__driver}{error}, qr/refund/, 'the failed refund is retried by the driver';
+    like Registry::DAO::Payment->find( $sacp->{db}, { id => $payment->id } )->metadata->{refund_last_failure}{message},
+        qr/STRIPE_SECRET_KEY/, 'and recorded on the payment';
+
+    my $booker = told( $sacp, $sacp->{booker}->id, $run );
+    is scalar @$booker, 1, 'the booker is told once';
+    like $booker->[0]{message}, qr/\$90\.00.*refunded/s, 'that the payment is refunded';
+    my $staff = told( $sacp, $sacp->{admin}, $run );
+    is scalar @$staff, 1, 'and the studio admin once';
+    like $staff->[0]{message}, qr/\Q${\ $payment->id }\E/, 'naming the payment';
+
+    # Stripe answered the refund; asking again under its key sends nothing.
+    Registry::DAO::Payment->find( $sacp->{db}, { id => $payment->id } )->_apply_refund_result( $sacp->{db},
+        { id => 're_isbp_late', status => 'succeeded' }, 9000, 'requested_by_customer', 0, $data->{booking_refund}{idempotency_key} );
+    my $again = settle( $run->process( $sacp->{db}, step( $sacp, 'complete' ), {} ) );
+    like "@{ $again->{errors} // [] }", qr/refunded/, 'the booker is shown the refund';
+    ok !$again->{retry}, 'with nothing left to retry';
+    is Registry::DAO::Payment->find( $sacp->{db}, { id => $payment->id } )->status, 'refunded', 'the payment is refunded';
+    is scalar told( $sacp, $sacp->{booker}->id, $run )->@*, 1, 'and nobody is told twice';
+    is_deeply entitlements_of( $sacp, $payment ), [], 'and still no booking is made';
 };
 
 done_testing;
