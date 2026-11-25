@@ -1,5 +1,5 @@
 # ABOUTME: in-studio-booking step: once the booking is paid, turns the run's hold into the booker's entitlement, once.
-# ABOUTME: Reads only server-owned run data; the entitlement is linked to its payment and stamped with the agreed terms at insert.
+# ABOUTME: Linked at insert to its payment and agreed terms; a late payment re-takes its seats, or is refunded in full.
 use 5.42.0;
 use utf8;
 
