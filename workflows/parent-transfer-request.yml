@@ -2,6 +2,7 @@
 description: Parent workflow for requesting enrollment transfer to a different session
 name: Parent Transfer Request
 slug: parent-transfer-request
+roles: [parent, admin, staff]
 first_step: select-enrollment
 steps:
 - class: Registry::DAO::WorkflowSteps::SelectEnrollmentForTransfer

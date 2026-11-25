@@ -4,6 +4,7 @@
 name: Location Management
 description: Create or edit the locations where programs are held
 slug: location-management
+roles: [admin, staff]
 first_step: list-or-create
 
 steps:

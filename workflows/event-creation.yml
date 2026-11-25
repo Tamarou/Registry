@@ -2,6 +2,7 @@
 description: A workflow to create new events
 name: Event Creation
 slug: event-creation
+roles: [admin, staff]
 steps:
 - class: Registry::DAO::WorkflowStep
   description: New Event Landing page

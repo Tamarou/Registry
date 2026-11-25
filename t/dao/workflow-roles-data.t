@@ -9,6 +9,11 @@ no warnings 'experimental::builtin';
 
 use Registry::DAO;
 use Test::Registry::DB;
+use Test::Registry::Mojo;
+use Mojo::Home;
+use Mojo::Pg;
+use App::Sqitch;
+use Test::PostgreSQL;
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -53,5 +58,68 @@ subtest 'copy_workflow carries roles and the public mark into a tenant schema' =
         is_deeply row( $slug, 'copytarget' ), row($slug), "$slug keeps its entry in the tenant's copy";
     }
 };
+
+# The map this data replaces. Every entry must carry over exactly.
+$ENV{DB_URL} = $test_db->uri;
+my $app = Test::Registry::Mojo->new('Registry')->app;
+
+subtest 'every shipped workflow imports with the roles the map gives it, or the public mark' => sub {
+    my @files = grep { !Load( $_->slurp )->{draft} }
+      Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml\z/)->each;
+    ok @files, 'there are shipped workflows';
+    $dao->import_workflows( \@files );
+
+    for my $file (@files) {
+        my $slug = Load( $file->slurp )->{slug};
+        my $got  = row($slug) or do { fail "$slug imported"; next };
+        if ( my $roles = $app->workflow_roles($slug) ) {
+            is_deeply $got, { roles => $roles, public => 0 }, "$slug has exactly the map's roles";
+        }
+        else {
+            is_deeply $got, { roles => undef, public => 1 }, "$slug, with no map entry, is public";
+        }
+    }
+};
+
+
+# The backfill, on rows that existed before the migration: its own database,
+# deployed to the parent change, so the rows are written without the columns.
+{
+    my $change = 'workflow-roles-data';
+    my $pg     = Test::PostgreSQL->new or BAIL_OUT $Test::PostgreSQL::errstr;
+    my $sqitch = App::Sqitch->new;
+    $sqitch->run( 'sqitch', 'deploy', '-t', $pg->uri, '--to', "$change^" );
+    my $db = Mojo::Pg->new( $pg->uri )->db;
+    $db->query( 'INSERT INTO registry.tenants (name, slug) VALUES (?, ?)', 'Backfill', 'backfilled' );
+    $db->query( 'SELECT registry.clone_schema(?)', 'backfilled' );
+    # Every shipped slug, drafts too, so the migration's copy of the map is
+    # compared with %ROLES entry for entry.
+    my %public = map { my $y = Load( $_->slurp ); ( $y->{slug} => !!$y->{public} ) }
+      Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml\z/)->each;
+    for my $schema (qw(registry backfilled)) {
+        $db->query( qq{INSERT INTO "$schema".workflows (name, slug) VALUES (?, ?)}, $_, $_ )
+          for sort( keys %public ), 'unlisted-flow';
+    }
+    $sqitch->run( 'sqitch', 'deploy', '-t', $pg->uri, '--to', $change );
+
+    my $entry = sub ( $schema, $slug ) {
+        $db->query( qq{SELECT roles, public FROM "$schema".workflows WHERE slug = ?}, $slug )->hash;
+    };
+
+    subtest 'backfill gives existing rows the map roles and the public mark' => sub {
+        for my $schema (qw(registry backfilled)) {
+            for my $slug ( sort keys %public ) {
+                is_deeply $entry->( $schema, $slug ),
+                  { roles => $app->workflow_roles($slug), public => $public{$slug} ? 1 : 0 },
+                  "$schema.$slug matches the map and its YAML";
+            }
+        }
+    };
+
+    subtest 'backfill does not public mark unlisted slugs' => sub {
+        is_deeply $entry->( $_, 'unlisted-flow' ), { roles => undef, public => 0 },
+          "$_.unlisted-flow has no entry" for qw(registry backfilled);
+    };
+}
 
 done_testing;

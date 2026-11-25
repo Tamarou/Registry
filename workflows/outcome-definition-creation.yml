@@ -1,6 +1,7 @@
 ---
 name: Outcome Definition Creation
 slug: outcome-definition-creation
+roles: [admin, staff]
 description: A workflow to create new outcome definitions (forms)
 steps:
   - class: Registry::DAO::WorkflowStep

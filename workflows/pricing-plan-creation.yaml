@@ -4,6 +4,7 @@
 name: Pricing Plan Creation
 description: Create and configure resource-aware pricing plans for your organization
 slug: pricing-plan-creation
+roles: [admin]
 first_step: plan-basics
 
 steps:

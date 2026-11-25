@@ -2,6 +2,7 @@
 description: Background job workflow for checking attendance and sending notifications
 name: Attendance Check
 slug: attendance-check
+roles: [admin, staff]
 steps:
 - class: Registry::DAO::WorkflowSteps::AttendanceCheck::TenantProcessor
   description: Process all tenant schemas for attendance monitoring

@@ -1,5 +1,6 @@
 name: Workflow Step Creation
 slug: workflow-step-creation
+roles: [admin, staff]
 draft: true
 description: |
   A guided process for creating new workflows in the system.

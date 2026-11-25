@@ -1,5 +1,6 @@
 name: Program Creation (Enhanced)
 slug: program-creation-enhanced
+roles: [admin, staff]
 description: Workflow for creating new educational programs
 first_step: program-type-selection
 steps:

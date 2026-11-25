@@ -1,5 +1,5 @@
 -- ABOUTME: Who may run a workflow becomes data on its row: a list of roles, or the public mark.
--- ABOUTME: Added in registry and every tenant schema; nothing reads it yet, the gate still reads Registry.pm's map.
+-- ABOUTME: Added and backfilled from Registry.pm's map in registry and every tenant schema; the gate still reads the map.
 
 -- Deploy registry:workflow-roles-data to pg
 -- requires: drop-tenant-billing-columns
@@ -21,6 +21,54 @@ BEGIN
         -- NULL roles and public false is "no entry": the next step's gate refuses it.
         EXECUTE format('ALTER TABLE %I.workflows ADD COLUMN IF NOT EXISTS roles text[]', s);
         EXECUTE format('ALTER TABLE %I.workflows ADD COLUMN IF NOT EXISTS public boolean NOT NULL DEFAULT false', s);
+
+        -- Backfill from Registry.pm's %ROLES map, entry for entry, so no
+        -- existing copy loses its guard.
+        EXECUTE format($sql$
+            UPDATE %I.workflows w
+               SET roles = m.roles
+              FROM (VALUES
+                ('admin-dashboard',               ARRAY['admin','staff']),
+                ('admin-drop-approval',           ARRAY['admin','staff']),
+                ('admin-transfer-approval',       ARRAY['admin','staff']),
+                ('attendance-check',              ARRAY['admin','staff']),
+                ('drop-request-processing',       ARRAY['admin','staff']),
+                ('event-creation',                ARRAY['admin','staff']),
+                ('location-creation',             ARRAY['admin','staff']),
+                ('location-management',           ARRAY['admin','staff']),
+                ('outcome-definition-creation',   ARRAY['admin','staff']),
+                ('program-creation',              ARRAY['admin','staff']),
+                ('program-creation-enhanced',     ARRAY['admin','staff']),
+                ('program-location-assignment',   ARRAY['admin','staff']),
+                ('program-setup',                 ARRAY['admin','staff']),
+                ('program-type-management',       ARRAY['admin','staff']),
+                ('project-creation',              ARRAY['admin','staff']),
+                ('session-creation',              ARRAY['admin','staff']),
+                ('template-editor',               ARRAY['admin','staff']),
+                ('transfer-request-processing',   ARRAY['admin','staff']),
+                ('user-creation',                 ARRAY['admin','staff']),
+                ('workflow-creation',             ARRAY['admin','staff']),
+                ('workflow-step-creation',        ARRAY['admin','staff']),
+                ('pricing-plan-creation',         ARRAY['admin']),
+                ('offer-publishing',              ARRAY['admin']),
+                ('platform-fee-refund-exception', ARRAY['admin']),
+                ('entitlement-stripe-move',       ARRAY['admin']),
+                ('entitlement-change',            ARRAY['parent','admin','staff']),
+                ('entitlement-refund',            ARRAY['parent','admin','staff']),
+                ('parent-drop-request',           ARRAY['parent','admin','staff']),
+                ('parent-transfer-request',       ARRAY['parent','admin','staff'])
+              ) AS m(slug, roles)
+             WHERE w.slug = m.slug
+        $sql$, s);
+
+        -- The public mark only where the shipped YAML declares it. Any other
+        -- slug keeps no entry, so the gate refuses it rather than inheriting
+        -- today's open default.
+        EXECUTE format($sql$
+            UPDATE %I.workflows SET public = true
+             WHERE slug IN ('__default__', 'registry-storefront', 'summer-camp-registration',
+                            'tenant-signup', 'tenant-storefront')
+        $sql$, s);
     END LOOP;
 END $$;
 

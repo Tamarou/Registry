@@ -4,6 +4,7 @@
 name: Program Setup
 description: Guided setup for getting a program live -- program types, locations, the program itself, sessions, and pricing
 slug: program-setup
+roles: [admin, staff]
 first_step: overview
 
 steps:

@@ -4,6 +4,7 @@
 name: Offer Publishing
 description: Name an offer for one of your resources, price it and publish it
 slug: offer-publishing
+roles: [admin]
 
 # Policy and other payment-plan steps go before publish, each its own step.
 steps:

@@ -1,5 +1,6 @@
 name: Program Creation
 slug: program-creation
+roles: [admin, staff]
 description: |
   Workflow for creating new programs. Admin selects a program type,
   fills in curriculum details and scheduling requirements, reviews

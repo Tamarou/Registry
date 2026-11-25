@@ -2,6 +2,7 @@
 description: Parent workflow for requesting enrollment drop with optional refund
 name: Parent Drop Request
 slug: parent-drop-request
+roles: [parent, admin, staff]
 first_step: select-enrollment
 steps:
 - class: Registry::DAO::WorkflowSteps::SelectEnrollmentForDrop
