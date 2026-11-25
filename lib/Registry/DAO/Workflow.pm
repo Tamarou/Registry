@@ -3,6 +3,7 @@ use Object::Pad;
 
 class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
     use YAML::XS;
+    no warnings 'experimental::builtin';
     use Mojo::JSON qw(decode_json);
     use Carp qw(croak);
 

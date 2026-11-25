@@ -5,6 +5,7 @@ use 5.42.0;
 use lib qw(lib t/lib);
 use Test::More;
 use YAML::XS qw(Load);
+no warnings 'experimental::builtin';
 
 use Registry::DAO;
 use Test::Registry::DB;
@@ -30,6 +31,27 @@ subtest 'roles import onto the row and round-trip through to_yaml' => sub {
     my $back = Load( $workflow->to_yaml($dao) );
     is_deeply $back->{roles}, [qw(admin staff)], 'to_yaml emits the roles';
     ok !exists $back->{public}, 'and no public mark';
+};
+
+subtest 'the public mark imports with no roles and round-trips' => sub {
+    my $workflow =
+      Registry::DAO::Workflow->from_yaml( $dao, workflow_yaml( 'public-flow', "public: true\n" ) );
+    is_deeply row('public-flow'), { roles => undef, public => 1 }, 'the row is public with no roles';
+
+    my $back = Load( $workflow->to_yaml($dao) );
+    ok builtin::is_bool( $back->{public} ) && $back->{public}, 'to_yaml emits public: true';
+    ok !exists $back->{roles}, 'and no roles';
+};
+
+subtest 'copy_workflow carries roles and the public mark into a tenant schema' => sub {
+    my $db = $dao->db;
+    $db->query( 'INSERT INTO registry.tenants (name, slug) VALUES (?, ?)', 'Copy Target', 'copytarget' );
+    $db->query( 'SELECT registry.clone_schema(?)', 'copytarget' );
+    for my $slug (qw(roles-flow public-flow)) {
+        my $id = $db->query( 'SELECT id FROM registry.workflows WHERE slug = ?', $slug )->array->[0];
+        $db->query( 'SELECT registry.copy_workflow(?, ?)', 'copytarget', $id );
+        is_deeply row( $slug, 'copytarget' ), row($slug), "$slug keeps its entry in the tenant's copy";
+    }
 };
 
 done_testing;
