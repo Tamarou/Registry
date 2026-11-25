@@ -260,6 +260,19 @@ subtest 'a refund target cannot be planted by a client' => sub {
     }
 };
 
+subtest 'an agreed terms version cannot be planted by a client' => sub {
+    # agreed_terms_version is what the booking is stamped with; only
+    # Registry::Terms::record_agreement writes it, as the version /terms serves.
+    for my $form ( { agreed_terms_version => 'planted' }, { 'agreed_terms_version[v]' => 'planted' } ) {
+        my $run = run_on_second_step();
+        $t->post_ok("/run-data-test/${\ $run->id}/complete" => form => $form)->status_is(201);
+        ok !exists data_for($run->id)->{agreed_terms_version}, 'a posted agreed_terms_version is not stored';
+    }
+    $t->post_ok('/run-data-test' => form => { agreed_terms_version => 'planted' })->status_is(302);
+    my ($run_id) = $t->tx->res->headers->location =~ m{/run-data-test/([^/]+)/};
+    ok !exists data_for($run_id)->{agreed_terms_version}, 'nor at run creation';
+};
+
 subtest 'a stored Stripe event cannot be named by a client' => sub {
     # stripe_event_id names the stored Connect event an entitlement-stripe-move
     # run applies; only the Connect endpoint sets it, when it creates the run.
