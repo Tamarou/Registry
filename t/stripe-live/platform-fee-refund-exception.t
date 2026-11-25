@@ -1,5 +1,5 @@
 # ABOUTME: Gated real-Stripe proof of Solo's fee-refund exception: after a refunded direct charge, the platform
-# ABOUTME: admin's workflow returns the application fee once, on the platform account; a second press adds none.
+# ABOUTME: admin's workflow and Payment::refund_platform_fee_async return the application fee once, on the platform.
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
 use 5.42.0;
@@ -141,6 +141,46 @@ subtest 'fee partly returned elsewhere: apply returns the rest' => sub {
     my $fee = Test::Registry::StripeConfirm::_get("/application_fees/$part_fee");
     is $fee->{amount_refunded}, 125, 'the whole fee is returned';
     is scalar @{ $fee->{refunds}{data} }, 2, 'in the hand refund and the one apply sent';
+};
+
+# The method itself, past the workflow: the charge is read on the seller
+# account, the fee refunded on the platform's, for the amount and key given.
+subtest 'method refunds the given amount once per key and writes no fee column' => sub {
+    my ( $direct, $direct_fee ) = refunded_charge();
+    my $before = $tdb->select( 'payments', '*', { id => $direct->id } )->hash;
+    my $send   = sub { settle( $direct->refund_platform_fee_async( $tdb,
+        { amount_cents => 40, idempotency_key => "fee-direct:$$" } ) ) };
+
+    my $first = $send->();
+    like $first->{id}, qr/^fr_/, 'Stripe answered with a fee refund';
+    is $first->{amount}, 40, 'for the given amount';
+    is $send->()->{id}, $first->{id}, 'the same key replays the same fee refund';
+
+    my $fee = Test::Registry::StripeConfirm::_get("/application_fees/$direct_fee");
+    is $fee->{amount_refunded}, 40, 'only the given amount is returned';
+    is scalar @{ $fee->{refunds}{data} }, 1, 'in one fee refund';
+    is_deeply $tdb->select( 'payments', '*', { id => $direct->id } )->hash, $before,
+        'the payment row is unchanged';
+};
+
+subtest 'charge with no application fee is not sent' => sub {
+    my $unpaid = Registry::DAO::Payment->create( $tdb, {
+        user_id => $parent->id, amount_cents => 5000, metadata => { tenant_slug => $slug } } );
+    settle( $unpaid->create_payment_intent_async( $tdb, { description => 'Fee exception live, never confirmed' } ) );
+    $unpaid = reread($unpaid);
+
+    ok !eval { settle( $unpaid->refund_platform_fee_async($tdb) ); 1 }, 'refused';
+    like $@, qr/REFUND_NOT_SENT.*no application fee/s, 'as not sent: the intent has no charge, so no fee';
+};
+
+subtest 'charge lookup error surfaces and sends no fee refund' => sub {
+    my ( $lost, $lost_fee ) = refunded_charge();
+    $tdb->update( 'payments', { stripe_payment_intent_id => "pi_does_not_exist_$$" }, { id => $lost->id } );
+
+    ok !eval { settle( reread($lost)->refund_platform_fee_async($tdb) ); 1 }, 'refused';
+    like $@, qr/No such payment_intent/, "Stripe's error surfaces";
+    is Test::Registry::StripeConfirm::_get("/application_fees/$lost_fee")->{amount_refunded}, 0,
+        'no fee refund was sent';
 };
 
 done_testing;
