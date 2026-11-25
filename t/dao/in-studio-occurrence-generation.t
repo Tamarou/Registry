@@ -127,6 +127,34 @@ subtest 'a weekly Saturday 10:00 class over four weeks yields four occurrences w
     is $result->{schedule_report}{skipped}, 0, 'and none skipped';
 };
 
+subtest 'a range across the March DST change keeps 10:00 local' => sub {
+    my $class = new_class();
+    my ( undef, $result ) = generate( pattern( $class, weekdays => [qw( saturday sunday )],
+        first_date => '2027-03-06', last_date => '2027-03-21' ) );
+    is errors_of($result), '', 'accepted' or return;
+    is_deeply local_starts($class),
+        [ map { "2027-03-$_ 10:00" } qw( 06 07 13 14 20 21 ) ], 'every weekend day at 10:00 local';
+    is_deeply [ map { $_->local_start($tdb)->{utc_offset} } occurrences_of($class)->@* ],
+        [ ('-05:00') x 3, ('-04:00') x 3 ], 'EST before the change, EDT after';
+    is_deeply $result->{schedule_report}{shifted}, [], 'and nothing is reported shifted';
+};
+
+subtest 're-running an overlapping range adds only the missing occurrences' => sub {
+    my $class = new_class();
+    generate( pattern($class) );
+    my @before = map { $_->id } occurrences_of($class)->@*;
+    my ( undef, $result ) = generate( pattern( $class, first_date => '2027-01-16', last_date => '2027-02-06' ) );
+    is errors_of($result), '', 'accepted' or return;
+    is_deeply local_starts($class), [ map { "$_ 10:00" } qw( 2027-01-02 2027-01-09 2027-01-16 2027-01-23
+        2027-01-30 2027-02-06 ) ], 'six Saturdays, none twice';
+    is_deeply [ grep { my $id = $_; grep { $_ eq $id } @before } map { $_->id } occurrences_of($class)->@* ], \@before,
+        'the first run\'s occurrences are still there';
+    is $tdb->query( 'SELECT count(*) FROM resources r JOIN events e ON e.id = r.event_id WHERE e.project_id = ?',
+        $class->id )->array->[0], 6, 'one resource each';
+    is $result->{schedule_report}{created}, 2, 'the run reports two created';
+    is $result->{schedule_report}{skipped}, 2, 'and two skipped';
+};
+
 subtest 'a chosen location overrides the class\'s' => sub {
     my $class = new_class();
     my ( undef, $result ) = generate( pattern( $class, location_id => $annex->id ) );
