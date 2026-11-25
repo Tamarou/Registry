@@ -76,7 +76,7 @@ sub booking ( $version, $occurrence, $payment = undef, $share = undef ) {
     return Registry::DAO::Entitlement->grant( $tdb, {
         holder_user_id   => person(),
         offer_version_id => $version->id,
-        payment_plan_id  => 'pay',
+        payment_plan_id  => $version->payment_plans($tdb)->[0]{id},
         starts_at        => '2020-01-01T00:00:00Z',
         ends_at          => $ends,
         resource_id      => $occurrence->id,
@@ -164,6 +164,25 @@ subtest 'a new version with another refund policy changes no existing entitlemen
         'sold under none, it is refused although a later version gave refunds';
     ok !apply($sold_full)->{refund_refused}, 'sold under full until cutoff, it is honoured although the current version is none';
     is +( request_on( $full_paid, $sold_full ) // {} )->{amount_cents}, 2000, 'and its refund is requested';
+};
+
+subtest 'refund against offer-publishing version honoured' => sub {
+    my $occurrence = occurrence();
+    my $version    = publish_offer( $dao, $slug, $admin, {
+        'offer-basics'  => { resource_id => $occurrence->id, offer_name => 'Published wheel ' . ++$made },
+        'offer-price'   => { price_cents => 2500, currency => 'usd', units_per_acceptance => 1, per_booking_cap => 1 },
+        'refund-policy' => { refund => 'full_until_cutoff', cutoff_hours => 24 },
+        'expiry-policy' => { expiry => 'end_of_occurrence' },
+    } );
+    is_deeply $version->policies->{refund}, { kind => 'full_until_cutoff', cutoff_hours => 24 },
+        'the refund-policy step stored a 24 hour cutoff';
+
+    my $e      = booking( $version, $occurrence, my $paid = payment(2500), 2500 );
+    my $result = apply($e);
+    ok !$result->{refund_refused}, 'asked before the cutoff, it is not refused as unrecognised or late'
+        or diag $result->{refund_refused};
+    is_deeply request_on( $paid, $e ), { amount_cents => 2500, idempotency_key => key_for($e) },
+        'its refund is requested';
 };
 
 done_testing;
