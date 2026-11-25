@@ -1,6 +1,9 @@
 # In-studio bookings — design
 
-Status: draft
+Status: approved
+
+Approved by perigrin on 2026-11-25 (https://claude.ai/code/session_01V7rs98q3bwA7Cs9ZBpVuL5)
+Source: "the in studio bookings design looks good" https://claude.ai/code/session_01V7rs98q3bwA7Cs9ZBpVuL5
 
 Base commit: `main` at 6202ea6 (PriceOps step 3 merged).
 
