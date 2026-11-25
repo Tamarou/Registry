@@ -87,4 +87,83 @@ subtest "a tenant whose copy's roles differ from registry's is gated by its own 
     $here_dao->db->update( 'workflows', { roles => [qw(admin staff)] }, { slug => 'program-creation' } );
 };
 
+sub runs_of ($slug) {
+    $here_dao->db->query( q{
+        SELECT count(*) FROM workflow_runs r JOIN workflows w ON w.id = r.workflow_id WHERE w.slug = ?
+    }, $slug )->array->[0];
+}
+
+subtest 'slug missing from tenant schema refused despite platform row' => sub {
+    ok $dao->db->query( q{SELECT public FROM registry.workflows WHERE slug = 'tenant-signup'} )->hash->{public},
+      'registry has a public-marked tenant-signup';
+    ok !$here_dao->find( 'Registry::DAO::Workflow', { slug => 'tenant-signup' } ), 'this tenant has no row for it';
+    my $t = app_as();
+    $t->get_ok( '/tenant-signup' => $HOST )->status_is(403);
+    $t->post_ok( '/tenant-signup' => $HOST => form => {} )->status_is(403);
+};
+
+subtest 'other tenant public mark does not open this tenant' => sub {
+    Registry::DAO::Workflow->from_yaml( $there_dao, workflow_yaml( 'elsewhere-flow', "public: true\n" ) );
+    Registry::DAO::Workflow->from_yaml( $here_dao,  workflow_yaml('elsewhere-flow') );
+    ok $there_dao->find( 'Registry::DAO::Workflow', { slug => 'elsewhere-flow' } )->public,
+      "the other tenant's copy is public";
+    my $t = app_as();
+    $t->get_ok( '/elsewhere-flow' => $HOST )->status_is(403);
+    $t->post_ok( '/elsewhere-flow' => $HOST => form => {} )->status_is(403);
+};
+
+subtest 'empty roles refused for admin too' => sub {
+    Registry::DAO::Workflow->from_yaml( $here_dao, workflow_yaml( 'empty-roles-flow', "roles: [admin]\n" ) );
+    $here_dao->db->update( 'workflows', { roles => [] }, { slug => 'empty-roles-flow' } );
+    for my $who ( [ admin => $admin ], [ anonymous => undef ] ) {
+        my $t = app_as( $who->[1] );
+        $t->get_ok( '/empty-roles-flow' => $HOST )->status_is( 403, "$who->[0] refused" );
+        $t->post_ok( '/empty-roles-flow' => $HOST => form => {} )->status_is( 403, "$who->[0] refused" );
+    }
+};
+
+subtest 'continuing a run of an unguarded workflow refused' => sub {
+    my $workflow = $here_dao->find( 'Registry::DAO::Workflow', { slug => 'unguarded-flow' } );
+    my $run      = $workflow->new_run( $here_dao->db );
+    my $before   = $here_dao->db->query( 'SELECT data::text, latest_step_id FROM workflow_runs WHERE id = ?', $run->id )->hash;
+    for my $user ( undef, $parent, $admin ) {
+        my $t = app_as($user);
+        $t->post_ok( "/unguarded-flow/@{[ $run->id ]}/$_" => $HOST => form => { x => 1 } )->status_is(403)
+          for qw(first second);
+        $t->get_ok( "/unguarded-flow/@{[ $run->id ]}/second" => $HOST )->status_is(403);
+    }
+    is_deeply $here_dao->db->query( 'SELECT data::text, latest_step_id FROM workflow_runs WHERE id = ?', $run->id )->hash,
+      $before, 'the run is unchanged';
+};
+
+subtest 'refused request creates no run' => sub {
+    my $before     = runs_of('unguarded-flow');
+    my $storefront = $here_dao->find( 'Registry::DAO::Workflow', { slug => 'tenant-storefront' } );
+    my $from       = $storefront->new_run( $here_dao->db );
+    for my $user ( undef, $parent, $admin ) {
+        my $t = app_as($user);
+        $t->get_ok( '/unguarded-flow' => $HOST )->status_is(403);
+        $t->post_ok( '/unguarded-flow' => $HOST => form => {} )->status_is(403);
+        $t->post_ok( "/tenant-storefront/@{[ $from->id ]}/callcc/unguarded-flow" => $HOST => form => {} )
+          ->status_is( 403, 'a callcc into it is refused too' );
+    }
+    is runs_of('unguarded-flow'), $before, 'no run was created';
+};
+
+subtest 'malformed slug never bypasses guard' => sub {
+    my $before = runs_of('program-creation');
+    my $t      = app_as($parent);
+    for my $path ( '/PROGRAM-CREATION', '/Program-Creation', '/program-creation%27', '/%27program-creation',
+        '/x/../program-creation', '/%2E%2E/program-creation', '/program-creation/..' )
+    {
+        $t->get_ok( $path => $HOST );
+        my $code = $t->tx->res->code;
+        ok $code == 403 || $code == 404, "GET $path is refused or not found (got $code)";
+        $t->post_ok( $path => $HOST => form => {} );
+        $code = $t->tx->res->code;
+        ok $code == 403 || $code == 404, "POST $path is refused or not found (got $code)";
+    }
+    is runs_of('program-creation'), $before, 'no program-creation run was created';
+};
+
 done_testing;
