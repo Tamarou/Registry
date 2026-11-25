@@ -226,8 +226,9 @@ subtest 'an offer version buys one resource or one class' => sub {
     my $offer    = Registry::DAO::Offer->create( $studio, { name => 'Muddled' } );
     throws_ok { $offer->draft( $studio, offer_terms( $resource->id, class_project_id => $c ) ) }
         qr/offer_versions_buys_resource_or_class/, 'not both';
-    throws_ok { $offer->draft( $studio, offer_terms(undef) ) }
-        qr/offer_versions_buys_resource_or_class/, 'nor neither';
+    # Neither is a set version's draft, filled in before publish; empty, it is refused there.
+    throws_ok { $offer->draft( $studio, offer_terms(undef) )->publish($studio) }
+        qr/buys nothing/, 'nor neither';
 };
 
 done_testing;

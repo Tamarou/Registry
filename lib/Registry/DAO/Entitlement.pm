@@ -99,11 +99,16 @@ active and the period covers T (in_effect_sql).
             $db->query( 'SELECT pg_advisory_xact_lock(hashtextextended(?, 0))', "platform_entitlement:$tenant" );
             $refuse->('This tenant already holds platform terms in effect: they must end before it accepts another platform offer.')
                 if $db->query( q{
-                    SELECT EXISTS (SELECT 1 FROM offer_versions v JOIN resources r ON r.id = v.resource_id
+                    SELECT EXISTS (SELECT 1 FROM offer_versions v
+                                     JOIN resources r ON r.id = v.resource_id
+                                         OR r.id IN (SELECT s.resource_id FROM offer_version_resources s
+                                                     WHERE s.offer_version_id = v.id)
                                     WHERE v.id = ? AND r.name = 'payment processing')
                        AND EXISTS (SELECT 1 FROM entitlements e
                                      JOIN offer_versions v ON v.id = e.offer_version_id
                                      JOIN resources r ON r.id = v.resource_id
+                                         OR r.id IN (SELECT s.resource_id FROM offer_version_resources s
+                                                     WHERE s.offer_version_id = v.id)
                                     WHERE e.holder_tenant_id = ? AND e.state = 'active'
                                       AND r.name = 'payment processing'
                                       AND e.in_effect && tstzrange(?::timestamptz, ?::timestamptz, '[)'))

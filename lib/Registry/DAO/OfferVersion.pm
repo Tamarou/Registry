@@ -15,7 +15,8 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
     field $offer_id :param :reader;
     field $version :param :reader;
     field $resource_id :param :reader = undef;         # the one resource it buys, or
-    field $class_project_id :param :reader = undef;    # the class whose occurrences it covers
+    field $class_project_id :param :reader = undef;    # the class whose occurrences it covers, or
+                                                       # neither: the set in offer_version_resources
     field $price_cents :param :reader;             # whole smallest currency units
     field $currency :param :reader;                # lowercase ISO 4217, as Stripe takes it
     field $units_per_acceptance :param :reader;    # e.g. 2 seats for a couple
@@ -31,15 +32,17 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
     method is_published { defined $published_at }
 
     # The resources accepting this version buys units of: its one resource,
-    # or every occurrence-resource of its class, including ones made after it
-    # was published, in occurrence order. The one coverage rule.
+    # each resource of its set, or every occurrence-resource of its class,
+    # including ones made after it was published, in occurrence order. The one
+    # coverage rule.
     method covered_resources ($db) {
         $db = $db->db if $db isa Registry::DAO;
         return $db->query( q{
             SELECT r.* FROM resources r LEFT JOIN events e ON e.id = r.event_id
              WHERE r.id = ? OR e.project_id = ?
+                OR r.id IN (SELECT resource_id FROM offer_version_resources WHERE offer_version_id = ?)
              ORDER BY e.time, r.id
-        }, $resource_id, $class_project_id )->hashes
+        }, $resource_id, $class_project_id, $id )->hashes
             ->map( sub { Registry::DAO::Resource->new(%$_) } )->to_array;
     }
 
@@ -133,7 +136,8 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
         }
     }
 
-    # Appends the offer's next version number as a draft.
+    # Appends the offer's next version number as a draft. $terms names one
+    # resource_id, one class_project_id, or resource_ids: the set it buys.
     sub draft ( $class, $db, $offer_id, $terms ) {
         $db = $db->db if $db isa Registry::DAO;
         my $policies = $terms->{policies} // {};
@@ -154,6 +158,8 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
             $db->insert( 'offer_version_payment_plans',
                 { offer_version_id => $row->{id}, $_->%{qw( id kind fraction )} } )
                 for ( $terms->{payment_plans} // [] )->@*;
+            $db->insert( 'offer_version_resources', { offer_version_id => $row->{id}, resource_id => $_ } )
+                for ( $terms->{resource_ids} // [] )->@*;
             $row;
         } );
         return $class->new(%$row);

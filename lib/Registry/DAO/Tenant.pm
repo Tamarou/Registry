@@ -400,6 +400,8 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
                 SELECT 1 FROM registry.entitlements e
                   JOIN registry.offer_versions v ON v.id = e.offer_version_id
                   JOIN registry.resources r      ON r.id = v.resource_id
+                      OR r.id IN (SELECT s.resource_id FROM registry.offer_version_resources s
+                                  WHERE s.offer_version_id = v.id)
                  WHERE e.holder_tenant_id = ? AND r.name = ? AND $in_effect)
         }, $tenant_id, $resource )->array->[0] ? 1 : 0;
     }
