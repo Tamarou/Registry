@@ -143,6 +143,11 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         $run->update_data( $self->dao->db, { user => $data->{user} } )
           if $run && $data->{user};
 
+        # Likewise the serving tenant: a step that reads the run's tenant (plan
+        # authorship) gets this request's, even when no earlier step echoed it.
+        $run->update_data( $self->dao->db, { __tenant_slug => $data->{__tenant_slug} } )
+          if $run && $data->{__tenant_slug};
+
         return $data;
     }
 
