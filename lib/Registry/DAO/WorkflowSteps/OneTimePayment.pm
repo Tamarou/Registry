@@ -9,6 +9,7 @@ class Registry::DAO::WorkflowSteps::OneTimePayment :isa(Registry::DAO::WorkflowS
 use Registry::DAO::Payment;
 use Registry::DAO::Tenant;
 use Registry::DAO::User;
+use Registry::PriceOps::Hold;
 
 my $UUID = qr/\A[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\z/i;
 
@@ -33,6 +34,9 @@ method process ( $db, $form_data, $run = undef ) {
         return $self->_returned( $db, $run, $intent_id );
     }
 
+    if ( my $refusal = $self->hold_for_charge( $db, $run ) ) {
+        return $self->_stay( errors => [$refusal] );
+    }
     my $owed = $self->owed_payment( $db, $run );
     return $self->_stay( errors => $owed->{errors} ) if $owed->{errors};
     my $payment = $owed->{payment};
@@ -137,6 +141,32 @@ method owed_payment ( $db, $run ) {
 
     $run->update_data( $db, { owed_payment_id => $payment->id } );
     return { payment => $payment };
+}
+
+# hold_for_charge($db, $run) -> refusal | undef
+#
+# What is owed may be for seats a prior step holds (owed_payment.hold_id): the
+# charge is taken only while that hold is live. A lapsed or gone hold is
+# released and refused before anything is charged.
+method hold_for_charge ( $db, $run ) {
+    $db = $db->db if $db isa Registry::DAO;
+    my $owed    = $run->data->{owed_payment};
+    my $hold_id = ref $owed eq 'HASH' ? $owed->{hold_id} : undef;
+    return undef unless defined $hold_id;
+    my $lapsed = 'The seats held for this payment were let go. Nothing has been charged.';
+    return $lapsed unless !ref $hold_id && $hold_id =~ $UUID;
+
+    my $tx   = $db->dbh->{AutoCommit} ? $db->begin : undef;
+    my $live = Registry::PriceOps::Hold->live_sql('holds');
+    my $hold = $db->query( "SELECT $live AS live FROM holds WHERE id = ? AND workflow_run_id = ? FOR UPDATE",
+        $hold_id, $run->id )->hash;
+    unless ( $hold && $hold->{live} ) {
+        $db->query( q{UPDATE holds SET state = 'released' WHERE id = ? AND state = 'held'}, $hold_id ) if $hold;
+        $tx->commit if $tx;
+        return $hold ? 'The seats held for this payment lapsed. Nothing has been charged.' : $lapsed;
+    }
+    $tx->commit if $tx;
+    return undef;
 }
 
 # The person's return from Stripe. The intent must be the one stored on this

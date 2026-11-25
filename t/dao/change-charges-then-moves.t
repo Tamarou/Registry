@@ -97,6 +97,7 @@ my $workflow = Registry::DAO::Workflow->create( $studio,
 $workflow->add_step( $studio, { slug => $_->[0], class => $_->[1] } ) for
     [ 'choose-target' => 'Registry::DAO::WorkflowSteps::ChooseChangeTarget' ],
     [ 'hold-target'   => 'Registry::DAO::WorkflowSteps::HoldChangeTarget' ],
+    [ 'pay'           => 'Registry::DAO::WorkflowSteps::OneTimePayment' ],
     [ 'complete'      => 'Registry::DAO::WorkflowSteps::CompleteChange' ];
 
 sub step ($slug) { $workflow->get_step( $studio, { slug => $slug } ) }
@@ -144,6 +145,23 @@ sub succeeded ($payment) {
 # Has Minion's worker perform every queued job.
 sub drive () { $minion->perform_jobs }
 
+# The run's hold lapses, as the clock would make it.
+sub lapse ($run) {
+    $studio->query( q{UPDATE holds SET expires_at = clock_timestamp() - interval '1 second'
+                       WHERE workflow_run_id = ?}, $run->id );
+}
+
+sub hold_is_live ($run) {
+    my $live = Registry::PriceOps::Hold->live_sql('holds');
+    $studio->query( "SELECT $live FROM holds WHERE id = ?", reload($run)->data->{change_hold}{hold_id} )
+        ->array->[0];
+}
+
+sub payments_of ($run) {
+    $studio->query( q{SELECT * FROM payments WHERE metadata->>'workflow_run_id' = ?}, $run->id )
+        ->hashes->to_array;
+}
+
 sub hold_state ($run) {
     $studio->select( 'holds', 'state', { id => reload($run)->data->{change_hold}{hold_id} } )->array->[0];
 }
@@ -152,6 +170,13 @@ subtest 'paid change moves entitlement once' => sub {
     my ( $version, $from, $to ) = occurrences( \%WINDOW, 72, 96 );
     my $e   = booking( $version, $from, 2 );
     my $run = held_run( $e, $to );
+
+    is_deeply { reload($run)->data->{owed_payment}->%{qw( amount_cents offer_version_id payment_plan hold_id )} }, {
+        amount_cents     => 1000,
+        offer_version_id => $version->id,
+        payment_plan     => 'pay',
+        hold_id          => reload($run)->data->{change_hold}{hold_id},
+    }, 'the hold step owes the stamped fee, under the entitlement\'s plan, for the hold';
 
     succeeded( fee_payment($run) )->status_is(200);
     drive();
@@ -172,6 +197,30 @@ subtest 'paid change moves entitlement once' => sub {
         $to_ends, $e->id )->array->[0], 1, 'until the target occurrence ends';
     is $studio->select( 'entitlements', 'count(*)', { offer_version_id => $version->id } )->array->[0], 1,
         'no second entitlement is made';
+};
+
+subtest 'failed charge or lapsed hold releases hold' => sub {
+    my ( $version, $from, $to ) = occurrences( \%WINDOW, 72, 96 );
+
+    my $e   = booking( $version, $from );
+    my $run = held_run( $e, $to );
+    my $payment = fee_payment($run);
+    $payment->_record_intent_failure_write( $studio, 'Your card was declined.' );    # as a decline records it
+    ok $run->process( $studio, step('complete'), {} )->{errors}, 'a failed charge does not complete the change';
+    lapse($run);
+    ok !hold_is_live($run), 'its hold lapses, which releases it';
+    is $to->free_units($studio), 4, 'so the target keeps every seat';
+    is_deeply $e->units( $studio, $from->id ), [1], 'and the entitlement stays where it was';
+
+    $e   = booking( $version, $from );
+    $run = held_run( $e, $to );
+    lapse($run);
+    my $paid = $run->process( $studio, step('pay'), {} );
+    like "@{ $paid->{errors} // [] }", qr/lapsed/, 'a hold that lapsed before the charge refuses the charge';
+    is_deeply payments_of($run), [], 'and no payment is started';
+    is hold_state($run), 'released', 'the hold is released';
+    is $to->free_units($studio), 4, 'the target keeps every seat';
+    is scalar $e->units( $studio, $from->id )->@*, 1, 'and the entitlement stays where it was';
 };
 
 done_testing;

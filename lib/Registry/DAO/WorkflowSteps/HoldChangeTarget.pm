@@ -55,13 +55,25 @@ class Registry::DAO::WorkflowSteps::HoldChangeTarget :isa(Registry::DAO::Workflo
         # Written with the hold, under the run's lock: written after commit, an
         # earlier submit's change_hold could land over a later one's. Not `change`:
         # offer-publishing's change-policy form posts a field of that name.
-        $run->update_data( $db, { change_hold => {
-            entitlement_id       => $entitlement->id,
-            target_occurrence_id => $target->id,
-            hold_id              => $hold->id,
-            fee_cents            => $version->policies->{change}{fee_cents},
-            offer_version_id     => $version->id,
-        } } );
+        my $fee = $version->policies->{change}{fee_cents};
+        $run->update_data( $db, {
+            change_hold => {
+                entitlement_id       => $entitlement->id,
+                target_occurrence_id => $target->id,
+                hold_id              => $hold->id,
+                fee_cents            => $fee,
+                offer_version_id     => $version->id,
+            },
+            # What the pay step charges, against this hold; a zero fee owes nothing.
+            owed_payment => $fee ? {
+                offer_version_id => $version->id,
+                payment_plan     => $entitlement->payment_plan_id,
+                amount_cents     => $fee,
+                description      => 'Change fee',
+                purpose          => 'change_fee',
+                hold_id          => $hold->id,
+            } : undef,
+        } );
         $tx->commit if $tx;
         return {};
     }
