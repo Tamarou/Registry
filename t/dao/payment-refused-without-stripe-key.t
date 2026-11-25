@@ -139,6 +139,35 @@ subtest 'priced cart without a stripe key is refused' => sub {
         'nothing enrolled, no payment written';
 };
 
+my $unready = cart_tenant( no_account => 1, sessions => {
+    Priced => [ { plan_name => 'Standard', amount_cents => 15000 } ],
+    Free   => [ { plan_name => 'Free',     amount_cents => 0 } ],
+} );
+
+subtest '$0 cart without a stripe key completes' => sub {
+    local $ENV{STRIPE_SECRET_KEY};
+    delete $ENV{STRIPE_SECRET_KEY};
+
+    my ( $out, $warned ) = checkout( $unready, cart_run( $unready, 'Free' ) );
+    is $out->{next_step}, 'complete', 'the run completes';
+    ok !$out->{errors}, 'with no error' or diag explain $out->{errors};
+    is $warned, '', 'and nothing refused';
+    is_deeply rows_for_cart($unready), { enrollments => 1, payments => 0, payment_items => 0 },
+        'enrolled without a payment, on a tenant with no Stripe account';
+    $unready->{db}->query( 'DELETE FROM enrollments WHERE family_member_id = ?', $unready->{child}->id );
+};
+
+subtest 'priced cart for a tenant not ready is refused even with a key' => sub {
+    local $ENV{STRIPE_SECRET_KEY} = 'sk_test_placeholder_not_real';
+
+    my ( $out, $warned ) = checkout( $unready, cart_run( $unready, 'Priced' ) );
+    is_deeply $out->{errors}, [$UNAVAILABLE], 'refused with the unavailable message';
+    like $warned, qr/checkout refused: tenant '\Q$unready->{slug}\E' is not Stripe Connect ready/,
+        'the refusal names the tenant';
+    is_deeply rows_for_cart($unready), { enrollments => 0, payments => 0, payment_items => 0 },
+        'nothing enrolled, no payment written';
+};
+
 # ---- OneTimePayment --------------------------------------------------------
 
 sub seller (%opt) {
@@ -199,6 +228,19 @@ subtest 'one time payment without a stripe key is refused' => sub {
         'refused with the unavailable message';
     like $warned, qr/one-time payment refused: STRIPE_SECRET_KEY is not set/, 'the refusal is logged';
     is_deeply rows_for_buyer($studio), { payments => 0, entitlements => 0 }, 'no payment, no entitlement';
+};
+
+my $unready_studio = seller( no_account => 1 );
+
+subtest 'one time payment for a tenant not ready is refused even with a key' => sub {
+    local $ENV{STRIPE_SECRET_KEY} = 'sk_test_placeholder_not_real';
+
+    my ( $out, $warned ) = pay( $unready_studio, owed_run($unready_studio) );
+    is_deeply $out->{errors}, ['This payment cannot be taken right now. Nothing has been charged.'],
+        'refused with the unavailable message';
+    like $warned, qr/one-time payment refused: tenant '\Q$unready_studio->{slug}\E' is not Stripe Connect ready/,
+        'the refusal names the tenant';
+    is_deeply rows_for_buyer($unready_studio), { payments => 0, entitlements => 0 }, 'no payment, no entitlement';
 };
 
 $test_db->cleanup_test_database;
