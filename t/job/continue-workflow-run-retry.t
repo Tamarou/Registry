@@ -160,6 +160,26 @@ subtest 'exhausted attempts mark run halted' => sub {
     is at($run), 'step-2', 'latest_step_id is unchanged';
 };
 
+sub halt_alerts ($run) {
+    $adb->query( q{SELECT count(*) FROM notifications WHERE metadata->>'workflow_run_id' = ?}, $run->id )
+        ->array->[0];
+}
+
+subtest 'halted run alerts tenant admins' => sub {
+    my $retried = parked_run( payment_workflow(), \%dies_at_payment );
+    $minion->perform_jobs( { id => enqueue($retried) } );
+    is halt_alerts($retried), 0, 'a failed attempt with retries left alerts nobody';
+
+    my $run = parked_run( payment_workflow(), \%dies_at_payment );
+    retry_at_once( enqueue($run) );
+    is reload($run)->data->{__driver}{state}, 'halted', 'the last attempt halts the run';
+    ok halt_alerts($run) >= 1, "and alerts the tenant's admins";
+    my $note = $adb->query( q{SELECT subject, message FROM notifications WHERE metadata->>'workflow_run_id' = ?},
+        $run->id )->hash;
+    like $note->{message}, qr/\Q@{[ $run->id ]}\E.*payment|payment.*\Q@{[ $run->id ]}\E/s,
+        'naming the run and the step it halted at';
+};
+
 subtest 'halted run resumes at halted step' => sub {
     my $run = parked_run( payment_workflow(), \%dies_at_payment );
     my $id  = enqueue($run);

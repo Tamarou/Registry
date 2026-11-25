@@ -6,6 +6,7 @@ use Object::Pad;
 class Registry::Job::ContinueWorkflowRun {
     use Mojo::Date;
     use Mojo::Promise;
+    use Registry::DAO::Notification;
     use Registry::DAO::Tenant;
     use Registry::DAO::WorkflowRun;
 
@@ -61,13 +62,20 @@ class Registry::Job::ContinueWorkflowRun {
             # Written down on the run so a run nobody is waiting on is not
             # silently stuck; the last attempt marks it halted for an admin.
             my $attempt = $job->retries + 1;
+            my $halted  = $attempt >= $job->info->{attempts};
             $run->update_data( $db, { __driver => {
                 step    => $step->slug,
                 attempt => $attempt,
                 error   => "$e",
                 at      => Mojo::Date->new->to_datetime,
-                ( $attempt >= $job->info->{attempts} ? ( state => 'halted' ) : () ),
+                ( $halted ? ( state => 'halted' ) : () ),
             } } );
+            # Nobody is waiting on the run, so its halt is put in front of
+            # the tenant's admins rather than left on the run alone.
+            Registry::DAO::Notification->alert_admins( $db, 'A background task stopped: finish it by hand',
+                sprintf( 'Workflow run %s stopped at step %s after %d attempts: %s',
+                    $run->id, $step->slug, $attempt, "$e" =~ s/\s+\z//r ),
+                { workflow_run_id => $run->id, step => $step->slug } ) if $halted;
             die $e;
         }
 
