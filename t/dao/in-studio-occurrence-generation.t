@@ -49,6 +49,23 @@ my $annex = Test::Registry::Fixtures::create_location( $tdb,
 
 my $workflow = $tenant_dao->find( Workflow => { slug => 'in-studio-schedule' } );
 
+# Another tenant's class, location and staff member, and the platform's.
+Test::Registry::Fixtures::create_tenant( $dao, { name => 'Glaze Studio', slug => 'glaze_studio' } );
+my $gdb = Registry::DAO->new( url => $test_db->uri, schema => 'glaze_studio' )->db;
+my %foreign;
+for my $where ( [ glaze => $gdb, 'glaze_studio' ], [ registry => $dao->db, 'registry' ] ) {
+    my ( $name, $handle, $slug ) = @$where;
+    my $teacher = Test::Registry::Fixtures::create_user( $dao,
+        { username => "${name}_staff", name => "\u$name Staff", email => "staff\@$name.test", user_type => 'staff' } );
+    join_tenant( $dao, $teacher, 'staff', $slug );
+    # In this schema too, so only the role check can refuse them.
+    $dao->db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)', $SLUG, $teacher->id );
+    my $location = Test::Registry::Fixtures::create_location( $handle, { name => "\u$name room", slug => "$name-room" } );
+    my $class    = Registry::DAO::Project->create( $handle,
+        { name => "\u$name class", seats_per_occurrence => 8, metadata => { location_id => $location->id } } );
+    $foreign{$name} = { teacher => $teacher, location => $location, class => $class };
+}
+
 # A fresh class of $seats seats per occurrence at the room.
 sub new_class ( $seats = 8 ) {
     state $n = 0;
@@ -195,6 +212,41 @@ subtest 'a teacher is required and must be staff or admin here' => sub {
 
 sub count_of ($class) { scalar occurrences_of($class)->@* }
 
+sub events_anywhere () {
+    return $tdb->query('SELECT count(*) FROM events')->array->[0]
+        + $gdb->query('SELECT count(*) FROM events')->array->[0]
+        + $dao->db->query('SELECT count(*) FROM registry.events')->array->[0];
+}
+
+subtest 'another tenant\'s or the platform\'s class is refused' => sub {
+    my $before = events_anywhere();
+    for my $name (qw( glaze registry )) {
+        my ( undef, $result ) = generate( { pattern( new_class() )->%*, class_project_id => $foreign{$name}{class}->id } );
+        like errors_of($result), qr/Choose one of your classes/, "$name\'s class is refused";
+    }
+    is events_anywhere(), $before, 'and no occurrence is created';
+};
+
+subtest 'another tenant\'s or the platform\'s location is refused' => sub {
+    my $class  = new_class();
+    my $before = events_anywhere();
+    for my $name (qw( glaze registry )) {
+        my ( undef, $result ) = generate( pattern( $class, location_id => $foreign{$name}{location}->id ) );
+        like errors_of($result), qr/Choose one of your locations/, "$name\'s location is refused";
+    }
+    is events_anywhere(), $before, 'and no occurrence is created';
+};
+
+subtest 'another tenant\'s or the platform\'s teacher is refused' => sub {
+    my $class  = new_class();
+    my $before = events_anywhere();
+    for my $name (qw( glaze registry )) {
+        my ( undef, $result ) = generate( pattern( $class, teacher_id => $foreign{$name}{teacher}->id ) );
+        like errors_of($result), qr/Choose a teacher from your staff/, "$name\'s staff member is refused";
+    }
+    is events_anywhere(), $before, 'and no occurrence is created';
+};
+
 sub utc_of ($event) {
     $tdb->query( q{SELECT to_char(time AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI"Z"') FROM events WHERE id = ?},
         $event->id )->array->[0];
@@ -256,9 +308,12 @@ sub blocked_behind ( $holder, $pid ) {
     return $blocked;
 }
 
-subtest 'concurrent generation creates no duplicates' => sub {
-    my $class = new_class();
-    my ( $first, $second ) = ( start(), start() );
+# Two real connections. A opens a transaction and runs $first, which takes
+# the class's lock; B (a forked child, building nothing from the parent's
+# connection) then runs the schedule step for $run with $fields and waits on
+# it. Once B waits, A commits. Returns whether B waited, A's return and B's
+# result (errors, died, report).
+sub race ( $first, $run, $fields ) {
     my $step = schedule_step();
     my $uri  = $test_db->uri;
     pipe( my $child_reads, my $parent_writes ) or die "pipe: $!";
@@ -268,24 +323,31 @@ subtest 'concurrent generation creates no duplicates' => sub {
         close $_ for $parent_writes, $parent_reads;
         readline $child_reads;
         my $bdb    = Registry::DAO->new( url => $uri, schema => $SLUG )->db;
-        my $result = eval { $second->process( $bdb, $step, pattern($class) ) } // { died => "$@" };
+        my $result = eval { $run->process( $bdb, $step, $fields ) } // { died => "$@" };
         print $child_writes encode_json( { errors => $result->{errors}, died => $result->{died},
             report => $result->{schedule_report} } );
         close $child_writes;
         POSIX::_exit(0);
     }
     close $_ for $child_reads, $child_writes;
-    my $adb = Registry::DAO->new( url => $uri, schema => $SLUG )->db;
-    my $tx  = $adb->begin;
-    my $a   = $first->process( $adb, $step, pattern($class) );
+    my $adb    = Registry::DAO->new( url => $uri, schema => $SLUG )->db;
+    my $tx     = $adb->begin;
+    my $a      = $first->( $adb, $step );
     my $holder = $adb->query('SELECT pg_backend_pid()')->array->[0];
     print $parent_writes "go\n";
     $parent_writes->flush;
-    ok blocked_behind( $holder, $pid ), 'the second run waits for the first';
+    my $blocked = blocked_behind( $holder, $pid );
     $tx->commit;
     waitpid $pid, 0;
-    my $b = decode_json( do { local $/; readline $parent_reads } );
+    return ( $blocked, $a, decode_json( do { local $/; readline $parent_reads } ) );
+}
 
+subtest 'concurrent generation creates no duplicates' => sub {
+    my $class = new_class();
+    my ( $first, $second ) = ( start(), start() );
+    my ( $blocked, $a, $b ) = race( sub ( $adb, $step ) { $first->process( $adb, $step, pattern($class) ) },
+        $second, pattern($class) );
+    ok $blocked, 'the second run waits for the first';
     is errors_of($a), '', 'the first run shows no error';
     is $b->{died}, undef, 'the second run does not die';
     is_deeply $b->{errors}, undef, 'and shows no error';
