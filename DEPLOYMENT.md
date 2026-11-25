@@ -209,6 +209,17 @@ Check the `DB_URL` environment variable and database status in Render dashboard.
 1. Verify Stripe keys are correctly set
 2. Check webhook endpoint configuration
 3. Review Stripe dashboard for failed payments
+4. While `/terms` is the DRAFT placeholder (`Registry::Terms::VERSION` is
+   `draft`), every checkout is refused in any `MOJO_MODE` but `development` and
+   `test`: no payment intent is created and the payer is told the terms are not
+   final (ADR 005, ruling 12). This lifts when perigrin's own terms replace the
+   placeholder in `templates/terms.html.ep` together with that version.
+
+#### Terms of service
+`/terms` is served anonymously on the apex and every tenant host from
+`templates/terms.html.ep`. It states the platform's terms only; each studio's
+booking terms are shown with its offers. It is a marked DRAFT placeholder until
+perigrin supplies the text, and changing it needs his written OK.
 
 ### Performance Considerations
 
