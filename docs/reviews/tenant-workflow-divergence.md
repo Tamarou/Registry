@@ -32,4 +32,7 @@ Reported to perigrin on 2026-11-25 via https://claude.ai/code/session_01V7rs98q3
 
 ## Rulings
 
-Nothing differs, so no ruling is needed for any difference. Awaiting perigrin's acknowledgement.
+Nothing differs, so no difference needs a ruling.
+
+Ruling: none needed
+Source: "No workflow differences in production; no ruling needed." https://claude.ai/code/session_01V7rs98q3bwA7Cs9ZBpVuL5
