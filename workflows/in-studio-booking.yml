@@ -19,6 +19,9 @@ steps:
     label: Offer
     description: Choose an offer and how many
     class: Registry::DAO::WorkflowSteps::ChooseOfferAndUnits
+    # The terms agreement (01a213a6-045a) is taken here, on the page that links
+    # /terms: ChooseOfferAndUnits->process records it, and HoldSeats refuses a
+    # run that has not agreed before it holds anything.
 
   - slug: account
     label: Your account
@@ -29,9 +32,6 @@ steps:
     label: Hold
     description: Hold the seats while you pay
     class: Registry::DAO::WorkflowSteps::HoldSeats
-
-  # The terms-agreement step (01a213a6-045a) goes here, between hold and
-  # payment: the booker agrees to the /terms version being served before any charge.
 
   # Charges owed_payment, as HoldSeats wrote it, against booking_hold's hold.
   # 01a20415-6b96 adds `complete` (CompleteBooking, converting booking_hold's
