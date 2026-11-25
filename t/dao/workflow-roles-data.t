@@ -166,17 +166,32 @@ subtest 'every shipped workflow imports with the roles or public mark its YAML d
           "$_.unlisted-flow has no entry" for qw(registry backfilled);
     };
 
-    $sqitch->run( 'sqitch', 'deploy', '-t', $pg->uri );
-
-    subtest 'after every migration a carried-forward row agrees with its shipped YAML' => sub {
+    my $agrees = sub (@schemas) {
         ok @known, 'the backfill gave existing rows an entry';
-        for my $schema (qw(registry backfilled)) {
+        for my $schema (@schemas) {
             for my $slug (@known) {
                 # Gone: a later migration cleared it so import rebuilds it from the YAML.
                 my $got = $entry->( $schema, $slug ) or next;
                 is_deeply $got, declared( $yaml{$slug} ), "$schema.$slug has what its YAML declares";
             }
         }
+    };
+
+    # workflow-run-entitlements refuses a studio holding copies (no offer
+    # grants a studio run rights yet), so a studio's copies are carried
+    # through every migration before it, and registry's through all of them.
+    my $refuses = 'workflow-run-entitlements';
+    $sqitch->run( 'sqitch', 'deploy', '-t', $pg->uri, '--to', "$refuses^" );
+
+    subtest 'after every migration a carried-forward row agrees with its shipped YAML' => sub {
+        $agrees->(qw( registry backfilled ));
+    };
+
+    $db->query('DELETE FROM backfilled.workflows');
+    $sqitch->run( 'sqitch', 'deploy', '-t', $pg->uri );
+
+    subtest 'after every migration a carried-forward registry row agrees with its shipped YAML' => sub {
+        $agrees->('registry');
     };
 
     # The handle goes before the server does, or its DESTROY talks to a dead one.
