@@ -9,6 +9,7 @@ use Test::Exception;
 use App::Sqitch;
 use Test::PostgreSQL;
 use Mojo::Pg;
+use Test::Registry::HistoricOffers qw( offers_to_tenants );
 use experimental 'signatures';
 
 my $CHANGE = 'retire-launch-rate-marker';
@@ -23,26 +24,6 @@ lives_ok { $sqitch->run( 'sqitch', 'deploy', '-t', $uri, '--to', "$CHANGE^" ) }
 my $db = Mojo::Pg->new($uri)->db;
 
 sub plans () { $db->query(q{SELECT * FROM registry.pricing_plans ORDER BY id})->hashes->to_array }
-
-# The platform's current published offers to tenants as signup read them at
-# this change, in this schema's SQL: registry payment-processing versions with
-# a percentage-of-sales plan, priced $0, not the platform's offer to itself.
-# Today's reader reads tables later changes add.
-sub offers_to_tenants () {
-    return $db->query(q{
-        SELECT o.name, v.price_cents AS amount_cents, p.fraction
-          FROM registry.offer_versions v
-          JOIN registry.offers o ON o.id = v.offer_id
-          JOIN registry.resources r ON r.id = v.resource_id
-          JOIN registry.offer_version_payment_plans p
-            ON p.offer_version_id = v.id AND p.kind = 'percentage_of_sales'
-         WHERE r.name = 'payment processing'
-           AND v.published_at IS NOT NULL AND v.superseded_at IS NULL
-           AND v.price_cents = 0
-           AND NOT v.conditions @> '[{"kind": "holder_is_offerer"}]'
-         ORDER BY p.fraction, o.name
-    })->hashes->to_array;
-}
 
 sub marked () {
     $db->query(q{SELECT count(*) FROM registry.pricing_plans
@@ -66,7 +47,7 @@ subtest 'no row carries the launch rate marker' => sub {
          WHERE o.name = 'Solo' AND v.published_at IS NOT NULL AND v.superseded_at IS NULL
     })->array->[0];
     cmp_ok $solo, '==', 0.025, 'Solo is published at 2.5%';
-    my $offers = offers_to_tenants();
+    my $offers = offers_to_tenants($db);
     is scalar @$offers, 1, 'the platform offers exactly one version to tenants, so it quotes one rate';
     is $offers->[0]{fraction}, '0.025', 'the platform quotes the published Solo version\'s rate';
 
