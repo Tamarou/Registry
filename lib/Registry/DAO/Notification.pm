@@ -65,6 +65,17 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
         } ) for @$admins;
     }
 
+    # The platform's own admins, in registry, from whichever schema $db is
+    # bound to; told by email as alert_admins tells a tenant's.
+    sub alert_platform ($class, $db, $subject, $message, $metadata = {}) {
+        $db = $db->db if $db isa Registry::DAO;
+        $db->query( q{
+            INSERT INTO registry.notifications (user_id, type, channel, subject, message, metadata)
+            SELECT id, 'general', 'email', ?, ?, ?::jsonb FROM registry.users
+             WHERE user_type = 'admin' AND deactivated_at IS NULL
+        }, $subject, $message, { json => $metadata } );
+    }
+
     # Map notification type to email template name
     method _template_name_for_type {
         return 'attendance_alert'     if $type eq 'attendance_missing';

@@ -529,7 +529,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             $self->_enqueue_after_commit( $dao, $slug, sub ($minion) {
                 $minion->enqueue(
                     superseded_refund => [ $superseded->@{qw( intent account amount payment )},
-                        $slug // 'registry' ],
+                        $slug // 'registry', $superseded->{kind} // () ],
                     { attempts => 10, notes => { $intent => 1 } } );
             }, 'superseded_refund', "intent $intent on payment $payment",
                "Registry is NOT refunding Stripe intent $intent for payment $payment "
@@ -608,6 +608,34 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
           . 'from an old browser tab. Nothing was enrolled from it. '
           . 'Registry is refunding it in full, and will tell you if that fails.',
             { payment_id => $payment_id, payment_intent_id => $intent_id } );
+    }
+
+    # In the settlement transaction, so the refusal and its alerts commit
+    # with the claim or not at all. The row is failed, never completed: it
+    # holds the quote, and Stripe took $charged.
+    method _refuse_wrong_amount ($db, $payment, $charged) {
+        require Registry::DAO::Notification;
+        my ( $took, $quote ) = map { sprintf '$%.2f', $_ / 100 } $charged, $payment->amount_cents;
+        $payment->_record_intent_failure_write( $db,
+            "Stripe charged $took, not the $quote quoted: refunded in full" );
+        my $meta = { payment_id => $payment->id, payment_intent_id => $payment->stripe_payment_intent_id,
+            workflow_run_id => $payment->metadata->{workflow_run_id} };
+        my $why = sprintf 'Stripe charged %s on intent %s for payment %s, which was quoted at %s. Nothing '
+            . 'was booked from it. Registry is refunding the charge in full, and will tell you if that '
+            . 'fails. Book it by hand at the right price if the customer still wants it.',
+            $took, $payment->stripe_payment_intent_id, $payment->id, $quote;
+        Registry::DAO::Notification->alert_admins( $db,
+            'A payment for the wrong amount was refused and is being refunded', $why, $meta );
+        Registry::DAO::Notification->alert_platform( $db,
+            'A payment for the wrong amount was refused and is being refunded', $why, $meta );
+        Registry::DAO::Notification->create( $db, {
+            user_id  => $payment->user_id, type => 'general', channel => 'email',
+            subject  => 'Your payment could not be accepted and is being refunded',
+            message  => "You were charged $took, but the price was $quote, so nothing was booked. We are "
+                      . 'refunding the charge in full; it can take 5-10 business days to show on your '
+                      . 'statement. Please book again.',
+            metadata => $meta,
+        } );
     }
 
     # --- Instalments -------------------------------------------------------
@@ -970,6 +998,17 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # fixtures) pass; real Stripe events always carry one.
         if ( defined $intent->{amount} ) {
             my $row_cents = $payment->amount_cents;
+            # An offer payment's amount is its quote, written once when it was
+            # owed: a charge for any other amount buys nothing. It is refused,
+            # refunded in full after the COMMIT, and the payer, staff and the
+            # platform are told (ruling 7b). A retry could not change it.
+            if ( $intent->{amount} != $row_cents && $payment->offer_version_id ) {
+                $self->_refuse_wrong_amount( $db, $payment, $intent->{amount} );
+                $$superseded = { intent => $intent->{id}, account => $meta->{stripe_account_id},
+                    amount => $intent->{amount}, payment => $payment_id, kind => 'wrong_amount' };
+                return ignore( "it charged $intent->{amount}, not the $row_cents quoted on payment "
+                      . "$payment_id; refunding it", 'error' );
+            }
             die "payment_intent.succeeded: intent $intent->{id} amount "
               . "$intent->{amount} does not match payment $payment_id "
               . "amount $row_cents\n"

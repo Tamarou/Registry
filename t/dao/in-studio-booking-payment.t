@@ -342,4 +342,43 @@ subtest 'late payment with seats gone refunds and notifies' => sub {
     is_deeply entitlements_of( $sacp, $payment ), [], 'and still no booking is made';
 };
 
+# The platform's admins: told of a charge Stripe took for the wrong amount.
+my $platform_admin = Registry::DAO::User->create( $db, {
+    username => "isbp_platform_$$", email => "isbp_platform_$$\@test.example",
+    name => 'ISBP Platform', user_type => 'admin' } );
+
+sub refund_jobs ($intent) {
+    my $jobs = $minion->jobs( { tasks => ['superseded_refund'], notes => [$intent] } );
+    my @jobs;
+    while ( my $job = $jobs->next ) { push @jobs, $job }
+    return \@jobs;
+}
+
+subtest 'paid amount differing from quote refunds and alerts' => sub {
+    my ( $version, $occurrence ) = class_offer($sacp);
+    my $run     = held( $sacp, $occurrence, $version, 2 );
+    my $payment = started( $sacp, $run );
+    my $intent  = $payment->stripe_payment_intent_id;
+    succeeded( $sacp, $payment, amount => 4500 )->status_is( 200, 'acknowledged, not retried' );
+    drive();
+
+    is_deeply entitlements_of( $sacp, $payment ), [], 'no booking is made';
+    my $row = Registry::DAO::Payment->find( $sacp->{db}, { id => $payment->id } );
+    is $row->status, 'failed', 'the payment is not completed';
+    ok !reload( $sacp, $run )->completed( $sacp->{db} ), 'and the run does not go on';
+
+    my $jobs = refund_jobs($intent);
+    is scalar @$jobs, 1, 'one refund is queued' or return;
+    is_deeply $jobs->[0]{args}, [ $intent, $sacp->{account}, 4500, $payment->id, $sacp->{slug}, 'wrong_amount' ],
+        'of the whole charge, on the studio account, for the payment';
+
+    my $staff = $sacp->{db}->query( q{SELECT message FROM notifications WHERE user_id = ? AND metadata->>'payment_id' = ?},
+        $sacp->{admin}, $payment->id )->arrays->flatten->to_array;
+    is scalar @$staff, 1, 'the studio admin is alerted';
+    like $staff->[0], qr/\$45\.00.*\$90\.00/s, 'with the amount charged and the amount quoted';
+    is $db->query( q{SELECT count(*) FROM notifications WHERE user_id = ? AND metadata->>'payment_id' = ?},
+        $platform_admin->id, $payment->id )->array->[0], 1, 'and so is the platform';
+    is scalar told( $sacp, $sacp->{booker}->id, $run )->@*, 1, 'the booker is told the payment is refunded';
+};
+
 done_testing;
