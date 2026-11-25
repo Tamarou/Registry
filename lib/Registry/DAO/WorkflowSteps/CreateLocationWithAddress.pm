@@ -17,6 +17,9 @@ class Registry::DAO::WorkflowSteps::CreateLocationWithAddress :isa(Registry::DAO
             time_zone => $form_data->{time_zone} || $run->data->{time_zone},
         );
         
+        return { errors => ['Choose the time zone this location is in'] }
+            unless grep { $_ eq ( $data{time_zone} // '' ) } Registry::DAO::Location->time_zones($db)->@*;
+
         # Extract address info from form data
         my $address_info = {};
         

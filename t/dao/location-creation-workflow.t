@@ -35,4 +35,18 @@ subtest 'a real zone is stored on the new location' => sub {
     is $made && $made->time_zone, 'America/Denver', 'zone stored';
 };
 
+# Not in any shipped workflow, but a step class anyone may name in one.
+subtest 'the with-address step refuses an unknown zone the same way' => sub {
+    $workflow->add_step( $db, { slug => 'with-address', description => 'With address',
+        class => 'Registry::DAO::WorkflowSteps::CreateLocationWithAddress' } );
+    my $step = Registry::DAO::WorkflowStep->find( $db, { workflow_id => $workflow->id, slug => 'with-address' } );
+    for my $zone ( undef, 'Mars/Olympus' ) {
+        my $run    = $workflow->new_run($db);
+        my $result = eval { $step->process( $db, { name => 'Addressed Hall', time_zone => $zone }, $run ) };
+        like join( ' ', @{ ( $result // {} )->{errors} // [] } ), qr/time zone/i,
+            'refused with a message: ' . ( $zone // 'undef' );
+    }
+    is scalar( Registry::DAO::Location->find( $db, { name => 'Addressed Hall' } ) ), undef, 'no location made';
+};
+
 done_testing;
