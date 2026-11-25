@@ -5,6 +5,7 @@ use Object::Pad;
 use Registry::DAO;
 use Registry::Utility::BaseDomain ();
 use Registry::Middleware::RateLimit;
+use Registry::Terms;
 use Registry::Job::AttendanceCheck;
 use Registry::Job::ContinueWorkflowRun;
 use Registry::Job::DomainVerification;
@@ -1027,6 +1028,11 @@ class Registry :isa(Mojolicious) {
             }
             $c->render(json => { status => 'ok', db => 'ok', timestamp => $ts });
         })->name('health_check');
+
+        # The platform's terms, anonymous on the apex and every tenant host.
+        $self->routes->get('/terms')->to( cb => sub ($c) {
+            $c->render( 'terms', terms_version => Registry::Terms::VERSION );
+        } )->name('terms');
 
         # Webhook routes (no auth required)
         $self->routes->post('/webhooks/stripe')->to('webhooks#stripe')
