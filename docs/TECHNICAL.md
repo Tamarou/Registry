@@ -92,7 +92,8 @@ docker run -p 3000:3000 \
 Minion has no cron, so each sweep recurs by queueing its own next run.
 The sweeps and their intervals live in one table in
 `lib/Registry/Job/Recurring.pm`: `attendance_check` (60s),
-`domain_verification` (900s), `send_notifications` (300s),
+`domain_verification` (900s), `expire_entitlements` (300s),
+`send_notifications` (300s),
 `instalment_reconcile` (3600s), `waitlist_expiration` (300s) and
 `process_waitlist` (600s).
 
@@ -109,7 +110,8 @@ The sweeps and their intervals live in one table in
   whose row names a Stripe account. The per-tenant sweeps finish with
   `tenants_covered` and `tenants_skipped` (slug and error) in the job
   result: a tenant whose schema fails, or does not exist, is reported there
-  and the sweep goes on to the rest.
+  and the sweep goes on to the rest. `expire_entitlements` also reports,
+  under `expired`, the ids it expired in each tenant.
 
 Check a chain with `./registry minion job -t <task> -S inactive`. One queued
 job per sweep is healthy. None means the chain has stopped, and the next

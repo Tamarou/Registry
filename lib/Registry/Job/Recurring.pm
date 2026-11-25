@@ -9,6 +9,7 @@ package Registry::Job::Recurring {
     my %SWEEP = (
         attendance_check     => { delay => 60,   priority => 5 },
         domain_verification  => { delay => 900,  priority => 5 },
+        expire_entitlements  => { delay => 300,  priority => 5 },
         # Above the sweeps: a parent waiting on a confirmation notices sooner
         # than a waitlist offer expiring.
         send_notifications   => { delay => 300,  priority => 7 },

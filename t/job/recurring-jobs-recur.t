@@ -24,6 +24,7 @@ $app->import_workflows;    # attendance_check runs the attendance-check workflow
 my %INTERVAL = (
     attendance_check     => 60,
     domain_verification  => 900,
+    expire_entitlements  => 300,
     send_notifications   => 300,
     instalment_reconcile => 3600,
     waitlist_expiration  => 300,

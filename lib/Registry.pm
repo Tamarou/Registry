@@ -8,6 +8,7 @@ use Registry::Middleware::RateLimit;
 use Registry::Job::AttendanceCheck;
 use Registry::Job::ContinueWorkflowRun;
 use Registry::Job::DomainVerification;
+use Registry::Job::ExpireEntitlements;
 use Registry::Job::InstalmentReconcile;
 use Registry::Job::InstalmentSchedule;
 use Registry::Job::SendNotifications;
@@ -170,6 +171,7 @@ class Registry :isa(Mojolicious) {
         Registry::Job::AttendanceCheck->register($self);
         Registry::Job::ContinueWorkflowRun->register($self);
         Registry::Job::DomainVerification->register($self);
+        Registry::Job::ExpireEntitlements->register($self);
         Registry::Job::InstalmentReconcile->register($self);
         Registry::Job::InstalmentSchedule->register($self);
         Registry::Job::SendNotifications->register($self);

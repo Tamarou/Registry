@@ -174,6 +174,39 @@ active and the period covers T (in_effect_sql).
         return __PACKAGE__->new(%$row);
     }
 
+    # Ends as `expired` each active entitlement whose stamped expiry policy is
+    # end_of_occurrence and whose units are on an occurrence that has ended,
+    # at that occurrence's end. Its units are read under its row lock, so a
+    # change that moved it is followed and a concurrent sweep expires it once.
+    # Returns the ids it expired.
+    sub expire_ended_occurrences ( $class, $db ) {
+        $db = $db->db if $db isa Registry::DAO;
+        # shortcut: every active end_of_occurrence entitlement is read each run;
+        # prefilter on its events' times if this grows slow.
+        my $candidates = $db->query( q{
+            SELECT e.id FROM entitlements e JOIN offer_versions v ON v.id = e.offer_version_id
+             WHERE e.state = 'active' AND v.policies->'expiry'->>'kind' = 'end_of_occurrence'
+        } )->arrays->flatten;
+
+        my @expired;
+        for my $id (@$candidates) {
+            my $tx = $db->dbh->{AutoCommit} ? $db->begin : undef;
+            next unless $db->query( q{SELECT 1 FROM entitlements WHERE id = ? AND state = 'active' FOR UPDATE},
+                $id )->rows;
+            my @ends = map { ( $_->occurrence_window($db) )[1] }
+                grep { $_->event_id } map { scalar Registry::DAO::Resource->find( $db, { id => $_ } ) }
+                $db->select( 'entitlement_units', 'DISTINCT resource_id', { entitlement_id => $id } )
+                ->arrays->flatten->each;
+            my ( $over, $ended ) = $db->query(
+                'SELECT max(e) <= now(), max(e) FROM unnest(?::timestamptz[]) e', \@ends )->array->@*;
+            next unless $over;
+            scalar( $class->find( $db, { id => $id } ) )->end( $db, 'expired', 'occurrence ended', $ended );
+            $tx->commit if $tx;
+            push @expired, $id;
+        }
+        return \@expired;
+    }
+
     # Records that it was used at occurrence $occurrence_id, marked by
     # $recorded_by. Use is optional attendance: nothing requires a use, and
     # recording one changes no state, units, period or money. Throws

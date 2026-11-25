@@ -34,7 +34,7 @@ $app->log->level('fatal');
 $app->import_workflows;    # attendance_check runs the attendance-check workflow
 
 # The sweeps that walk the tenant list and report what they covered.
-my @PER_TENANT = qw( attendance_check instalment_reconcile process_waitlist
+my @PER_TENANT = qw( attendance_check expire_entitlements instalment_reconcile process_waitlist
                      send_notifications waitlist_expiration );
 
 # The platform's row names its own Stripe account, as every tenant's does.
@@ -174,7 +174,7 @@ Registry::DAO::Tenant->provision( $db, { name => "Sweep Broken $$", slug => $bro
 
 # A real failure in one tenant's schema: every table a sweep reads is renamed away.
 $db->query(qq{ALTER TABLE "$broken_slug".$_ RENAME TO ${_}_gone})
-    for qw( waitlist enrollments notifications events payments );
+    for qw( waitlist enrollments notifications events payments entitlements );
 
 # A tenant row whose schema was never made.
 $db->insert( 'registry.tenants', { name => "Sweep Ghost $$", slug => $ghost_slug,
