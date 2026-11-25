@@ -66,10 +66,8 @@ least one for every shipped workflow; import still accepts a YAML with
 neither.
 `from_yaml` stores the entry on the `workflows` row (`roles`, `public`),
 `to_yaml` round-trips it, and `copy_workflow` carries it into a tenant's
-schema. A row with neither has no entry. The route gate still reads the
-`workflow_roles` map in `lib/Registry.pm`, which these rows were backfilled
-from (`workflow-roles-data`), so for now the two must agree;
-`t/dao/workflow-roles-data.t` checks that every shipped workflow does.
+schema. A row with neither has no entry, and the gate refuses it (see "Who
+may run a workflow" below).
 
 ### Workflow Steps
 
@@ -290,7 +288,7 @@ In Registry, workflows can be composed by using specialized workflow steps that 
 2. Reusability - Common workflows can be reused across different processes
 3. Role separation - Different workflows can be assigned to different user roles
 
-Who may reach a workflow directly is the `workflow_roles` map in `lib/Registry.pm`. A slug with no entry is open to anyone, so every imported workflow must either have an entry there or carry `public: true` at the top of its own YAML file, a reviewed declaration that anyone may walk into it (the two storefronts, `summer-camp-registration`, `tenant-signup` and `__default__` today). `t/security/workflow-roles-cover-every-workflow.t` fails, naming the file and slug, for a workflow with neither, for one with both, and for a file that does not parse. Only a YAML boolean `true` counts as the mark, and `from_yaml` does not store it.
+Who may reach a workflow directly is its stored roles or public mark; see "Who may run a workflow" above.
 
 Example of a specialized workflow step that initiates another workflow:
 

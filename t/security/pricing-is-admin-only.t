@@ -98,8 +98,8 @@ subtest 'admin plan basics authored by this tenant' => sub {
 subtest 'staff refused pricing plan creation' => sub {
     my $before = pricing_runs();
     my $t = app_as($staff);
-    is_deeply $t->app->workflow_roles('pricing-plan-creation'), ['admin'],
-      'pricing-plan-creation is an admin-only workflow';
+    is_deeply $here_db->query( q{SELECT roles FROM workflows WHERE slug = 'pricing-plan-creation'} )
+      ->hash->{roles}, ['admin'], "this tenant's pricing-plan-creation is an admin-only workflow";
 
     $t->get_ok( '/pricing-plan-creation' => $HOST )->status_is(403);
     $t->post_ok( '/pricing-plan-creation' => $HOST => form => {} )->status_is(403);

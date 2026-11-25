@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 # ABOUTME: Who may run a workflow is data on its row: roles or the public mark import from YAML and round-trip.
-# ABOUTME: Covers copy_workflow into tenant schemas, the backfill from the old %ROLES map, and every refusal.
+# ABOUTME: Covers copy_workflow, every refusal, and that rows carried forward by migrations agree with their YAML.
 use 5.42.0;
 use lib qw(lib t/lib);
 use Test::More;
@@ -9,7 +9,6 @@ no warnings 'experimental::builtin';
 
 use Registry::DAO;
 use Test::Registry::DB;
-use Test::Registry::Mojo;
 use Mojo::Home;
 use Mojo::Pg;
 use App::Sqitch;
@@ -112,31 +111,32 @@ subtest 'truthy non boolean public mark is not public' => sub {
     }
 };
 
-# The map this data replaces. Every entry must carry over exactly.
-$ENV{DB_URL} = $test_db->uri;
-my $app = Test::Registry::Mojo->new('Registry')->app;
+# What each shipped YAML declares, as the row stores it.
+sub declared ($y) {
+    return { roles => $y->{roles}, public => builtin::is_bool( $y->{public} ) && $y->{public} ? 1 : 0 };
+}
 
-subtest 'every shipped workflow imports with the roles the map gives it, or the public mark' => sub {
+subtest 'every shipped workflow imports with the roles or public mark its YAML declares' => sub {
     my @files = grep { !Load( $_->slurp )->{draft} }
       Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml\z/)->each;
     ok @files, 'there are shipped workflows';
     $dao->import_workflows( \@files );
 
     for my $file (@files) {
-        my $slug = Load( $file->slurp )->{slug};
-        my $got  = row($slug) or do { fail "$slug imported"; next };
-        if ( my $roles = $app->workflow_roles($slug) ) {
-            is_deeply $got, { roles => $roles, public => 0 }, "$slug has exactly the map's roles";
-        }
-        else {
-            is_deeply $got, { roles => undef, public => 1 }, "$slug, with no map entry, is public";
-        }
+        my $yaml = Load( $file->slurp );
+        my $got  = row( $yaml->{slug} ) or do { fail "$yaml->{slug} imported"; next };
+        is_deeply $got, declared($yaml), "$yaml->{slug} has exactly what its YAML declares";
     }
 };
 
 
-# The backfill, on rows that existed before the migration: its own database,
-# deployed to the parent change, so the rows are written without the columns.
+# Rows that existed before the data did, carried forward by migrations alone,
+# as production's are: from_yaml never updates an existing row and tenant copies
+# are written only at provisioning, so a YAML's roles or public mark reach a
+# deployed database only through a migration. Its own database, deployed to the
+# parent change, so the rows are written without the columns, then backfilled,
+# then every later migration. A YAML whose entry changed with no migration to
+# carry it fails here.
 {
     my $change = 'workflow-roles-data';
     my $pg     = Test::PostgreSQL->new or BAIL_OUT $Test::PostgreSQL::errstr;
@@ -145,13 +145,11 @@ subtest 'every shipped workflow imports with the roles the map gives it, or the 
     my $db = Mojo::Pg->new( $pg->uri )->db;
     $db->query( 'INSERT INTO registry.tenants (name, slug) VALUES (?, ?)', 'Backfill', 'backfilled' );
     $db->query( 'SELECT registry.clone_schema(?)', 'backfilled' );
-    # Every shipped slug, drafts too, so the migration's copy of the map is
-    # compared with %ROLES entry for entry.
-    my %public = map { my $y = Load( $_->slurp ); ( $y->{slug} => !!$y->{public} ) }
+    my %yaml = map { my $y = Load( $_->slurp ); ( $y->{slug} => $y ) }
       Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml\z/)->each;
     for my $schema (qw(registry backfilled)) {
         $db->query( qq{INSERT INTO "$schema".workflows (name, slug) VALUES (?, ?)}, $_, $_ )
-          for sort( keys %public ), 'unlisted-flow';
+          for sort( keys %yaml ), 'unlisted-flow';
     }
     $sqitch->run( 'sqitch', 'deploy', '-t', $pg->uri, '--to', $change );
 
@@ -159,19 +157,26 @@ subtest 'every shipped workflow imports with the roles the map gives it, or the 
         $db->query( qq{SELECT roles, public FROM "$schema".workflows WHERE slug = ?}, $slug )->hash;
     };
 
-    subtest 'backfill gives existing rows the map roles and the public mark' => sub {
-        for my $schema (qw(registry backfilled)) {
-            for my $slug ( sort keys %public ) {
-                is_deeply $entry->( $schema, $slug ),
-                  { roles => $app->workflow_roles($slug), public => $public{$slug} ? 1 : 0 },
-                  "$schema.$slug matches the map and its YAML";
-            }
-        }
-    };
+    # The slugs the backfill gave an entry. A workflow shipped after it never
+    # had a row without one: import creates it from its YAML.
+    my @known = grep { my $e = $entry->( registry => $_ ); $e->{roles} || $e->{public} } sort keys %yaml;
 
     subtest 'backfill does not public mark unlisted slugs' => sub {
         is_deeply $entry->( $_, 'unlisted-flow' ), { roles => undef, public => 0 },
           "$_.unlisted-flow has no entry" for qw(registry backfilled);
+    };
+
+    $sqitch->run( 'sqitch', 'deploy', '-t', $pg->uri );
+
+    subtest 'after every migration a carried-forward row agrees with its shipped YAML' => sub {
+        ok @known, 'the backfill gave existing rows an entry';
+        for my $schema (qw(registry backfilled)) {
+            for my $slug (@known) {
+                # Gone: a later migration cleared it so import rebuilds it from the YAML.
+                my $got = $entry->( $schema, $slug ) or next;
+                is_deeply $got, declared( $yaml{$slug} ), "$schema.$slug has what its YAML declares";
+            }
+        }
     };
 
     # The handle goes before the server does, or its DESTROY talks to a dead one.

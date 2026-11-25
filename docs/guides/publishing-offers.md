@@ -22,7 +22,7 @@ behind it is described in
 ## 1. Who may publish
 
 Only an admin of the tenant may run `offer-publishing`. The route is gated to
-the `admin` role (`workflow_roles` in `lib/Registry.pm`): a staff member of the
+the `admin` role (the tenant's `offer-publishing` row): a staff member of the
 tenant, or an admin of a different tenant, gets a 403. Staff run programs; they
 do not set prices.
 

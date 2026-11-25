@@ -2,8 +2,9 @@
 description: A workflow to onboard new tenants
 name: Tenant Onboarding
 slug: tenant-signup
-# Anyone may walk into this workflow, deliberately: it has no workflow_roles
-# entry. t/security/workflow-roles-cover-every-workflow.t enforces the choice.
+# Anyone may walk into this workflow, deliberately: the gate admits anyone to a
+# workflow with the public mark. t/security/workflow-roles-cover-every-workflow.t
+# enforces that every workflow declares roles or this mark.
 public: true
 steps:
 - class: Registry::DAO::WorkflowStep

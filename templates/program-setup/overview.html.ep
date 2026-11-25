@@ -36,8 +36,8 @@
           <a href="<%= $item->{href} %>" class="btn btn-primary">
             <%= $item->{status} eq 'done' ? "Manage $item->{label}" : "Set up $item->{label}" %>
           </a>
-        % } elsif (do { my $roles = app->workflow_roles($item->{callcc_target});
-        %               !$roles || grep { $_ eq $user_role } @$roles }) {
+        % } elsif (do { my $wf = dao->find('Registry::DAO::Workflow', { slug => $item->{callcc_target} });
+        %               $wf && ( $wf->public || grep { $_ eq $user_role } ( $wf->roles // [] )->@* ) }) {
           <form method="POST"
                 action="<%= url_for('workflow_callcc', workflow => 'program-setup', run => $run->id, target => $item->{callcc_target}) %>">
             <button type="submit">

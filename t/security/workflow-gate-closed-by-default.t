@@ -70,4 +70,21 @@ subtest 'a workflow with no role entry and no public mark is refused for a paren
     $t->post_ok( '/unguarded-flow' => $HOST => form => {} )->status_is(403);
 };
 
+subtest 'a public-marked workflow is reachable anonymously' => sub {
+    app_as()->get_ok( '/tenant-storefront' => $HOST )->status_is(200);
+};
+
+subtest 'a roles workflow admits admin and refuses parent' => sub {
+    app_as($admin)->get_ok( '/program-creation' => $HOST )->status_is(200);
+    app_as($parent)->get_ok( '/program-creation' => $HOST )->status_is(403);
+};
+
+# The tenant's copy, not registry's row and not the YAML, says who may run it.
+subtest "a tenant whose copy's roles differ from registry's is gated by its own copy" => sub {
+    $here_dao->db->update( 'workflows', { roles => ['parent'] }, { slug => 'program-creation' } );
+    app_as($parent)->get_ok( '/program-creation' => $HOST )->status_is(200);
+    app_as($admin)->get_ok( '/program-creation' => $HOST )->status_is(403);
+    $here_dao->db->update( 'workflows', { roles => [qw(admin staff)] }, { slug => 'program-creation' } );
+};
+
 done_testing;

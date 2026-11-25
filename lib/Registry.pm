@@ -798,7 +798,12 @@ class Registry :isa(Mojolicious) {
         # names in a different placeholder. Closed by default: a slug with no
         # row in this tenant's schema (never registry's row instead), or a row
         # with no roles and no public mark, is refused 403 for everyone.
-        # Returns true when the request may proceed.
+        # The public set stays open-ended without a list here: a project's
+        # registration_workflow metadata aims the storefront at whichever
+        # workflow the tenant chose, and that workflow is reachable because its
+        # YAML carries the public mark (summer-camp-registration does; it
+        # creates the visitor's account partway through, so even a login
+        # would be wrong). Returns true when the request may proceed.
         $self->helper(
             require_workflow_role => sub ( $c, $slug ) {
                 my $workflow = $slug && $c->dao->find( 'Registry::DAO::Workflow', { slug => $slug } );
@@ -1293,7 +1298,7 @@ class Registry :isa(Mojolicious) {
         # the controller checks no role of its own, so every admin surface was
         # reachable by anyone who knew its slug. The guard is per-slug rather
         # than blanket because the acquisition funnels live under this same
-        # catch-all -- see workflow_roles.
+        # catch-all -- see require_workflow_role.
         my $w = $r->under("/:workflow")->to( 'workflows#',
             cb => sub ($c) {
                 # An unknown slug is a 404 before anything dereferences the
@@ -1399,91 +1404,6 @@ class Registry :isa(Mojolicious) {
 
     method storefront_workflow ($tenant) {
         return $tenant eq 'registry' ? 'registry-storefront' : 'tenant-storefront';
-    }
-
-    # The roles a workflow slug demands of whoever reaches it directly, or
-    # undef for the ones anybody may walk into.
-    #
-    # This names what must be GUARDED rather than what may be public, because
-    # the public set is open-ended: a project's registration_workflow metadata
-    # aims the storefront's call-to-action at whichever workflow the tenant
-    # chose (templates/tenant-storefront/program-listing.html.ep), so an
-    # allow-list of public slugs would quietly close a tenant's own funnel.
-    # tenant-signup and summer-camp-registration are the two acquisition
-    # funnels and must stay anonymous -- registration creates the visitor's
-    # account partway through, at its account-check step, so even requiring a
-    # login would be wrong.
-    #
-    # A slug earns a role here when its steps write tenant-owned configuration
-    # or act on records the visitor does not own.
-    #
-    # The gate stays open by default for the reason above, so the guard against
-    # adding a workflow and forgetting it is a test, not this map:
-    # t/security/workflow-roles-cover-every-workflow.t fails unless every
-    # imported workflow either has an entry here or carries `public: true` in
-    # its own YAML file -- a reviewed declaration that anyone may walk into it.
-    method workflow_roles ($slug) {
-        state %ROLES = (
-            # Admin tooling: the dashboard and the approval flows that settle
-            # other people's drop and transfer requests, plus every builder
-            # that writes programs, locations, sessions, pricing, users,
-            # templates and workflows. attendance-check is a background job
-            # workflow and is not a visitor-facing surface at all.
-            ( map { $_ => [ 'admin', 'staff' ] } qw(
-                admin-dashboard
-                admin-drop-approval
-                admin-transfer-approval
-                attendance-check
-                drop-request-processing
-                event-creation
-                location-creation
-                location-management
-                outcome-definition-creation
-                program-creation
-                program-creation-enhanced
-                program-location-assignment
-                program-setup
-                program-type-management
-                project-creation
-                session-creation
-                template-editor
-                transfer-request-processing
-                user-creation
-                workflow-creation
-                workflow-step-creation
-            ) ),
-
-            # Only a tenant's admins publish its prices (decided with perigrin,
-            # PriceOps spec): staff run programs, but a staff member of
-            # registry must not change what every tenant is charged.
-            'pricing-plan-creation' => ['admin'],
-
-            # Publishing an offer version is an admin's alone: staff may build
-            # programs, not set what the tenant sells them for.
-            'offer-publishing' => ['admin'],
-
-            # Returns the platform's fee on another tenant's payment: an admin
-            # only, and its steps also ask for the operator right, so an admin
-            # of any tenant but the one holding it gets no further.
-            'platform-fee-refund-exception' => ['admin'],
-
-            # Applies refunds Stripe reported to entitlements. A background
-            # workflow the Connect endpoint starts and the driver runs, guarded
-            # as attendance-check is, for admins only: nobody walks into it.
-            'entitlement-stripe-move' => ['admin'],
-
-            # A parent acts on their own enrollment; staff and admins reach the
-            # same flows on a family's behalf. entitlement-change's and
-            # entitlement-refund's steps also refuse a booking the parent
-            # neither holds nor paid for.
-            ( map { $_ => [ 'parent', 'admin', 'staff' ] } qw(
-                entitlement-change
-                entitlement-refund
-                parent-drop-request
-                parent-transfer-request
-            ) ),
-        );
-        return $ROLES{ $slug // '' };
     }
 
     method import_workflows ($schema = 'registry', $files = undef, $verbose = 0) {
