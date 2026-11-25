@@ -19,9 +19,12 @@ use Registry::DAO::WorkflowSteps::ReviewActivatePlan;
 use Registry::DAO::PricingPlan;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowRun;
+use Registry::Utility::WorkflowProcessor;
+use Mojo::File ();
 
 my $t = Test::Registry::DB->new;
 my $db = $t->db;
+my $registry_id = $db->db->select( 'registry.tenants', 'id', { slug => 'registry' } )->hash->{id};
 
 # Create a test workflow
 my $workflow = Registry::DAO::Workflow->create($db, {
@@ -259,7 +262,7 @@ subtest 'Step 5: Review and Activate' => sub {
             plan_description => 'Full featured enterprise plan',
             plan_type => 'subscription',
             plan_scope => 'tenant',
-            offering_tenant_id => '00000000-0000-0000-0000-000000000000'
+            offering_tenant_id => $registry_id
         },
         pricing_model => {
             pricing_model_type => 'hybrid',
@@ -329,7 +332,7 @@ subtest 'Step 5: Review and Activate' => sub {
             plan_name => 'Standard Plan',
             plan_type => 'subscription',
             plan_scope => 'customer',
-            offering_tenant_id => '00000000-0000-0000-0000-000000000000'
+            offering_tenant_id => $registry_id
         },
         pricing_model => {
             pricing_model_type => 'fixed',
@@ -363,46 +366,56 @@ subtest 'Step 5: Review and Activate' => sub {
 };
 
 subtest 'Integration: Complete Workflow Flow' => sub {
-    plan skip_all => 'WorkflowProcessor integration test needs fixing - workflow steps work correctly';
+    # The shipped workflow, walked through the real processor: every step's
+    # answer reaches the next, and the last one creates the plan.
+    my $wdao     = $t->db;
+    my $shipped  = Registry::DAO::Workflow->from_yaml( $wdao,
+        Mojo::File::path('workflows/pricing-plan-creation.yaml')->slurp );
+    my $processor = Registry::WorkflowProcessor->new( dao => $wdao );
+    my $integration_run = $processor->new_run( $shipped, { __tenant_slug => 'registry' } );
 
-    # Create a fresh workflow run
-    # my $processor = Registry::WorkflowProcessor->new(dao => $t->db);
-    # my $integration_run = $processor->new_run($workflow, {});
+    ok $integration_run, 'Workflow run created';
+    ok !$integration_run->completed($db), 'Run not completed initially';
 
-    # ok($integration_run, 'Workflow run created');
-    # ok(!$integration_run->completed($db), 'Run not completed initially');
+    my $current_step = $integration_run->next_step($db);
+    is $current_step->slug, 'plan-basics', 'Starts at plan basics';
 
-    # Simulate complete workflow progression - COMMENTED OUT FOR NOW
-    # my $current_step = $integration_run->next_step($db);
-    # is($current_step->slug, 'plan-basics', 'Starts at plan basics');
+    my %step_data = (
+        'plan-basics' => {
+            plan_name => 'Integration Test Plan', plan_type => 'subscription', plan_scope => 'customer',
+        },
+        'pricing-model' => {
+            pricing_model_type => 'fixed', base_amount => 49.99, currency => 'USD',
+            billing_frequency => 'monthly',
+        },
+        'resource-allocation' => {
+            classes_per_month => 20, reset_period => 'monthly', overage_policy => 'block',
+        },
+        'requirements-rules' => { auto_renew => 'yes' },
+        'review-activate'    => { action => 'activate' },
+    );
 
-    # Process each step with valid data - COMMENTED OUT FOR NOW
-    # my $step_data = { ... };
+    for my $slug (qw(plan-basics pricing-model resource-allocation requirements-rules review-activate)) {
+        is $current_step->slug, $slug, "at $slug";
+        my $next = $processor->process_workflow_run_step( $integration_run, $current_step, $step_data{$slug} );
+        if ( $slug eq 'review-activate' ) {
+            is $next, 1, 'Workflow completed after review';
+            ok $integration_run->completed($db), 'Run marked as completed';
+        }
+        else {
+            ok ref $next, "Step $slug processed" or diag explain $integration_run->data;
+            $current_step = $next;
+        }
+    }
 
-    # for my $step_slug (qw(plan-basics pricing-model resource-allocation requirements-rules review-activate)) {
-    #     my $step_result = $processor->process_workflow_run_step(
-    #         $integration_run,
-    #         $current_step,
-    #         $step_data->{$step_slug}
-    #     );
-    #
-    #     if ($step_slug eq 'review-activate') {
-    #         is($step_result, 1, 'Workflow completed after review');
-    #         ok($integration_run->completed($db), 'Run marked as completed');
-    #     } else {
-    #         ok($step_result, "Step $step_slug processed");
-    #         $current_step = $step_result if ref $step_result;
-    #     }
-    # }
+    my $final_data = Registry::DAO::WorkflowRun->find( $db, { id => $integration_run->id } )->data;
+    ok $final_data->{created_plan_id}, 'Plan ID stored in completed run' or diag explain $final_data;
 
-    # Verify final plan was created with all data - COMMENTED OUT FOR NOW
-    # my $final_data = $integration_run->data;
-    # ok($final_data->{created_plan_id}, 'Plan ID stored in completed run');
-    #
-    # my $created_plan = Registry::DAO::PricingPlan->find_by_id($db, $final_data->{created_plan_id});
-    # ok($created_plan, 'Integration test plan created');
-    # is($created_plan->plan_name, 'Integration Test Plan', 'Plan name persisted');
-    # is($created_plan->pricing_configuration->{resources}{classes_per_month}, 20, 'Resource quota persisted');
+    my $created_plan = Registry::DAO::PricingPlan->find_by_id( $db, $final_data->{created_plan_id} );
+    ok $created_plan, 'Integration test plan created';
+    is $created_plan->plan_name, 'Integration Test Plan', 'Plan name persisted';
+    is $created_plan->amount_cents + 0, 4999, 'Amount persisted in cents';
+    is $created_plan->pricing_configuration->{resources}{classes_per_month}, 20, 'Resource quota persisted';
 };
 
 subtest 'Step 4 can actually render' => sub {
