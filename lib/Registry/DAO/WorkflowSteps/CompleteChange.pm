@@ -30,6 +30,16 @@ class Registry::DAO::WorkflowSteps::CompleteChange :isa(Registry::DAO::WorkflowS
         my $payment = $self->_paid( $db, $run, $data );
         return $self->_stay('The change fee has not been paid yet') unless $payment;
 
+        # Locked before any hold, as convert locks it: a move or end waits.
+        # One that ended meanwhile is not moved; its paid fee is kept.
+        my $current = Registry::DAO::Entitlement->in_effect_sql( 'e', 'tstzrange(now(), NULL)' );
+        unless ( $db->query( "SELECT $current FROM entitlements e WHERE e.id = ? FOR UPDATE",
+                $change->{entitlement_id} )->array->[0] ) {
+            return $self->_needs_admin( $db, $tx, $run, $data, $payment, 'the booking ended before it was moved' )
+                if ref $payment;
+            return $self->_stay('This booking has ended and cannot be changed');
+        }
+
         my $live = Registry::PriceOps::Hold->live_sql('holds');
         unless ( $db->query( "SELECT $live FROM holds WHERE id = ?", $hold->id )->array->[0] ) {
             # Paid after the hold lapsed. Registry never refunds a change fee,
@@ -45,7 +55,8 @@ class Registry::DAO::WorkflowSteps::CompleteChange :isa(Registry::DAO::WorkflowS
             };
             unless ($again) {
                 die $@ unless $@ =~ /units free/;
-                return $self->_needs_admin( $db, $tx, $run, $data, $payment ) if ref $payment;
+                return $self->_needs_admin( $db, $tx, $run, $data, $payment, 'the target occurrence is now full' )
+                    if ref $payment;
                 return $self->_stay('That occurrence no longer has room');
             }
             $hold = $again;
@@ -73,26 +84,26 @@ class Registry::DAO::WorkflowSteps::CompleteChange :isa(Registry::DAO::WorkflowS
             ? $payment : 0;
     }
 
-    # A paid change with no seat left: the entitlement stays where it was and
-    # the fee is kept. Recorded on the run and put before the admins, then the
-    # step dies, so the driver retries (a seat may free up) and its last
-    # attempt halts the run.
-    method _needs_admin ( $db, $tx, $run, $data, $payment ) {
+    # A paid change that cannot be made ($why): the entitlement stays where it
+    # was and the fee is kept. Recorded on the run and put before the admins,
+    # then the step dies, so the driver retries (a seat may free up) and its
+    # last attempt halts the run.
+    method _needs_admin ( $db, $tx, $run, $data, $payment, $why ) {
         unless ( $data->{change_needs_admin} ) {
             $run->update_data( $db, { change_needs_admin => {
                 payment_id           => $payment->id,
                 entitlement_id       => $data->{change_hold}{entitlement_id},
                 target_occurrence_id => $data->{change_hold}{target_occurrence_id},
+                reason               => $why,
             } } );
             Registry::DAO::Notification->alert_admins( $db,
                 'A paid change could not be made: it needs an admin',
-                sprintf( 'The change fee on payment %s was paid after its hold lapsed, and the target '
-                    . 'occurrence is now full. The booking was not moved and the fee was not refunded.',
-                    $payment->id ),
+                sprintf( 'The change fee on payment %s was paid, but %s. The booking was not moved '
+                    . 'and the fee was not refunded.', $payment->id, $why ),
                 { workflow_run_id => $run->id, payment_id => $payment->id } );
         }
         $tx->commit if $tx;
-        die sprintf "change on run %s is paid but its target is full: it needs an admin\n", $run->id;
+        die sprintf "change on run %s is paid but %s: it needs an admin\n", $run->id, $why;
     }
 
     method _stay ($why) { return { stay => 1, errors => [$why] } }

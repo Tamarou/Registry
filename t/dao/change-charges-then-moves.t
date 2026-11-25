@@ -247,6 +247,15 @@ subtest 'failed charge or lapsed hold releases hold' => sub {
     is scalar $e->units( $studio, $from->id )->@*, 1, 'and the entitlement stays where it was';
 };
 
+# The studio's admin, told of a paid change it must settle.
+my $studio_admin = $studio->insert( 'users', { username => "ccm-admin-$$", user_type => 'admin' },
+    { returning => 'id' } )->hash->{id};
+
+sub admin_alerts ($run) {
+    $studio->query( q{SELECT count(*) FROM notifications WHERE user_id = ? AND metadata->>'workflow_run_id' = ?},
+        $studio_admin, $run->id )->array->[0];
+}
+
 sub hold_row ($run) {
     $studio->query( q{SELECT *, expires_at - placed_at AS length,
                              expires_at = placed_at + 2 * lifetime AS at_bound FROM holds WHERE id = ?},
@@ -320,6 +329,7 @@ subtest 'succeeded charge with full target needs admin' => sub {
     my $data = reload($run)->data;
     is $data->{change_needs_admin}{payment_id}, $payment->id, 'the run records the paid change as needing an admin';
     like $data->{__driver}{error}, qr/admin/, 'the driver records why it stopped';
+    is admin_alerts($run), 1, 'and one alert goes to the studio admin';
     ok !reload($run)->completed($studio), 'the run is not complete';
     is Registry::DAO::Payment->find( $studio, { id => $payment->id } )->status, 'completed',
         'and the fee is kept, not refunded';
@@ -328,6 +338,26 @@ subtest 'succeeded charge with full target needs admin' => sub {
         { attempts => 1 } );
     $minion->perform_jobs( { id => $id } );
     is reload($run)->data->{__driver}{state}, 'halted', 'its last attempt halts the run for an admin';
+};
+
+subtest 'paid change of ended entitlement needs admin' => sub {
+    my ( $version, $from, $to ) = occurrences( \%WINDOW, 72, 96 );
+    my $e       = booking( $version, $from );
+    my $run     = held_run( $e, $to );
+    my $payment = fee_payment($run);
+    $e->end( $studio, 'expired', 'ended before the change completed' );
+    succeeded($payment)->status_is(200);
+    drive();
+
+    is_deeply $e->units( $studio, $to->id ), [], 'the ended entitlement is not moved';
+    is hold_state($run), 'held', 'the hold is not converted';
+    is reload($run)->data->{change_needs_admin}{payment_id}, $payment->id,
+        'the run records the paid change as needing an admin';
+    is admin_alerts($run), 1, 'the studio admin is alerted';
+    is Registry::DAO::Payment->find( $studio, { id => $payment->id } )->status, 'completed',
+        'and the fee is kept, not refunded';
+    is $minion->jobs( { tasks => [ grep { /refund/ } keys $minion->tasks->%* ] } )->total, 0,
+        'with no refund job queued';
 };
 
 # The fee payment, completed as the Connect webhook completes it.
