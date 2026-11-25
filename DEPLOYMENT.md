@@ -211,8 +211,8 @@ Check the `DB_URL` environment variable and database status in Render dashboard.
 3. Review Stripe dashboard for failed payments
 4. While `/terms` is the DRAFT placeholder (`Registry::Terms::VERSION` is
    `draft`), every checkout is refused in any `MOJO_MODE` but `development` and
-   `test`: no payment intent is created and the payer is told the terms are not
-   final (ADR 005, ruling 12). This lifts when perigrin's own terms replace the
+   `test`, so `staging` refuses it too: nothing is written, no payment intent is
+   created and the payer is told the terms are not final (ADR 005, ruling 12). This lifts when perigrin's own terms replace the
    placeholder in `templates/terms.html.ep` together with that version.
 
 #### Terms of service

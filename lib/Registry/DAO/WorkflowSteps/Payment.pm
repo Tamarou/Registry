@@ -10,6 +10,7 @@ use Registry::DAO::User;
 use Registry::DAO::Location;
 use Registry::DAO::Notification;
 use Registry::DAO::Tenant;
+use Registry::Terms ();
 use Mojo::JSON qw(encode_json);
 use Mojo::Promise;
 
@@ -39,6 +40,17 @@ method process ($db, $form_data, $run = undef) {
             children           => $run->data->{children}           || [],
             session_selections => $run->data->{session_selections} || {},
         });
+
+        # A charge is refused before anything is written (ADR 005, ruling 12).
+        if ( ( $info->{total} // 0 ) != 0 && $ENV{STRIPE_SECRET_KEY} ) {
+            if ( my $refusal = Registry::Terms::checkout_refusal() ) {
+                return {
+                    next_step => $self->id,
+                    errors    => [$refusal],
+                    data      => $self->_render_data( $db, $run ),
+                };
+            }
+        }
 
         # Which way the parent chose to pay, honoured only if the cart actually
         # offers it. A posted 'instalments' for a cart whose lines disagree is

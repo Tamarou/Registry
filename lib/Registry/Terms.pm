@@ -12,7 +12,8 @@ sub is_placeholder () { VERSION eq 'draft' }
 # checkout_refusal($mode) -> message | undef
 #
 # Production is every mode but development and test, as the session cookie
-# reads it; $mode defaults to the one Mojolicious would pick.
+# reads it; $mode defaults to the one Mojolicious would pick, falling back to
+# development as Mojolicious does when neither MOJO_MODE nor PLACK_ENV is set.
 sub checkout_refusal ( $mode = $ENV{MOJO_MODE} || $ENV{PLACK_ENV} || 'development' ) {
     return undef unless is_placeholder();
     return undef if $mode eq 'development' || $mode eq 'test';
