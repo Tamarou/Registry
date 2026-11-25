@@ -1,8 +1,17 @@
 // ABOUTME: Base Playwright fixtures -- shared server + shared DB model.
 // ABOUTME: Exposes the shared DB URL and a registryPage with helper methods.
 const base = require('@playwright/test');
+const dns = require('dns');
 const fs = require('fs');
 const path = require('path');
+
+// RFC 6761: every *.localhost name is loopback. The browser hard-codes that, but
+// page.request runs in Node, which asks the system resolver -- and only
+// systemd-resolved (CI's runner) answers for tenant subdomains. Anywhere else a
+// page.request to `${slug}.localhost` died with getaddrinfo ENOTFOUND.
+const lookup = dns.promises.lookup;
+dns.promises.lookup = (host, ...rest) =>
+  lookup(/\.localhost\.?$/i.test(host) ? 'localhost' : host, ...rest);
 
 // __dirname here is t/playwright/fixtures/; the dotfile is written by
 // global-setup.js to t/playwright/ (one level up).
