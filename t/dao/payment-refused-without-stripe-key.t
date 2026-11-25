@@ -57,7 +57,7 @@ sub cart_tenant (%opt) {
     my $s   = tenant(%opt);
     my $tdb = $s->{db};
     my $location = Registry::DAO::Location->create( $tdb, {
-        name => 'Loc', address_info => { street_address => '1 A', city => 'T', state => 'TS', postal_code => '12345' } } );
+        name => 'Loc', time_zone => 'America/New_York', address_info => { street_address => '1 A', city => 'T', state => 'TS', postal_code => '12345' } } );
     my $teacher = Registry::DAO::User->create( $tdb, {
         name => 'Teacher', username => "tch_$s->{slug}", email => "tch_$s->{slug}\@test.example", user_type => 'staff' } );
     my $project = Registry::DAO::Project->create( $tdb, { name => 'Program', metadata => {} } );
