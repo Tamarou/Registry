@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 # ABOUTME: Controller test for new parent happy path through summer camp registration workflow.
-# ABOUTME: Tests account creation, child selection, session selection, and demo-mode payment at HTTP layer.
+# ABOUTME: Tests account creation, child selection, session selection, and $0-cart payment at HTTP layer.
 
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
@@ -28,7 +28,7 @@ use Registry::DAO::Enrollment;
 use Mojo::Home;
 use YAML::XS qw(Load);
 
-# Ensure demo payment mode (no Stripe key)
+# No Stripe key: the $0 cart completes without it
 delete $ENV{STRIPE_SECRET_KEY};
 
 # Sessions are only offered while they are still running -- both the template's
@@ -91,11 +91,13 @@ my $event = $dao->create(Event => {
 $session->add_events($dao->db, $event->id);
 
 # Create pricing plan for the session
-$dao->create(PricingPlan => {
+# Free: only a $0 cart completes without Stripe. Assigned, because
+# Registry::DAO::create does nothing in void context.
+my $plan = $dao->create(PricingPlan => {
     session_id => $session->id,
-    plan_name  => 'Standard',
+    plan_name  => 'Free',
     plan_type  => 'standard',
-    amount_cents => 30000,
+    amount_cents => 0,
 });
 
 # --- Find the workflow ---
@@ -263,8 +265,8 @@ subtest 'Session selection - pick Week 1' => sub {
     is $items->[0]{session_id}, $session->id, 'Enrollment item has correct session_id';
 };
 
-# === Step 6: Payment (demo mode) ===
-subtest 'Payment - demo mode with agreeTerms' => sub {
+# === Step 6: Payment ($0 cart, no Stripe) ===
+subtest 'Payment - $0 cart with agreeTerms' => sub {
     ($run) = $dao->find(WorkflowRun => { id => $run->id });
     my $step = $run->next_step($dao->db);
     is $step->slug, 'payment', 'Next step is payment';

@@ -61,11 +61,21 @@ method process ($db, $form_data, $run = undef) {
         $run->update_data( $db,
             { payment_plan => $offered ? $chosen : 'full' } );
 
+        if ( my $why = __PACKAGE__->unpriced_cart_refusal(
+                $info, $run->data->{enrollment_items} ) ) {
+            warn "checkout refused: the cart for run @{[ $run->id ]} could not be priced\n";
+            return {
+                next_step => $self->id,
+                errors    => [$why],
+                data      => $self->_render_data($db, $run),
+            };
+        }
+
         # Whether payment is taken is a function of the program's pricing, not
         # the environment. Only a $0 total enrolls without the gateway; anything
         # with a balance due goes to create_payment, which refuses it when Stripe
         # is not configured or the tenant cannot take charges.
-        if (($info->{total} // 0) == 0) {
+        if ($info->{total} == 0) {
             return $self->create_free_enrollments($db, $run, $form_data);
         }
 
@@ -77,6 +87,23 @@ method process ($db, $form_data, $run = undef) {
         next_step => $self->id,
         data => $self->_render_data($db, $run)
     };
+}
+
+# Why this cart cannot be checked out, or undef when its quote ($quote, from
+# calculate_enrollment_total) is a whole number of cents, $0 included, with a
+# priced line for every child being enrolled. Absence is not zero: a child the
+# quote skipped for want of a price, or a negative or non-numeric total, is
+# never read as a free cart.
+sub unpriced_cart_refusal ($class, $quote, $enrollment_items) {
+    my $total = $quote->{total};
+    my %priced = map { join( "\0", map { $_ // '' } @{ $_->{metadata} // {} }{qw(child_id session_id)} ) => 1 }
+        @{ $quote->{items} // [] };
+    my @unpriced = grep { !$priced{ join "\0", map { $_ // '' } @$_{qw(child_id session_id)} } }
+        @{ $enrollment_items // [] };
+
+    return undef if defined $total && !ref $total && $total =~ /\A[0-9]+\z/ && !@unpriced;
+    return 'This registration could not be priced, so it cannot be completed. '
+         . 'Nothing has been charged.';
 }
 
 method prepare_payment_data ($db, $run) {

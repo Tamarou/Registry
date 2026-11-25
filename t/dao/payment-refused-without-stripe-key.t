@@ -24,6 +24,7 @@ use Registry::DAO::Location;
 use Registry::DAO::Offer;
 use Registry::DAO::Resource;
 use Registry::DAO::WorkflowSteps::Payment;
+use Registry::PriceOps::Hold;
 use Test::Registry::Async qw( settle );
 
 my $test_db = Test::Registry::DB->new;
@@ -241,6 +242,125 @@ subtest 'one time payment for a tenant not ready is refused even with a key' => 
     like $warned, qr/one-time payment refused: tenant '\Q$unready_studio->{slug}\E' is not Stripe Connect ready/,
         'the refusal names the tenant';
     is_deeply rows_for_buyer($unready_studio), { payments => 0, entitlements => 0 }, 'no payment, no entitlement';
+};
+
+# ---- negative scenarios ----------------------------------------------------
+
+my $UNPRICED = 'This registration could not be priced, so it cannot be completed. Nothing has been charged.';
+
+my $odd = cart_tenant( sessions => {
+    # The only plan needs three children; a cart of one resolves no price.
+    Unpriced => [ { plan_name => 'Big Family Only', amount_cents => 30000,
+                    requirements => { min_children => 3 } } ],
+    Negative => [ { plan_name => 'Over-discounted', amount_cents => 10000,
+                    requirements => { percentage_discount => 150 } } ],
+} );
+
+subtest 'undefined total refused not free' => sub {
+    local $ENV{STRIPE_SECRET_KEY} = 'sk_test_placeholder_not_real';
+
+    my ( $out, $warned ) = checkout( $odd, cart_run( $odd, 'Unpriced' ) );
+    is_deeply $out->{errors}, [$UNPRICED], 'a cart with no resolved price is refused';
+    like $warned, qr/checkout refused: the cart for run \S+ could not be priced/, 'and logged';
+
+    # A child being enrolled who is missing from the priced cart altogether.
+    my $run = cart_run( $odd, 'Unpriced' );
+    $run->update_data( $odd->{db}, { children => [], session_selections => {} } );
+    ( $out ) = checkout( $odd, $run );
+    is_deeply $out->{errors}, [$UNPRICED], 'a child enrolled with no price line is refused';
+
+    is_deeply rows_for_cart($odd), { enrollments => 0, payments => 0, payment_items => 0 },
+        'nothing enrolled, no payment written';
+};
+
+subtest 'negative or non numeric total refused' => sub {
+    local $ENV{STRIPE_SECRET_KEY} = 'sk_test_placeholder_not_real';
+
+    my ( $out ) = checkout( $odd, cart_run( $odd, 'Negative' ) );
+    is_deeply $out->{errors}, [$UNPRICED], 'a negative total is refused';
+    is_deeply rows_for_cart($odd), { enrollments => 0, payments => 0, payment_items => 0 },
+        'nothing enrolled, no payment written';
+
+    my $step = 'Registry::DAO::WorkflowSteps::Payment';
+    for my $total ( 'abc', '12.5', '', ' 100', '1e3', [], undef ) {
+        is $step->unpriced_cart_refusal( { total => $total, items => [] }, [] ), $UNPRICED,
+            'total ' . ( defined $total ? "'$total'" : 'undef' ) . ' is refused';
+    }
+    is $step->unpriced_cart_refusal( { total => 0, items => [] }, [] ), undef, 'a $0 total is priced';
+};
+
+subtest 'empty stripe key treated as missing' => sub {
+    local $ENV{STRIPE_SECRET_KEY} = '';
+
+    my ( $out, $warned ) = checkout( $ready, cart_run( $ready, 'Priced' ) );
+    is_deeply $out->{errors}, [$UNAVAILABLE], 'a priced cart is refused';
+    like $warned, qr/STRIPE_SECRET_KEY is not set/, 'as if no key were set';
+
+    ( $out, $warned ) = pay( $studio, owed_run($studio) );
+    is_deeply $out->{errors}, ['This payment cannot be taken right now. Nothing has been charged.'],
+        'a one-time payment is refused';
+    like $warned, qr/STRIPE_SECRET_KEY is not set/, 'as if no key were set';
+};
+
+subtest 'tenant without stripe account refused' => sub {
+    local $ENV{STRIPE_SECRET_KEY} = 'sk_test_placeholder_not_real';
+    is $db->query( 'SELECT stripe_connect_account_id FROM registry.tenants WHERE slug = ?',
+        $unready->{slug} )->array->[0], undef, 'the tenant has no Stripe account id at all';
+
+    # A Stripe call under the placeholder key would fail with a processing
+    # error; the unavailable message and no row mean none was made.
+    my ( $out ) = checkout( $unready, cart_run( $unready, 'Priced' ) );
+    is_deeply $out->{errors}, [$UNAVAILABLE], 'a priced cart is refused before Stripe';
+    ( $out ) = pay( $unready_studio, owed_run($unready_studio) );
+    is_deeply $out->{errors}, ['This payment cannot be taken right now. Nothing has been charged.'],
+        'a one-time payment is refused before Stripe';
+    is rows_for_cart($unready)->{payments} + rows_for_buyer($unready_studio)->{payments}, 0, 'no payment row';
+};
+
+subtest 'refusal writes no payment or entitlement rows' => sub {
+    local $ENV{STRIPE_SECRET_KEY};
+    delete $ENV{STRIPE_SECRET_KEY};
+
+    # A one-time payment for seats a live hold keeps.
+    my $seats = Registry::DAO::Resource->create( $studio->{db},
+        { name => 'Wheel seats', kind => 'finite', capacity => 4 } );
+    my $run  = owed_run($studio);
+    my $hold = Registry::PriceOps::Hold->place( $studio->{db}, {
+        resource_id => $seats->id, units => 2, workflow_run_id => $run->id,
+        expires_at  => \"now() + interval '15 minutes'" } );
+    $run->update_data( $studio->{db}, { owed_payment => { %{ $run->data->{owed_payment} }, hold_id => $hold->id } } );
+
+    my ( $out ) = pay( $studio, $run );
+    ok $out->{errors}, 'the one-time payment is refused';
+    is $studio->{db}->query( 'SELECT state FROM holds WHERE id = ?', $hold->id )->array->[0], 'held',
+        'the hold is not converted as paid';
+    is_deeply rows_for_buyer($studio), { payments => 0, entitlements => 0 }, 'no payment, no entitlement';
+    is $studio->{db}->query( q{SELECT count(*) FROM payments WHERE metadata->>'stripe_customer_id' IS NOT NULL} )->array->[0],
+        0, 'no Stripe customer recorded';
+
+    ( $out ) = checkout( $ready, cart_run( $ready, 'Priced' ) );
+    ok $out->{errors}, 'the priced cart is refused';
+    is_deeply rows_for_cart($ready), { enrollments => 0, payments => 0, payment_items => 0 },
+        'no enrollment, payment or line item';
+};
+
+subtest 'refusal message leaks no secret' => sub {
+    my $secret = 'sk_test_LEAKCHECK0123456789';
+    local $ENV{STRIPE_SECRET_KEY} = $secret;
+
+    for my $case (
+        [ 'unready tenant cart', sub { checkout( $unready, cart_run( $unready, 'Priced' ) ) } ],
+        [ 'unready tenant one-time', sub { pay( $unready_studio, owed_run($unready_studio) ) } ],
+        [ 'unpriced cart', sub { checkout( $odd, cart_run( $odd, 'Unpriced' ) ) } ],
+    ) {
+        my ( $name, $go ) = @$case;
+        my ( $out, $warned ) = $go->();
+        my $shown = join "\n", @{ $out->{errors} || [] };
+        ok length $shown, "$name: refused";
+        unlike $shown, qr/\Q$secret\E/, "$name: the message holds no key";
+        unlike $shown, qr/ at \S+ line \d+|STRIPE_SECRET_KEY/, "$name: nor a stack trace or variable name";
+        unlike $warned, qr/\Q$secret\E/, "$name: nor does the log";
+    }
 };
 
 $test_db->cleanup_test_database;

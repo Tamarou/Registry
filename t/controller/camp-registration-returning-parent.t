@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 # ABOUTME: Controller test for returning parent happy path through summer camp registration workflow.
-# ABOUTME: Tests login via continue_logged_in, existing child selection, session selection, and demo payment.
+# ABOUTME: Tests login via continue_logged_in, existing child selection, session selection, and $0-cart payment.
 
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
@@ -26,7 +26,7 @@ use Registry::DAO::Enrollment;
 use Mojo::Home;
 use YAML::XS qw(Load);
 
-# Ensure demo payment mode (no Stripe key)
+# No Stripe key: the $0 cart completes without it
 delete $ENV{STRIPE_SECRET_KEY};
 
 # Sessions are only offered while they are still running -- both the template's
@@ -86,11 +86,13 @@ my $event = $dao->create(Event => {
 });
 $session_week2->add_events($dao->db, $event->id);
 
-$dao->create(PricingPlan => {
+# Free: only a $0 cart completes without Stripe. Assigned, because
+# Registry::DAO::create does nothing in void context.
+my $plan = $dao->create(PricingPlan => {
     session_id => $session_week2->id,
-    plan_name  => 'Standard',
+    plan_name  => 'Free',
     plan_type  => 'standard',
-    amount_cents => 30000,
+    amount_cents => 0,
 });
 
 # Pre-existing returning parent with a child
@@ -219,8 +221,8 @@ subtest 'Session selection - pick Week 2' => sub {
     like $next_url, qr/payment$/, 'Redirected to payment step';
 };
 
-# === Step 6: Payment (demo mode) ===
-subtest 'Payment - demo mode' => sub {
+# === Step 6: Payment ($0 cart, no Stripe) ===
+subtest 'Payment - $0 cart' => sub {
     ($run) = $dao->find(WorkflowRun => { id => $run->id });
     my $step = $run->next_step($dao->db);
     is $step->slug, 'payment', 'Next step is payment';
