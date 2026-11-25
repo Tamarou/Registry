@@ -93,6 +93,14 @@ class Registry::PriceOps::Hold :isa(Registry::DAO::Object) {
         my @free     = grep { !$held{$_} } 1 .. $resource->capacity;
         $db->insert( 'entitlement_units', { entitlement_id => $into->id, resource_id => $resource_id, unit => $_ } )
             for @free[ 0 .. $units - 1 ];
+        # Expiring with its occurrence, it now ends with the new one: ending
+        # with the old, the new occurrence's seats would free early and resell.
+        if ( $resource->event_id
+            && ( $entitlement->offer_version($db)->policies->{expiry}{kind} // '' ) eq 'end_of_occurrence' ) {
+            my ( undef, $ends ) = $resource->occurrence_window($db);
+            $db->query( q{UPDATE entitlements SET in_effect = tstzrange(lower(in_effect), ?, '[)') WHERE id = ?},
+                $ends, $into->id );
+        }
         $tx->commit if $tx;
         return $entitlement;
     }
