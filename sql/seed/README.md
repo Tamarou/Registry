@@ -6,8 +6,13 @@ environment, typically once, when standing up a new customer.
 
 ## `sacp-tenant.sql`
 
-Creates (if missing) the `sacp` tenant for Super Awesome Cool Pottery,
-clones the registry schema, and seeds:
+Adds Super Awesome Cool Pottery's program data to the `sacp` tenant.
+It does not create the tenant: SACP signs up like any studio, by walking
+`/tenant-signup` with subdomain `sacp` and accepting Solo, which
+provisions the tenant and its platform entitlement together. Run against
+a database without `sacp`, the script exits non-zero and writes nothing.
+
+It seeds:
 
 - Program types: afterschool, summer-camp, workshop, wheel-class,
   pyop, field-trip, birthday-party
@@ -22,6 +27,9 @@ until Victoria publishes from the admin dashboard.
 The script is idempotent -- running it repeatedly leaves the same rows.
 
 ### Usage
+
+First sign up `sacp` through `/tenant-signup` (dev or production),
+accepting Solo. Then:
 
 Local dev:
 

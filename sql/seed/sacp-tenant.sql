@@ -1,5 +1,9 @@
 -- ABOUTME: Seed data for Super Awesome Cool Pottery's registry tenant.
--- ABOUTME: Creates the tenant (if missing) and populates real-world program data.
+-- ABOUTME: Adds real-world program data to the sacp tenant signup created; refuses if it is missing.
+--
+-- The tenant itself is created only through tenant signup (/tenant-signup,
+-- accepting Solo), never here: signup provisions it and grants its platform
+-- entitlement in one transaction.
 --
 -- Usage:
 --     psql 'postgres://...' -v tenant_slug=sacp -f sql/seed/sacp-tenant.sql
@@ -18,21 +22,15 @@ BEGIN;
 SET client_min_messages = 'warning';
 
 -- -------------------------------------------------------------------------
--- Create the SACP tenant and its schema if neither exists yet.
+-- Refuse unless signup has already created the SACP tenant and its schema.
 -- -------------------------------------------------------------------------
 
 DO
 $$
-DECLARE
-    target_slug text := 'sacp';
-    target_name text := 'Super Awesome Cool Pottery';
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM registry.tenants WHERE slug = target_slug) THEN
-        INSERT INTO registry.tenants (slug, name) VALUES (target_slug, target_name);
-    END IF;
-
-    IF to_regnamespace(quote_ident(target_slug)) IS NULL THEN
-        PERFORM registry.clone_schema(target_slug);
+    IF NOT EXISTS (SELECT 1 FROM registry.tenants WHERE slug = 'sacp')
+       OR to_regnamespace('sacp') IS NULL THEN
+        RAISE EXCEPTION 'No sacp tenant: sign up ''sacp'' through tenant signup (accepting Solo) first, then re-run this seed.';
     END IF;
 END;
 $$ LANGUAGE plpgsql;
@@ -40,8 +38,7 @@ $$ LANGUAGE plpgsql;
 SET search_path TO sacp, public;
 
 -- -------------------------------------------------------------------------
--- Program types. clone_schema copies structure only, so seed every type
--- SACP needs directly into the tenant schema.
+-- Program types. Seed every type SACP needs directly into the tenant schema.
 -- -------------------------------------------------------------------------
 
 INSERT INTO program_types (slug, name, config) VALUES
