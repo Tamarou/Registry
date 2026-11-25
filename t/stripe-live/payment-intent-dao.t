@@ -72,7 +72,8 @@ subtest 'Process payment with an intent Stripe does not know' => sub {
     my $result = $payment->process_payment( $tdb, "pi_does_not_exist_$$" );
 
     ok !$result->{success}, 'Invalid intent fails';
-    ok $result->{error}, 'Error message returned';
+    like $result->{error}, qr/resource_missing|No such payment_intent/,
+        'Stripe refused the intent, not some other failure';
     is $payment->status, 'failed', 'Payment status updated to failed';
 };
 
