@@ -200,6 +200,28 @@ sub run_for_class_of_eight () {
     return $run;
 }
 
+subtest 'invalid seats per unit or cap refused' => sub {
+    my $run = run_for_class_of_eight();
+    my %t   = terms();
+    for my $case ( [ units_per_acceptance => 0 ], [ units_per_acceptance => -1 ], [ units_per_acceptance => 9 ],
+                   [ per_booking_cap => 0 ], [ per_booking_cap => -1 ] ) {
+        my $result = answer( $run, 'offer-price', { $t{'offer-price'}->%*, @$case } );
+        ok $result->{stay}, "$case->[0] $case->[1] stays";
+        like errors_of($result), $case->[0] eq 'per_booking_cap' ? qr/per-booking cap/ : qr/Units per acceptance/,
+            'with the reason';
+        ok !$run->data->{offer_price}, 'and records no price';
+    }
+    is errors_of( answer( $run, 'offer-price', { $t{'offer-price'}->%*, units_per_acceptance => 8 } ) ), '',
+        'all eight seats per unit is accepted';
+
+    # Publish asks again: the class's seats lowered after the price step.
+    my $before = published_count();
+    answer( $run, $_, $t{$_} ) for qw( one-time-payment refund-policy change-policy use-policy expiry-policy );
+    $tdb->update( 'projects', { seats_per_occurrence => 4 }, { id => $run->data->{resource_choice}{class_project_id} } );
+    like errors_of( answer( $run, 'publish', $t{publish} ) ), qr/cannot exceed 4/, 'publish refuses units over the seats now';
+    is published_count(), $before, 'and publishes nothing';
+};
+
 subtest 'blank price refused not zero' => sub {
     my $run = run_for_class_of_eight();
     my %t   = terms();

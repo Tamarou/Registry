@@ -14,18 +14,21 @@ class Registry::DAO::WorkflowSteps::OfferPrice :isa(Registry::DAO::WorkflowStep)
 
     # Why $units no longer fit the offer the run describes, or nothing; publish
     # asks again, since offer-basics can be answered again after this step. A
-    # class offer is held to the smallest of its occurrences now; one added
-    # later with less capacity is not refused here.
+    # class offer is held to its seats per occurrence, which occurrences
+    # generated later get, and to the smallest of its occurrences now; one
+    # added later with less capacity is not refused here.
     sub refusal ( $class, $db, $data, $units ) {
         return 'Units per acceptance must be a whole number of at least one'
             unless defined $units && $units =~ /\A[1-9][0-9]{0,8}\z/;
         my $basic = ref $data->{offer_basics} eq 'HASH' ? $data->{offer_basics} : {};
         if ( my $class_id = $basic->{class_project_id} ) {
-            my ( $name, $smallest ) = ( $db->query( q{
-                SELECT p.name, min(r.capacity) FROM resources r
-                  JOIN events e ON e.id = r.event_id JOIN projects p ON p.id = e.project_id
-                 WHERE p.id = ? GROUP BY p.name
+            my ( $name, $seats, $smallest ) = ( $db->query( q{
+                SELECT p.name, p.seats_per_occurrence, min(r.capacity) FROM projects p
+                  LEFT JOIN events e ON e.project_id = p.id LEFT JOIN resources r ON r.event_id = e.id
+                 WHERE p.id = ? GROUP BY p.id
             }, $class_id )->array // [] )->@*;
+            return sprintf 'Units per acceptance cannot exceed %d, %s\'s seats per occurrence', $seats, $name
+                if defined $seats && $units > $seats;
             return sprintf 'Units per acceptance cannot exceed %d, the smallest capacity among %s\'s occurrences',
                 $smallest, $name
                 if defined $smallest && $units > $smallest;
