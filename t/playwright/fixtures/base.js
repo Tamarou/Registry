@@ -13,23 +13,12 @@ const lookup = dns.promises.lookup;
 dns.promises.lookup = (host, ...rest) =>
   lookup(/\.localhost\.?$/i.test(host) ? 'localhost' : host, ...rest);
 
-// The layouts load htmx from unpkg. Serve the same pinned release from
-// node_modules so the suite never depends on reaching a CDN: where it was
-// blocked, every hx-* control was dead and the failures looked like app bugs.
-// Keep the htmx.org devDependency in step with the version in the layouts.
-const HTMX_URL = 'https://unpkg.com/htmx.org@2.0.3';
-const HTMX_FILE = require.resolve('htmx.org/dist/htmx.min.js');
-
 // __dirname here is t/playwright/fixtures/; the dotfile is written by
 // global-setup.js to t/playwright/ (one level up).
 const dbUrl = () =>
   fs.readFileSync(path.join(__dirname, '..', '.shared-db-url'), 'utf8').trim();
 
 const test = base.test.extend({
-  context: async ({ context }, use) => {
-    await context.route(HTMX_URL, (route) => route.fulfill({ path: HTMX_FILE }));
-    await use(context);
-  },
   testDB: async ({}, use) => { await use({ dbUrl: dbUrl() }); },
   registryPage: async ({ page }, use) => {
     page.workflowUrl = (slug) => `/${slug}`;
