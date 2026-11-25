@@ -1,11 +1,14 @@
-# ABOUTME: Background workflow applying a stored Stripe move (a refund) to the entitlements its payment bought.
+# ABOUTME: Background workflow applying a stored Stripe move (a refund or a dispute) to the entitlements its payment bought.
 # ABOUTME: One run per stored Connect event, created by the Connect endpoint and driven by continue_workflow_run.
 
 name: Entitlement Stripe Move
-description: Apply a refund Stripe reported on the tenant's account to the entitlements it paid for
+description: Apply a refund or dispute Stripe reported on the tenant's account to the entitlements it paid for
 slug: entitlement-stripe-move
 
 steps:
   - slug: apply-refund
     description: Apply the stored refund event to the entitlements of the payment it refunds
     class: Registry::DAO::WorkflowSteps::ApplyStripeRefund
+  - slug: apply-dispute
+    description: Apply the stored dispute event to the entitlements of the payment it disputes
+    class: Registry::DAO::WorkflowSteps::ApplyStripeDispute

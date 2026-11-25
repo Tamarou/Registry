@@ -26,7 +26,8 @@ class Registry::DAO::WorkflowSteps::ApplyStripeRefund :isa(Registry::DAO::Workfl
     # Applies the stored event the run was created for (run data
     # stripe_event_id) once: it is locked, read only for this schema's tenant,
     # and marked applied in the same transaction as what it changes, so a
-    # second run for it waits and then finds nothing to do.
+    # second run for it waits and then finds nothing to do. A dispute event is
+    # left to the apply-dispute step.
     method process ( $db, $form_data, $run = undef ) {
         $db = $db->db if $db isa Registry::DAO;
         my $event_id = $run ? $run->data->{stripe_event_id} : undef;
@@ -37,6 +38,7 @@ class Registry::DAO::WorkflowSteps::ApplyStripeRefund :isa(Registry::DAO::Workfl
         my $stored = $db->query( q{
             SELECT e.payload FROM registry.webhook_events e JOIN registry.tenants t ON t.id = e.tenant_id
              WHERE e.stripe_event_id = ? AND t.slug = current_schema() AND e.processed_at IS NULL
+               AND e.event_type NOT LIKE 'charge.dispute.%'
                FOR UPDATE OF e
         }, $event_id )->expand->hash;
         if ($stored) {

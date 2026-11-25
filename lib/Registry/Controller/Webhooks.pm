@@ -8,6 +8,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
     use Mojo::Promise;
     use Registry::Service::Stripe;
     use Registry::DAO::Workflow;
+    use Registry::DAO::WorkflowSteps::ApplyStripeDispute;
     use Registry::DAO::WorkflowSteps::ApplyStripeRefund;
 
     method stripe() {
@@ -203,12 +204,13 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         $self->render( status => 200, text => 'OK' );
     }
 
-    # A stored refund of a payment Registry made in $slug is applied by an
-    # entitlement-stripe-move run that the driver continues; nobody waits on
-    # it. One whose intent is on none of $slug's payments starts nothing.
+    # A stored refund or dispute of a payment Registry made in $slug is applied
+    # by an entitlement-stripe-move run that the driver continues; nobody waits
+    # on it. One whose intent is on none of $slug's payments starts nothing.
     method _start_stripe_move ($slug, $event) {
         my @intents = map { $_->{payment_intent} }
-            Registry::DAO::WorkflowSteps::ApplyStripeRefund->refunds($event);
+            Registry::DAO::WorkflowSteps::ApplyStripeRefund->refunds($event),
+            Registry::DAO::WorkflowSteps::ApplyStripeDispute->disputes($event);
         return unless @intents;
         my $dao = $self->app->dao;
         $self->_enqueue_after_commit( $dao, $slug, sub ($minion) {

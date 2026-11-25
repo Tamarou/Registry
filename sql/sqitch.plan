@@ -127,3 +127,4 @@ entitlement-refunds-per-entitlement [holds-placed-at] 2026-11-25T02:00:00Z Chris
 retire-unpublished-platform-plans [entitlement-refunds-per-entitlement] 2026-11-25T03:00:00Z Chris Prather <chris.prather@tamarou.com> # Studio, Empire, Registry Plus and Standard stop being platform plans: Solo is the one offer
 holds-lifetime [retire-unpublished-platform-plans] 2026-11-25T04:00:00Z Chris Prather <chris.prather@tamarou.com> # A hold records its placed lifetime, so a charge extends it once and never past twice that
 retire-launch-rate-marker [holds-lifetime] 2026-11-25T05:00:00Z Chris Prather <chris.prather@tamarou.com> # No metadata marker names the plan the platform sells: the quote reads its current published Solo version
+entitlement-stripe-move-adds-dispute-step [retire-launch-rate-marker] 2026-11-25T06:00:00Z Chris Prather <chris.prather@tamarou.com> # entitlement-stripe-move gains its apply-dispute step: the stored workflow is cleared so import rebuilds it
