@@ -1,0 +1,122 @@
+#!/usr/bin/env perl
+# ABOUTME: ApplyRefundPolicy decides a refund request by the refund policy stamped on the entitlement's offer version.
+# ABOUTME: Decisions and the request recorded on the payment, against real Postgres; the Stripe call is in t/stripe-live/.
+BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
+
+use 5.42.0;
+use warnings;
+use lib qw(lib t/lib);
+use Test::More;
+use Test::Registry::DB;
+use Test::Registry::Fixtures;
+use Test::Registry::Offers qw( offer_terms );
+use Test::Registry::Async qw( settle );
+use Test::Registry::Helpers qw( import_all_workflows join_tenant publish_offer );
+use Registry::DAO;
+use Registry::DAO::Entitlement;
+use Registry::DAO::Offer;
+use Registry::DAO::Payment;
+use Registry::DAO::Resource;
+use Registry::DAO::Workflow;
+use Registry::DAO::WorkflowStep;
+use Registry::DAO::WorkflowSteps::ApplyRefundPolicy;
+
+my $test_db = Test::Registry::DB->new;
+my $dao     = $test_db->db;
+
+import_all_workflows($dao);
+my $slug = 'refund_policy_studio';
+Test::Registry::Fixtures::create_tenant( $dao, { name => 'Refund Policy Studio', slug => $slug } );
+my $tenant_dao = Registry::DAO->new( url => $test_db->uri, schema => $slug );
+my $tdb        = $tenant_dao->db;
+import_all_workflows($tenant_dao);
+
+my $admin = Test::Registry::Fixtures::create_user( $dao,
+    { username => 'rp_admin', name => 'RP Admin', email => 'admin@rp.test', user_type => 'admin' } );
+join_tenant( $dao, $admin, 'admin', $slug );
+
+my $made = 0;
+sub person () {
+    return $tdb->insert( 'users', { username => 'rp-p-' . ++$made }, { returning => 'id' } )->hash->{id};
+}
+
+# An occurrence four seats wide starting 48 hours from now, its own resource.
+sub occurrence () {
+    my $class = $tdb->insert( 'projects', { name => 'Class ' . ++$made, slug => "rp-class-$made" },
+        { returning => 'id' } )->hash->{id};
+    my $room = $tdb->insert( 'locations', { name => 'Room ' . ++$made, slug => "rp-room-$made" },
+        { returning => 'id' } )->hash->{id};
+    my $event = $tdb->insert( 'events', {
+        project_id => $class, location_id => $room, teacher_id => person(),
+        time       => \"date_trunc('second', now()) + interval '48 hours'", duration => 90, capacity => 4,
+    }, { returning => 'id' } )->hash->{id};
+    return Registry::DAO::Resource->for_occurrence( $tdb, $event );
+}
+
+# A completed payment of $cents. It names no seller account, so a refund it
+# is asked for is refused before anything is sent to Stripe.
+sub payment ( $cents = 5000 ) {
+    return Registry::DAO::Payment->create( $tdb, {
+        user_id => person(), amount_cents => $cents, status => 'completed',
+        stripe_payment_intent_id => 'pi_rp_' . ++$made, metadata => {},
+    } );
+}
+
+# A published version of a new offer on $occurrence under refund policy $refund.
+sub version ( $occurrence, $refund ) {
+    return Registry::DAO::Offer->create( $tdb, { name => 'Wheel ' . ++$made } )
+        ->draft( $tdb, offer_terms( $occurrence->id, policies => { refund => $refund } ) )
+        ->publish($tdb);
+}
+
+# An entitlement to one seat of $occurrence under $version, bought by
+# $payment for $share cents (no payment when $payment is undef).
+sub booking ( $version, $occurrence, $payment = undef, $share = undef ) {
+    my ( undef, $ends ) = $occurrence->occurrence_window($tdb);
+    return Registry::DAO::Entitlement->grant( $tdb, {
+        holder_user_id   => person(),
+        offer_version_id => $version->id,
+        payment_plan_id  => 'pay',
+        starts_at        => '2020-01-01T00:00:00Z',
+        ends_at          => $ends,
+        resource_id      => $occurrence->id,
+        units            => 1,
+        $payment ? ( payment_id => $payment->id, payment_share_cents => $share ) : (),
+    } );
+}
+
+# The step, in a one-step workflow of its own, driven through a run naming
+# $entitlement the way the refund workflow's chooser will.
+my $workflow = Registry::DAO::Workflow->create( $tdb, {
+    name => 'Refund policy test', slug => 'refund-policy-test',
+    description => 'drives ApplyRefundPolicy', first_step => 'apply-refund-policy' } );
+Registry::DAO::WorkflowStep->create( $tdb, {
+    workflow_id => $workflow->id, slug => 'apply-refund-policy', description => 'Apply the refund policy',
+    class => 'Registry::DAO::WorkflowSteps::ApplyRefundPolicy' } );
+# Found, so it is inflated as its class.
+my $step = Registry::DAO::WorkflowStep->find( $tdb, { workflow_id => $workflow->id, slug => 'apply-refund-policy' } );
+
+sub apply ($entitlement) {
+    my $run = $workflow->new_run($tdb);
+    $run->update_data( $tdb, { refund_entitlement_id => $entitlement->id } );
+    return settle( $run->process( $tdb, $step, {} ) );
+}
+
+sub reread ($e)  { Registry::DAO::Entitlement->find( $tdb, { id => $e->id } ) }
+sub fresh ($p)   { Registry::DAO::Payment->find( $tdb, { id => $p->id } ) }
+sub request_on ( $payment, $e ) { ( fresh($payment)->metadata->{entitlement_refund_requests} // {} )->{ $e->id } }
+
+subtest 'none policy refuses refund' => sub {
+    my $occurrence = occurrence();
+    my $paid       = payment();
+    my $e          = booking( version( $occurrence, { kind => 'none' } ), $occurrence, $paid, 5000 );
+
+    my $result = apply($e);
+    like $result->{refund_refused}, qr/all sales are final/i, "refused in the offer's terms";
+    ok !$result->{errors}, 'a refusal, not an error';
+    is request_on( $paid, $e ), undef, 'no refund is requested';
+    ok !fresh($paid)->metadata->{refund_last_failure}, 'and nothing was sent to Stripe';
+    is reread($e)->state, 'active', 'the entitlement is unchanged';
+};
+
+done_testing;
