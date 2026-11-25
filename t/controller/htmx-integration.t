@@ -67,11 +67,11 @@ subtest 'HTMX plugin provides is_htmx_request helper' => sub {
 # Layout serves HTMX via app->htmx->asset
 # ============================================================
 
-subtest 'layout includes HTMX 2.0.x script' => sub {
+subtest 'layout includes the self-hosted HTMX script' => sub {
     # GET any workflow page to see the layout
     $t->get_ok('/program-creation')
       ->status_is(200)
-      ->content_like(qr/htmx\.org\@2\.0/, 'page includes HTMX 2.0.x');
+      ->content_like(qr{/js/vendor/htmx\.min\.js}, 'page includes the self-hosted HTMX');
 };
 
 # ============================================================
