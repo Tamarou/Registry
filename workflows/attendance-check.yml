@@ -13,6 +13,3 @@ steps:
 - class: Registry::DAO::WorkflowSteps::AttendanceCheck::UpcomingEventProcessor
   description: Check for upcoming events and send reminder notifications
   slug: check-upcoming-events
-- class: Registry::DAO::WorkflowSteps::AttendanceCheck::ScheduleNext
-  description: Schedule the next attendance check job
-  slug: schedule-next
