@@ -53,18 +53,24 @@ subtest 'the signup page offers exactly the published Solo version' => sub {
         'as the version the bootstrap publishes';
 };
 
-subtest 'the unpublished tiers cannot be bought, however they are posted' => sub {
-    my %old = map { $_->{plan_name} => $_->{id} } $db->query( q{
-        SELECT plan_name, id FROM registry.pricing_plans
-         WHERE plan_name IN ('Studio', 'Empire') AND superseded_at IS NULL
-    } )->hashes->@*;
+subtest 'an unpublished offer cannot be selected' => sub {
+    # The seed no longer carries Studio or Empire at all; the one legacy
+    # pricing_plans row left is Solo's own, which is not a published version.
+    is $db->query( q{
+        SELECT count(*) FROM registry.pricing_plans
+         WHERE metadata->>'created_by_migration' = 'seed-tier-pricing-options'
+           AND superseded_at IS NULL
+    } )->array->[0], 0, 'no seeded Studio or Empire plan is current';
 
-    # Fatal precondition. Every refusal below would pass on an undef id.
-    ok defined $old{Studio} && defined $old{Empire}, 'both old tier ids resolved' or return;
+    my $legacy = $db->query(
+        q{SELECT id FROM registry.pricing_plans WHERE metadata->>'launch_rate' = 'true'}
+    )->array->[0];
+
+    # Fatal precondition. The refusal below would pass on an undef id.
+    ok defined $legacy, "Solo's legacy plan id resolved" or return;
 
     ok $step->validate_plan_selection( $db, $plans->[0]{id} ), 'the published Solo version selects';
-    ok !$step->validate_plan_selection( $db, $old{Studio} ), 'Studio is refused server-side';
-    ok !$step->validate_plan_selection( $db, $old{Empire} ), 'and Empire likewise';
+    ok !$step->validate_plan_selection( $db, $legacy ), 'a legacy plan id is refused server-side';
 };
 
 # The one place the launch DECISION is written down in a test.

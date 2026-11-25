@@ -17,9 +17,17 @@ BEGIN
     -- makes the next tier launch -- or the next retirement, which this repo
     -- performs by suspending a relationship -- fail a shipped script with no fix
     -- inside it.
-    SELECT COUNT(*) INTO seeded
-      FROM registry.pricing_plans
-     WHERE metadata->>'created_by_migration' = 'seed-tier-pricing-options';
+    -- retire-unpublished-platform-plans later deletes or supersedes them and
+    -- keeps them in its own table, so count them there once that change deploys.
+    IF to_regclass('public.retired_platform_plans') IS NOT NULL THEN
+        EXECUTE $q$SELECT COUNT(*) FROM public.retired_platform_plans
+                    WHERE metadata->>'created_by_migration' = 'seed-tier-pricing-options'$q$
+           INTO seeded;
+    ELSE
+        SELECT COUNT(*) INTO seeded
+          FROM registry.pricing_plans
+         WHERE metadata->>'created_by_migration' = 'seed-tier-pricing-options';
+    END IF;
 
     IF seeded <> 2 THEN
         RAISE EXCEPTION

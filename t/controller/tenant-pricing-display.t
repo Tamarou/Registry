@@ -16,6 +16,8 @@ use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;
 use Test::Registry::Helpers;
 use Registry::DAO::WorkflowSteps::PricingPlanSelection;
+use Registry::DAO::Offer;
+use Test::Registry::Offers qw(offer_terms);
 
 # Setup test database
 my $t_db = Test::Registry::DB->new;
@@ -29,17 +31,18 @@ my $t = Test::Registry::Mojo->new('Registry');
 $t->app->helper(dao => sub { $db });
 $db->current_tenant('registry');
 
-# No plan fixtures: this file renders what the shipped seed publishes, which
-# on day one is Solo alone. Studio and Empire survive only as legacy
-# registry.pricing_plans rows, never published, so they must never be offered.
+# This file renders what the shipped seed publishes, which on day one is Solo
+# alone. The one fixture is an unpublished draft that would otherwise qualify
+# as a platform offer to tenants: payment processing, percentage of sales.
 my $solo_version_id = platform_solo_offer_version_id($db);
-my ($studio_plan_id, $empire_plan_id) = map {
-    $db->db->query(
-        'SELECT id FROM registry.pricing_plans WHERE plan_name = ? AND plan_scope = ?',
-        $_, 'tenant' )->array->[0]
-} qw( Studio Empire );
-
-ok $studio_plan_id && $empire_plan_id, 'the legacy Studio and Empire plans still exist';
+my $draft_version_id = Registry::DAO::Offer->create( $db->db, { name => 'Studio' } )->draft(
+    $db->db,
+    offer_terms(
+        $db->db->query(q{SELECT id FROM registry.resources WHERE name = 'payment processing'})
+            ->array->[0],
+        price_cents   => 0,
+        payment_plans => [ { id => 'revenue_share', kind => 'percentage_of_sales', fraction => 0.02 } ],
+    ) )->id;
 
 # The plan-choice page left the signup funnel when Solo became the only tier on
 # sale. The step class and its template stay, listing the platform's published
@@ -73,19 +76,17 @@ subtest 'PricingPlanSelection provides plans via prepare_template_data' => sub {
     is $plans->[0]{id}, $solo_version_id, 'by its version id';
 };
 
-# Studio and Empire were never published as offers, so posting their legacy
-# plan ids directly must be refused server-side.
-subtest 'an unpublished plan cannot be selected, however it is posted' => sub {
+# Posting an unpublished version's id directly must be refused server-side.
+subtest 'an unpublished offer cannot be selected' => sub {
     my $step = $choice_step;
 
-    ok !$step->validate_plan_selection( $db->db, $studio_plan_id ), 'Studio is refused';
-    ok !$step->validate_plan_selection( $db->db, $empire_plan_id ), 'Empire is refused too';
+    ok !$step->validate_plan_selection( $db->db, $draft_version_id ), 'the draft is refused';
     ok $step->validate_plan_selection( $db->db, $solo_version_id ),
         'and the published Solo version selects';
 
     my $run = $choice_workflow->new_run($db->db);
     my $result = $step->process( $db->db,
-        { selected_plan_id => $studio_plan_id }, $run );
+        { selected_plan_id => $draft_version_id }, $run );
 
     ok $result->{_validation_errors},
         'processing the step with an unpublished plan is rejected';
@@ -106,7 +107,7 @@ subtest 'the plan-choice template renders the plans it is given' => sub {
     );
 
     like $html, qr/data-plan="Solo"/, 'renders the Solo card';
-    unlike $html, qr/data-plan="(?:Studio|Empire)"/, 'and no unpublished tier';
+    unlike $html, qr/data-plan="Studio"/, 'and not the unpublished draft';
     like $html, qr/<input[^>]*name="selected_plan_id"/,
         'renders a plan selection radio';
 };
