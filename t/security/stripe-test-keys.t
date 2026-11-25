@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-# ABOUTME: Tests that a live Stripe key (sk_live_) is refused outside production.
+# ABOUTME: Tests that a live Stripe key (sk_live_ or restricted rk_live_) is refused outside production.
 # ABOUTME: Guards dev/test environments that inherit a live key from the shell.
 
 use 5.42.0;
@@ -34,6 +34,15 @@ subtest 'live key in development mode is refused' => sub {
     my $out = `carton exec perl -Ilib -e '$build_client' 2>&1`;
     like $out, qr/Refusing to use a live Stripe key/,
         'sk_live_ with MOJO_MODE=development is refused';
+};
+
+subtest 'restricted live key outside production is refused' => sub {
+    local $ENV{STRIPE_SECRET_KEY} = 'rk_live_fake_for_guard_test';
+    local $ENV{MOJO_MODE} = 'development';
+
+    my $out = `carton exec perl -Ilib -e '$build_client' 2>&1`;
+    like $out, qr/Refusing to use a live Stripe key/,
+        'rk_live_ with MOJO_MODE=development is refused';
 };
 
 subtest 'test key outside production is allowed' => sub {
