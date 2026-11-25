@@ -42,6 +42,17 @@ class Registry::DAO::Resource :isa(Registry::DAO::Object) {
         }, $event_id )->array->@*;
     }
 
+    # Whether a booking may take seats in this occurrence now: its event is
+    # published and still to start. Coverage (OfferVersion->covered_resources)
+    # ignores both, so the booking steps ask this as well.
+    method on_sale ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        return 0 unless $event_id;
+        return !!$db->query( q{
+            SELECT 1 FROM events WHERE id = ? AND status = 'published' AND clock_timestamp() < time
+        }, $event_id )->rows;
+    }
+
     # The resource, its row locked until the caller's transaction ends: every
     # grant and hold takes this lock first, so capacity is read and claimed
     # with no other claim in between.

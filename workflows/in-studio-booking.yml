@@ -1,0 +1,42 @@
+# ABOUTME: Public in-studio booking: a visitor picks an occurrence, an offer and how many, signs in, and holds the seats.
+# ABOUTME: The hold is time-limited and the run then waits at payment, which charges what the hold step owes.
+
+name: In-studio Booking
+description: Book seats in a class occurrence
+slug: in-studio-booking
+# Anyone may walk into this workflow, deliberately: the gate admits anyone to a
+# workflow with the public mark. t/security/workflow-roles-cover-every-workflow.t
+# enforces that every workflow declares roles or this mark.
+public: true
+
+steps:
+  - slug: occurrence
+    label: Class
+    description: Choose a class occurrence with free seats
+    class: Registry::DAO::WorkflowSteps::ChooseOccurrence
+
+  - slug: offer
+    label: Offer
+    description: Choose an offer and how many
+    class: Registry::DAO::WorkflowSteps::ChooseOfferAndUnits
+
+  - slug: account
+    label: Your account
+    description: Sign in or create an account
+    class: Registry::DAO::WorkflowSteps::AccountCheck
+
+  - slug: hold
+    label: Hold
+    description: Hold the seats while you pay
+    class: Registry::DAO::WorkflowSteps::HoldSeats
+
+  # The terms-agreement step (01a213a6-045a) goes here, between hold and
+  # payment: the booker agrees to the /terms version being served before any charge.
+
+  # Charges owed_payment, as HoldSeats wrote it, against booking_hold's hold.
+  # 01a20415-6b96 adds `complete` (CompleteBooking, converting booking_hold's
+  # hold into the booker's entitlement) and `done` after this step.
+  - slug: payment
+    label: Payment
+    description: Pay for the booking
+    class: Registry::DAO::WorkflowSteps::OneTimePayment
