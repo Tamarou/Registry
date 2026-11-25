@@ -130,4 +130,68 @@ subtest 'concurrent requests for the last seats cannot both succeed' => sub {
     is holds_on($seats), 1, 'one hold stands';
 };
 
+subtest 'zero negative or fractional units refused' => sub {
+    my ( $version, $seats ) = occurrences( 1, units_per_acceptance => 2 );
+    for my $count ( 0, -1, '1.5', '0.5', '', 'two', undef ) {
+        throws_ok { book( $studio, $version, $seats, $count ) } qr/whole number of at least one/,
+            sprintf 'a count of %s is refused', $count // 'nothing';
+    }
+    is holds_on($seats), 0, 'and nothing is held';
+};
+
+subtest 'expired holds do not count' => sub {
+    my ( $version, $seats ) = occurrences(1);
+    my $hold = book( $studio, $version, $seats, 5 );
+    $studio->update( 'holds', { expires_at => \"clock_timestamp() - interval '1 second'" }, { id => $hold->id } );
+    is $seats->free_units($studio), 10, 'an expired hold for 5 leaves all 10 free';
+    ok book( $studio, $version, $seats, 10 ), 'and all 10 can be booked';
+};
+
+subtest 'ended entitlement frees seats partial refund does not' => sub {
+    my ( $version, $seats ) = occurrences(1);
+    my ( $refunded, $partly ) = ( booked( $version, $seats, 4 ), booked( $version, $seats, 3 ) );
+    $refunded->end( $studio, 'refunded', 're_full' );
+    $partly->record_refund( $studio, { amount_cents => 500, stripe_refund_id => 're_part' } );
+    is $seats->free_units($studio), 7, 'the ended booking freed its 4; the partly refunded one holds its 3';
+    throws_ok { book( $studio, $version, $seats, 8 ) } qr/7 of 10 units free/, '8 refused';
+    ok book( $studio, $version, $seats, 7 ), '7 granted';
+};
+
+subtest 'other occurrence seats not counted' => sub {
+    my ( $version, $mine, $other ) = occurrences(2);
+    booked( $version, $other, 4 );
+    book( $studio, $version, $other, 6 );
+    is $mine->free_units($studio), 10, "the other occurrence's booking and hold leave this one's 10";
+    ok book( $studio, $version, $mine, 10 ), 'all 10 can be booked';
+};
+
+subtest 'huge unit count refused without overflow' => sub {
+    my ( $version, $seats ) = occurrences(1);
+    booked( $version, $seats, 10 );
+    throws_ok { book( $studio, $version, $seats, 1 ) } qr/0 of 10 units free: 1 asked for/,
+        'at exactly full, 1 is refused';
+
+    my ( $open, $empty ) = occurrences( 1, per_booking_cap => 2**31 - 1, units_per_acceptance => 2**31 - 1 );
+    throws_ok { book( $studio, $open, $empty, 2**31 - 1 ) } qr/10 of 10 units free: 4611686014132420609 asked for/,
+        'the largest count of the largest offer is refused in exact seats';
+    throws_ok { book( $studio, $open, $empty, '4611686018427387904' ) } qr/at most 2147483647/,
+        '2**62 units are refused by the cap';
+    throws_ok {
+        Registry::PriceOps::Hold->place( $studio, {
+            resource_id => $empty->id, units => '4611686018427387904', workflow_run_id => run_id(),
+            expires_at  => \"clock_timestamp() + interval '1 minute'",
+        } )
+    } qr/10 of 10 units free: 4611686018427387904 asked for/, '2**62 seats are refused by the capacity check';
+    is holds_on($empty), 0, 'and nothing is held';
+};
+
+subtest 'refused request leaves no hold' => sub {
+    my ( $version, $seats ) = occurrences( 1, per_booking_cap => 20 );
+    booked( $version, $seats, 9 );
+    throws_ok { book( $studio, $version, $seats, 2 ) } qr/1 of 10 units free/, 'a request for 2 is refused';
+    throws_ok { book( $studio, $version, $seats, 21 ) } qr/at most 20/, 'as is one above the cap';
+    is holds_on($seats), 0, 'leaving no hold';
+    ok book( impatient(), $version, $seats, 1 ), 'and the next request takes the lock without waiting';
+};
+
 done_testing;

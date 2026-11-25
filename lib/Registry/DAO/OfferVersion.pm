@@ -52,9 +52,12 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
     }
 
     # The seats a booking of $count acceptances takes: $count times its seats
-    # per unit, refused above the per-booking cap. Capacity is then the
-    # resource's one check (Resource->claim).
+    # per unit, refused unless a whole number from 1 to the per-booking cap.
+    # Capacity is then the resource's one check (Resource->claim).
     method seats_for ($count) {
+        # Checked as a count, not as seats: 1.5 couples is 3 whole seats.
+        croak 'a booking is a whole number of at least one: ' . ( $count // 'nothing' ) . ' asked for'
+            unless defined $count && $count =~ /\A[1-9][0-9]*\z/;
         croak "a booking of this offer takes at most $per_booking_cap: $count asked for"
             if $count > $per_booking_cap;
         return $count * $units_per_acceptance;
