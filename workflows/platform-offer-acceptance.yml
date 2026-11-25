@@ -1,0 +1,26 @@
+# ABOUTME: An existing tenant's admin accepts one of the platform's published offers to tenants, such as Solo for SACP.
+# ABOUTME: The same listing and accept primitive signup uses; the entitlement is written to registry with this tenant as holder.
+
+name: Platform Offer Acceptance
+description: Accept the platform's terms for taking payments
+slug: platform-offer-acceptance
+# Accepting the platform's terms binds the tenant, so staff may not.
+roles: [admin]
+
+steps:
+  - slug: choose
+    label: Plan
+    description: Choose one of the platform's current offers to tenants
+    template: platform-offer-acceptance/choose
+    class: Registry::DAO::WorkflowSteps::ChoosePlatformOffer
+
+  - slug: accept
+    label: Accept
+    description: Review the chosen terms and accept them for this tenant
+    template: platform-offer-acceptance/accept
+    class: Registry::DAO::WorkflowSteps::AcceptPlatformOffer
+
+  - slug: complete
+    label: Done
+    description: The tenant holds the accepted platform terms
+    template: platform-offer-acceptance/complete

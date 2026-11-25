@@ -1,0 +1,39 @@
+%# ABOUTME: platform-offer-acceptance's first screen: the platform's current offers to tenants, one to choose.
+%# ABOUTME: A tenant already holding platform terms is told which, and offered nothing to accept.
+% extends 'layouts/workflow';
+% title 'Choose your plan';
+% stash description => 'The terms on which this studio takes payments through the platform.';
+% my $held = stash('held');
+
+% if (my @errors = @{ stash('errors') // [] }) {
+<div class="alert alert-error" role="alert">
+  <ul>
+  % for my $error (@errors) {
+    <li><%= ref $error ? $error->{message} : $error %></li>
+  % }
+  </ul>
+</div>
+% }
+
+% if ($held) {
+<section class="card">
+  <h2>This studio already holds <%= $held->{name} %></h2>
+  <p>The platform's share of each sale is <%= $held->{rate} %>. There is nothing more to accept.</p>
+</section>
+% } else {
+<form method="POST" action="<%= $action %>">
+  <fieldset>
+    <legend>Plan</legend>
+    % for my $offer (@{ stash('offers') // [] }) {
+    <div>
+      <input type="radio" id="offer-<%= $offer->{id} %>" name="offer_version" value="<%= $offer->{id} %>" required>
+      <label for="offer-<%= $offer->{id} %>"><strong><%= $offer->{name} %></strong>: <%= $offer->{rate} %> of each sale</label>
+    </div>
+    % }
+  </fieldset>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Continue</button>
+  </div>
+</form>
+% }
