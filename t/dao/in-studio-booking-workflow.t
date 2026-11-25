@@ -130,4 +130,70 @@ subtest 'two units of a two-seat offer hold four seats for a limited time and pa
     }, 'and owes 2 x the price against the hold';
 };
 
+sub run_holds ($run) {
+    return $tdb->query( q{SELECT count(*) FROM holds WHERE workflow_run_id = ? AND state = 'held'}, $run->id )
+        ->array->[0];
+}
+
+# Moves every hold of $run's to have lapsed a minute ago.
+sub lapse ($run) {
+    $tdb->query( q{UPDATE holds SET expires_at = clock_timestamp() - interval '1 minute' WHERE workflow_run_id = ?},
+        $run->id );
+}
+
+subtest 'units over the per-booking cap refused' => sub {
+    my ( $class, $seats ) = occurrence(10);
+    my $version = offer( $class, 'Seat', per_booking_cap => 3 );
+    my ( $run, $r ) = book( $seats, $version, 4 );
+    like errors_of( $r->{offer} ), qr/at most 3 per booking/, 'four of a cap of three is refused with a message';
+    is run_holds($run), 0, 'and holds nothing';
+
+    # The run's count written past the offer step: the hold step asks again.
+    ( $run, $r ) = book( $seats, $version, 3 );
+    is errors_of( $r->{hold} ), '', 'the cap itself is held';
+    $run->update_data( $tdb, { booking_count => 4 } );
+    like errors_of( $run->process( $tdb, step('hold'), {} ) ), qr/at most 3 per booking/,
+        'a count over the cap reaching the hold step is refused';
+    is run_holds($run), 0, 'and gives back what the run held';
+    is $seats->free_units($tdb), 10, 'every seat is free';
+};
+
+subtest 'full occurrence refused' => sub {
+    my ( $class, $seats ) = occurrence(2);
+    my $version = offer( $class, 'Seat' );
+    my ( $first, $r ) = book( $seats, $version, 2 );
+    is errors_of( $r->{hold} ), '', 'two seats of two are held';
+
+    ( my $run, $r ) = book( $seats, $version, 1 );
+    like errors_of( $r->{occurrence} ), qr/full/, 'choosing the full occurrence is refused with a message';
+    ok !grep( { $_->{id} eq $seats->id } step('occurrence')->prepare_template_data( $tdb, $run )->{occurrences}->@* ),
+        'and it is not listed';
+    is run_holds($run), 0, 'and nothing is held';
+
+    # Chosen with room, filled by another run before this one holds.
+    my ( $c2, $two ) = occurrence(2);
+    my $v2 = offer( $c2, 'Seat' );
+    $run = start();
+    $run->process( $tdb, step('occurrence'), { occurrence_id => $two->id } );
+    $run->process( $tdb, step('offer'), { offer_version_id => $v2->id, count => 1 } );
+    $run->process( $tdb, step('account'), { action => 'continue_logged_in' } );
+    book( $two, $v2, 2 );
+    like errors_of( $run->process( $tdb, step('hold'), {} ) ), qr/no longer has room for 1/,
+        'holding in an occurrence filled meanwhile is refused';
+    is run_holds($run), 0, 'and holds nothing';
+    ok !reload($run)->data->{owed_payment}, 'and owes nothing';
+};
+
+subtest 'expired hold frees its seats' => sub {
+    my ( $class, $seats ) = occurrence(4);
+    my $version = offer( $class, 'Seat', per_booking_cap => 4 );
+    my ($run) = book( $seats, $version, 4 );
+    is $seats->free_units($tdb), 0, 'four of four seats are held';
+    lapse($run);
+    is $seats->free_units($tdb), 4, 'once the hold lapses all four are free';
+    my ( $other, $r ) = book( $seats, $version, 4 );
+    is errors_of( $r->{hold} ), '', 'and another booking holds them';
+    is run_holds($other), 1, 'with its own hold';
+};
+
 done_testing;
