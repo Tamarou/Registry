@@ -95,6 +95,9 @@ class Registry::Command::workflow :isa(Mojolicious::Command) {
     }
 
     method divergence () {
+        # Per connection, not one READ ONLY transaction: a failing tenant
+        # would abort that, and the report goes on past it.
+        $dao->db->query('SET default_transaction_read_only = on');
         print Registry::WorkflowDivergence::report( $dao->db );
         return;
     }

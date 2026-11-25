@@ -11,6 +11,11 @@ use Encode      qw( encode_utf8 );
 # Provisioning never copies these to a tenant, so their absence is expected.
 my %NOT_COPIED = map { $_ => 1 } qw( tenant-signup registry-storefront );
 
+# Steps whose template provisioning unlinks in the tenant on purpose (refs #173
+# #229): registry's is the platform's marketing page, and the tenant must fall
+# back to the disk catalog. Only the tenant having no template is expected.
+my %UNLINKED = ( 'tenant-storefront' => { 'program-listing' => 1 } );
+
 # Every workflow in $schema (already quoted), by slug, each with its steps in
 # walk order: first_step, then the depends_on chain (children by slug), then
 # any step the chain does not reach, by slug.
@@ -61,8 +66,10 @@ sub _compare ( $slug, $platform, $copy ) {
     my %mine = map { $_->{slug} => $_ } $copy->{steps}->@*;
     for my $p ( sort { $a->{slug} cmp $b->{slug} } $platform->{steps}->@* ) {
         my $c = $mine{ $p->{slug} } or next;
+        my $unlinked = $UNLINKED{$slug}{ $p->{slug} } && !defined $c->{template};
         for ( [ class => 'class', \&_name ], [ template => 'template', \&_name ], [ content => 'template content', \&_content ] ) {
             my ( $field, $label, $show ) = @$_;
+            next if $unlinked && $field ne 'class';
             next if ( $p->{$field} // "\0none" ) eq ( $c->{$field} // "\0none" );
             push @lines, sprintf "- `%s` step `%s`: %s: registry %s; tenant %s",
               $slug, $p->{slug}, $label, $show->( $p->{$field} ), $show->( $c->{$field} );
@@ -71,8 +78,7 @@ sub _compare ( $slug, $platform, $copy ) {
     return @lines;
 }
 
-sub _differences ( $db, $tenant ) {
-    my $platform = _workflows( $db, 'registry' );
+sub _differences ( $db, $platform, $tenant ) {
     my $copy     = _workflows( $db, $db->dbh->quote_identifier($tenant) );
 
     my @lines;
@@ -99,14 +105,16 @@ sub report ($db) {
          ORDER BY t.slug
     })->hashes->each;
 
-    my $md = "# Tenant workflow divergence\n";
+    my $platform = _workflows( $db, 'registry' );
+    my $md       = "# Tenant workflow divergence\n";
     for my $row (@tenants) {
         my $tenant = $row->{slug};
-        # One broken tenant is a line in the report, not the end of it.
-        my @lines =
-            !$row->{present} ? ("- error: schema `$tenant` does not exist")
-          : eval { _differences( $db, $tenant ) };
-        if ( my $err = $@ ) { $err =~ s/\s+/ /g; @lines = ("- error: $err") }
+        my @lines  = ("- error: schema `$tenant` does not exist");
+        if ( $row->{present} ) {
+            # One broken tenant is a line in the report, not the end of it.
+            @lines = eval { _differences( $db, $platform, $tenant ) };
+            if ( my $err = $@ ) { $err =~ s/\s+/ /g; @lines = ("- error: $err") }
+        }
         $md .= "\n## $tenant\n\n" . ( @lines ? join( "\n", @lines ) : 'No differences.' ) . "\n";
     }
     return $md . "\n";

@@ -33,6 +33,16 @@ for my $file ( Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/
     Registry::Command::template->new( app => Registry->new )->load('registry');
 }
 
+# Production links registry's tenant-storefront/program-listing step to the
+# platform's marketing template ('template import' does it; see
+# t/dao/tenant-storefront-provision.t), and provisioning unlinks the tenant's.
+is $db->query(q{
+    UPDATE registry.workflow_steps s
+       SET template_id = (SELECT id FROM registry.templates WHERE name = 'tenant-storefront/program-listing')
+      FROM registry.workflows w
+     WHERE w.id = s.workflow_id AND w.slug = 'tenant-storefront' AND s.slug = 'program-listing'
+})->rows, 1, 'registry program-listing step linked to its template, as in production';
+
 my $owner = Test::Registry::Fixtures::create_user( $db,
     { username => 'div_owner', name => 'Div Owner', email => 'owner@div.test', user_type => 'admin' } );
 
@@ -176,11 +186,20 @@ subtest 'the workflow divergence command prints the report and writes nothing' =
 
     local $ENV{DB_URL} = $test_db->uri;
     my $out = '';
+    my $read_only;
     {
+        # Observe the connection the command hands the report, then report as usual.
+        no warnings 'redefine';
+        my $report = \&Registry::WorkflowDivergence::report;
+        local *Registry::WorkflowDivergence::report = sub ($cmd_db) {
+            ($read_only) = $cmd_db->query('SHOW default_transaction_read_only')->array->@*;
+            $report->($cmd_db);
+        };
         local *STDOUT;
         open STDOUT, '>', \$out;
         Registry::Command::workflow->new( app => Registry->new )->run( 'divergence', 'registry' );
     }
+    is $read_only, 'on', 'on a connection whose every transaction is read-only';
     is $out, Registry::WorkflowDivergence::report($db), 'it prints the Markdown report';
     like $out, qr/^# Tenant workflow divergence$/m, 'with its heading';
     is_deeply $counts->(), $before, 'no workflow, step or template row changed in any schema';
@@ -197,6 +216,33 @@ subtest 'missing tenant schema reported not fatal' => sub {
     like section( $report, $slug ), qr/^- `after-ghost`: only in the tenant$/m,
       'and the tenants after it are still compared';
     $db->query(q{DELETE FROM registry.tenants WHERE slug = 'div_0_ghost'});
+};
+
+subtest 'a missing schema after an unreadable one reports its own error' => sub {
+    $db->query('CREATE SCHEMA div_0_a_bad');    # present, but holds no workflows table
+    Registry::DAO::Tenant->create( $db, { name => 'Bad',     slug => 'div_0_a_bad' } );
+    Registry::DAO::Tenant->create( $db, { name => 'Missing', slug => 'div_0_b_missing' } );
+    my $report = Registry::WorkflowDivergence::report($db);
+    like section( $report, 'div_0_a_bad' ), qr/^- error: .*workflows/m, 'the unreadable schema names its error';
+    is section( $report, 'div_0_b_missing' ), "\n- error: schema `div_0_b_missing` does not exist\n\n",
+      'the missing one reports only its own';
+    $db->query(q{DELETE FROM registry.tenants WHERE slug IN ('div_0_a_bad', 'div_0_b_missing')});
+    $db->query('DROP SCHEMA div_0_a_bad');
+};
+
+subtest 'program-listing with a template of its own is still reported' => sub {
+    my $slug = provision();
+    in_tenant( $slug, q{
+        INSERT INTO templates (name, slug, content) VALUES ('ours/listing', 'ours-listing', '<p>ours</p>')
+    } );
+    in_tenant( $slug, q{
+        UPDATE workflow_steps s SET template_id = (SELECT id FROM templates WHERE name = 'ours/listing')
+          FROM workflows w
+         WHERE w.slug = 'tenant-storefront' AND s.workflow_id = w.id AND s.slug = 'program-listing'
+    } );
+    like section( Registry::WorkflowDivergence::report($db), $slug ),
+      qr/^- `tenant-storefront` step `program-listing`: template: registry `tenant-storefront\/program-listing`; tenant `ours\/listing`$/m,
+      'only its unlinking is expected';
 };
 
 subtest 'tenant schema names are quoted' => sub {
