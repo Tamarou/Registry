@@ -276,6 +276,11 @@ WHERE metadata->>'tenant_slug' IS NOT NULL
 GROUP BY 1;
 ```
 
+**`STRIPE_SECRET_KEY` must be set.** It is required to take any priced
+payment: without it, or when the selling tenant's Stripe account is not ready
+(`stripe_connect_ready`), a priced cart is refused with a message to the user
+and nothing is enrolled. Only a $0 cart completes without Stripe.
+
 **Deploy steps:**
 
 ```bash

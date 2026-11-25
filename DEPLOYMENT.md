@@ -83,7 +83,8 @@ For quick demos and evaluations, deploy Registry to Render.com:
 
 1. GitHub repository with Registry codebase
 2. Render.com account
-3. Stripe account for payment processing (optional for demo)
+3. Stripe account for payment processing: required to take any priced payment.
+   Without it only $0 registrations complete; every priced one is refused.
 
 ### Quick Deploy
 
@@ -108,9 +109,12 @@ Set these environment variables in your Render dashboard:
   request scheme, so a production deploy must be served over HTTPS, and a local
   run over plain HTTP must set `MOJO_MODE=development` or login will not stick
 
-**Optional (for Stripe integration):**
+**Stripe:**
 - `STRIPE_PUBLIC_KEY` - Your Stripe publishable key
-- `STRIPE_SECRET_KEY` - Your Stripe secret key  
+- `STRIPE_SECRET_KEY` - Your Stripe secret key. Required to take any priced
+  payment, not optional for a demo: without it, or when the selling tenant's
+  Stripe account is not ready, a priced cart is refused with a message to the
+  user and nothing is enrolled. Only a $0 cart completes without Stripe.
 - `STRIPE_WEBHOOK_SECRET` - Your Stripe webhook endpoint secret
 - `STRIPE_CONNECT_WEBHOOK_SECRET` - The signing secret of the Connect webhook
   endpoint (`/webhooks/stripe/connect`), which receives events on sellers'
@@ -206,7 +210,12 @@ Check the `DB_URL` environment variable and database status in Render dashboard.
 3. Check database migration status
 
 #### Stripe Integration Issues  
-1. Verify Stripe keys are correctly set
+1. Verify Stripe keys are correctly set. A priced checkout that says the
+   organization "is not set up to take payments yet" (or "This payment cannot
+   be taken right now") means `STRIPE_SECRET_KEY` is unset or empty, or the
+   selling tenant's Stripe account is not ready; the log line starting
+   `checkout refused:` or `one-time payment refused:` says which. Nothing was
+   enrolled or charged.
 2. Check webhook endpoint configuration
 3. Review Stripe dashboard for failed payments
 4. While `/terms` is the DRAFT placeholder (`Registry::Terms::VERSION` is
