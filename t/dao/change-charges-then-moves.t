@@ -248,7 +248,8 @@ subtest 'failed charge or lapsed hold releases hold' => sub {
 };
 
 sub hold_row ($run) {
-    $studio->query( 'SELECT *, expires_at - placed_at AS length FROM holds WHERE id = ?',
+    $studio->query( q{SELECT *, expires_at - placed_at AS length,
+                             expires_at = placed_at + 2 * lifetime AS at_bound FROM holds WHERE id = ?},
         reload($run)->data->{change_hold}{hold_id} )->hash;
 }
 
@@ -265,6 +266,27 @@ subtest 'charge start extends live hold' => sub {
     fee_payment($run);
     ok !step('pay')->hold_for_charge( $studio, reload($run) ), 'a resubmit once the charge started is let through';
     is hold_row($run)->{expires_at}, $after->{expires_at}, 'without extending the hold again';
+};
+
+subtest 'extension bounded however often the charge starts' => sub {
+    my ( $version, $from, $to ) = occurrences( \%WINDOW, 72, 96 );
+    my $run = held_run( booking( $version, $from ), $to );
+    step('pay')->hold_for_charge( $studio, $run );
+    my $once = hold_row($run);
+    ok $once->{at_bound}, 'the first charge start extends the hold to twice its lifetime';
+    # A second request loaded the run before the first wrote owed_payment_id.
+    step('pay')->hold_for_charge( $studio, $run ) for 1 .. 3;
+    is hold_row($run)->{expires_at}, $once->{expires_at}, 'a second start does not extend it again';
+
+    # The seller cannot take charges, so owed_payment refuses every post and
+    # no payment is ever named on the run.
+    $db->query( 'UPDATE registry.tenants SET stripe_charges_enabled = false WHERE slug = ?', $SLUG );
+    my $refused = held_run( booking( $version, $from ), $to );
+    my @errors  = map { reload($refused)->process( $studio, step('pay'), {} )->{errors} } 1 .. 4;
+    $db->query( 'UPDATE registry.tenants SET stripe_charges_enabled = true WHERE slug = ?', $SLUG );
+    ok !grep( { !$_ } @errors ), 'every post is refused';
+    ok !defined reload($refused)->data->{owed_payment_id}, 'and starts no payment';
+    ok hold_row($refused)->{at_bound}, 'the hold never runs past twice its lifetime';
 };
 
 subtest 'succeeded charge after lapse retakes seat' => sub {

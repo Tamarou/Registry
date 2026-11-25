@@ -148,8 +148,9 @@ method owed_payment ( $db, $run ) {
 # What is owed may be for seats a prior step holds (owed_payment.hold_id): the
 # charge is taken only while that hold is live. A lapsed or gone hold is
 # released and refused before anything is charged. When the charge starts
-# (the run has no payment yet) a live hold is extended by its own length, so
-# it does not lapse under a card check in flight.
+# (the run has no payment yet) a live hold is extended by its own length, once:
+# never past placed_at + 2 x lifetime, so it does not lapse under a card check
+# in flight and no number of posts holds the seats longer.
 method hold_for_charge ( $db, $run ) {
     $db = $db->db if $db isa Registry::DAO;
     my $owed    = $run->data->{owed_payment};
@@ -158,7 +159,11 @@ method hold_for_charge ( $db, $run ) {
     my $lapsed = 'The seats held for this payment were let go. Nothing has been charged.';
     return $lapsed unless !ref $hold_id && $hold_id =~ $UUID;
 
-    my $tx   = $db->dbh->{AutoCommit} ? $db->begin : undef;
+    my $tx = $db->dbh->{AutoCommit} ? $db->begin : undef;
+    # The run's row first, as the change steps lock it: whether a payment
+    # started is read under it, never from a copy loaded before.
+    my $started = $db->query( q{SELECT data->>'owed_payment_id' FROM workflow_runs WHERE id = ? FOR UPDATE},
+        $run->id )->array->[0];
     my $live = Registry::PriceOps::Hold->live_sql('holds');
     my $hold = $db->query( "SELECT $live AS live FROM holds WHERE id = ? AND workflow_run_id = ? FOR UPDATE",
         $hold_id, $run->id )->hash;
@@ -167,8 +172,10 @@ method hold_for_charge ( $db, $run ) {
         $tx->commit if $tx;
         return $hold ? 'The seats held for this payment lapsed. Nothing has been charged.' : $lapsed;
     }
-    $db->query( 'UPDATE holds SET expires_at = expires_at + (expires_at - placed_at) WHERE id = ?', $hold_id )
-        unless defined $run->data->{owed_payment_id};
+    # Never past twice the lifetime it was placed with, however often this runs.
+    $db->query( q{UPDATE holds SET expires_at = greatest(expires_at, placed_at + 2 * lifetime)
+                   WHERE id = ? AND lifetime IS NOT NULL}, $hold_id )
+        unless defined $started;
     $tx->commit if $tx;
     return undef;
 }

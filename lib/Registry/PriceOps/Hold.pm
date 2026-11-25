@@ -30,6 +30,8 @@ class Registry::PriceOps::Hold :isa(Registry::DAO::Object) {
         my $hold = $class->create( $db, $data );
         croak 'a hold must expire after it is placed'
             unless $db->query( 'SELECT ?::timestamptz > clock_timestamp()', $hold->expires_at )->array->[0];
+        # The lifetime it was placed with bounds any extension (OneTimePayment).
+        $db->query( 'UPDATE holds SET lifetime = expires_at - placed_at WHERE id = ?', $hold->id );
         $tx->commit if $tx;
         return $hold;
     }
