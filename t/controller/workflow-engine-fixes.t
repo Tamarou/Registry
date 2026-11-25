@@ -45,6 +45,7 @@ my $stay_workflow = Registry::DAO::Workflow->create($dao->db, {
     slug        => 'stay-test',
     description => 'Tests stay semantics',
     first_step  => 'step-one',
+    public      => 1,    # the gate refuses a workflow with no entry
 });
 
 my $step_one = Registry::DAO::WorkflowStep->create($dao->db, {
@@ -169,6 +170,7 @@ my $parent_wf = Registry::DAO::Workflow->create($dao->db, {
     slug        => 'parent-storefront-test',
     description => 'Single step parent for continuation test',
     first_step  => 'listing',
+    public      => 1,    # the gate refuses a workflow with no entry
 });
 
 Registry::DAO::WorkflowStep->create($dao->db, {
@@ -184,6 +186,7 @@ my $child_wf = Registry::DAO::Workflow->create($dao->db, {
     slug        => 'child-reg-test',
     description => 'Simple child workflow for continuation test',
     first_step  => 'info',
+    public      => 1,    # the gate refuses a workflow with no entry
 });
 
 my $child_step1 = Registry::DAO::WorkflowStep->create($dao->db, {

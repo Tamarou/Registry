@@ -218,7 +218,7 @@ sub refused_without_charge ( $s, $run, $form, $why ) {
 # A run on the platform tenant parked on a passthrough step, for posting a
 # form through the controller to the next one.
 my $form_wf = Registry::DAO::Workflow->create( $db, {
-    name => 'OTP Form', slug => "otp-form-$$", description => 'posted keys' } );
+    name => 'OTP Form', slug => "otp-form-$$", description => 'posted keys', public => 1 } );
 $form_wf->add_step( $db, { slug => $_, class => 'Registry::DAO::WorkflowStep' } )
     for qw( landing next complete );
 

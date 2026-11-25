@@ -335,7 +335,7 @@ subtest 'idempotency key differs between runs' => sub {
 subtest 'client driver key is stripped' => sub {
     my $rdb = $dao->db;
     my $wf  = Registry::DAO::Workflow->create( $rdb, {
-        name => 'Driver key', slug => "driver-key-$$", description => 'passthrough' } );
+        name => 'Driver key', slug => "driver-key-$$", description => 'passthrough', public => 1 } );
     $wf->add_step( $rdb, { slug => 'landing',  class => 'Registry::DAO::WorkflowStep' } );
     $wf->add_step( $rdb, { slug => 'complete', class => 'Registry::DAO::WorkflowStep' } );
 
