@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 # ABOUTME: The attendance-check-drops-schedule-next migration takes the no-op step out of registry's and each tenant's copy.
-# ABOUTME: A run that ended on it still reads as completed, now on the step before; the revert puts the step back.
+# ABOUTME: A run that ended on it still reads as completed, now on the step before; the revert puts both back.
 use 5.42.0;
 use lib qw(lib t/lib);
 use Test::More;
@@ -56,8 +56,10 @@ for my $s (qw(registry oldcopy)) {
 }
 
 $sqitch->run( 'sqitch', 'revert', '-y', '-t', $pg->uri, '--to', "$change^" );
-ok scalar( grep { $_ eq 'schedule-next' } @{ steps($_) } ), "revert puts schedule-next back in $_"
-    for qw(registry oldcopy);
+for my $s (qw(registry oldcopy)) {
+    ok scalar( grep { $_ eq 'schedule-next' } @{ steps($s) } ), "revert puts schedule-next back in $s";
+    is run_ended_on($s), 'schedule-next', "and $s run ends on it again, still completed";
+}
 
 # The handle goes before the server does, or its DESTROY talks to a dead one.
 undef $db;

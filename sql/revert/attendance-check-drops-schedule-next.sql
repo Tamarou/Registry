@@ -1,5 +1,5 @@
 -- ABOUTME: Puts the schedule-next step back as the last step of every stored attendance-check workflow.
--- ABOUTME: Runs the deploy moved back a step stay there: they read as completed either way.
+-- ABOUTME: Runs that ended on the step before it move forward onto it, so they still read as completed.
 
 -- Revert registry:attendance-check-drops-schedule-next from pg
 
@@ -26,6 +26,15 @@ BEGIN
              WHERE w.slug = 'attendance-check'
                AND NOT EXISTS (SELECT 1 FROM %1$I.workflow_steps x
                                 WHERE x.workflow_id = w.id AND x.slug = 'schedule-next')
+        $sql$, s);
+        -- completed() compares a run's latest step with the workflow's last,
+        -- which schedule-next is again.
+        EXECUTE format($sql$
+            UPDATE %1$I.workflow_runs r
+               SET latest_step_id = sn.id
+              FROM %1$I.workflow_steps sn
+             WHERE sn.class = 'Registry::DAO::WorkflowSteps::AttendanceCheck::ScheduleNext'
+               AND r.latest_step_id = sn.depends_on
         $sql$, s);
     END LOOP;
 END $$;
