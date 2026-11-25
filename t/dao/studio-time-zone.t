@@ -80,6 +80,22 @@ subtest 'two studios report different local dates for one instant near midnight 
     is $tokyo->{start}, '2027-06-01 11:00', 'Tokyo local start';
 };
 
+# A CHECK reading pg_timezone_names would be re-run on every row at restore,
+# against whatever tzdata the target server has; a trigger is not.
+subtest 'the zone is guarded by a trigger, not a check constraint' => sub {
+    for my $schema (qw( registry east_studio )) {
+        is $db->query( q{
+                SELECT count(*) FROM pg_constraint
+                 WHERE conrelid = to_regclass(?) AND contype = 'c'
+                   AND pg_get_constraintdef(oid) LIKE '%time_zone%'
+            }, "$schema.locations" )->array->[0], 0, "$schema.locations has no time_zone check";
+        is $db->query( q{
+                SELECT count(*) FROM pg_trigger
+                 WHERE tgrelid = to_regclass(?) AND tgname = 'locations_time_zone_known'
+            }, "$schema.locations" )->array->[0], 1, "$schema.locations has the zone trigger";
+    }
+};
+
 subtest 'malformed zone names refused' => sub {
     my $room = location_in( $db, 'America/New_York' );
     for my $zone ( '', undef, 'Mars/Olympus', '+05:00', 'america/new_york' ) {

@@ -172,6 +172,28 @@ for my $change (@CHANGES) {
 # a LIKE copy brings back the tables in a tenant schema but not their foreign
 # keys, and nothing at all of the view.  Its own database, so it holds however
 # far the loop above happens to leave its one.
+# The loop above clones its tenant before the change deploys. A tenant cloned
+# after it gets clone_schema's copies of registry's functions, which a revert
+# naming only registry's would leave behind.
+subtest 'location-time-zone revert leaves no zone guard in a tenant cloned after deploy' => sub {
+    my $pg = Test::PostgreSQL->new or return fail $Test::PostgreSQL::errstr;
+    my $to = $pg->uri;
+    my $db = Mojo::Pg->new($to)->db;
+
+    $sqitch->run( 'sqitch', 'deploy', '-t', $to, '--to', 'location-time-zone' );
+    $db->query( 'INSERT INTO registry.tenants (name, slug) VALUES (?, ?)', 'Post clone', 'post_clone' );
+    $db->query( 'SELECT registry.clone_schema(?)', 'post_clone' );
+    $sqitch->run( 'sqitch', 'revert', '-t', $to, '--to', 'location-time-zone^', '-y' );
+
+    is $db->query( q{
+            SELECT string_agg(n.nspname || '.' || p.proname, ', ')
+              FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE p.proname IN ('is_time_zone', 'locations_time_zone_known')
+        } )->array->[0], undef, 'no zone guard function is left in any schema';
+    is $db->query( q{SELECT count(*) FROM pg_trigger WHERE tgname = 'locations_time_zone_known'} )->array->[0],
+        0, 'no zone guard trigger is left';
+};
+
 subtest 'revert restores pricing relationship view and keys' => sub {
     my $pg  = Test::PostgreSQL->new or return fail $Test::PostgreSQL::errstr;
     my $to  = $pg->uri;

@@ -10,10 +10,18 @@ SET client_min_messages = 'warning';
 
 -- Postgres's own zone list: AT TIME ZONE also accepts bare offsets and any
 -- letter case, so the cast alone would let '+05:00' or 'america/new_york' in.
-CREATE OR REPLACE FUNCTION registry.is_time_zone(zone text)
-RETURNS boolean
-LANGUAGE sql STABLE
-AS $$ SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_timezone_names WHERE name = zone) $$;
+-- A trigger, not a CHECK: a restore would re-run a CHECK on every row against
+-- the target server's tzdata. clone_schema copies this function and trigger
+-- into each new tenant schema.
+CREATE FUNCTION registry.locations_time_zone_known() RETURNS trigger AS $t$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_timezone_names WHERE name = NEW.time_zone) THEN
+        RAISE EXCEPTION 'locations.time_zone % is not an IANA time zone name', quote_nullable(NEW.time_zone)
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$t$ LANGUAGE plpgsql;
 
 DO $$
 DECLARE
@@ -29,7 +37,8 @@ BEGIN
         -- new rows get none, because a silent default would mis-time a class.
         EXECUTE format('ALTER TABLE %I.locations ADD COLUMN time_zone text NOT NULL DEFAULT %L', s, 'America/New_York');
         EXECUTE format('ALTER TABLE %I.locations ALTER COLUMN time_zone DROP DEFAULT', s);
-        EXECUTE format('ALTER TABLE %I.locations ADD CONSTRAINT locations_time_zone_check CHECK (registry.is_time_zone(time_zone))', s);
+        EXECUTE format('CREATE TRIGGER locations_time_zone_known BEFORE INSERT OR UPDATE OF time_zone ON %I.locations '
+                       'FOR EACH ROW EXECUTE FUNCTION registry.locations_time_zone_known()', s);
     END LOOP;
 END $$;
 
