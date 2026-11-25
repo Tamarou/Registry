@@ -66,8 +66,9 @@ test.describe('Nancy: finding a program and enrolling her child', () => {
     // She is deciding here, so the card has to say what it costs and whether
     // there is room. ProgramListing computed both and the template dropped
     // them, so she chose on a name and a pair of dates alone.
+    // Week 1, the first session, is free in this seed (no Stripe keys in e2e).
     await expect(card, 'the card says what it costs')
-      .toContainText('$300');
+      .toContainText('$0');
     await expect(card, 'and whether there is still room')
       .toContainText(/\b\d+ (?:spot|place)s? left\b/i);
   });
@@ -166,7 +167,10 @@ test.describe('Nancy: finding a program and enrolling her child', () => {
     await expect(registryPage.locator('body')).not.toContainText('Internal Server Error');
 
     // Payment: the total has to be on the screen before she agrees to it.
-    await expect(registryPage.locator('body')).toContainText('300');
+    // Week 1 is free (the e2e run has no Stripe keys, and a priced cart is
+    // refused without them), so the total is $0.00 and nothing is charged.
+    await expect(registryPage.locator('body')).toContainText('$0.00');
+    await expect(registryPage.locator('body')).toContainText('No payment is needed');
     const agree = registryPage.locator('input[name="agreeTerms"]');
     await expect(agree).toBeVisible({ timeout: 10000 });
     await agree.check();
