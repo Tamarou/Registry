@@ -197,6 +197,30 @@ subtest 'paid change moves entitlement once' => sub {
         $to_ends, $e->id )->array->[0], 1, 'until the target occurrence ends';
     is $studio->select( 'entitlements', 'count(*)', { offer_version_id => $version->id } )->array->[0], 1,
         'no second entitlement is made';
+
+    # The person's return arrives after the driver, and Stripe redelivers.
+    my $again = $run->process( $studio, step('complete'), {} );
+    ok !$again->{errors}, 'completing again is not refused' or diag explain $again;
+    succeeded( Registry::DAO::Payment->find( $studio, { id => reload($run)->data->{owed_payment_id} } ) )
+        ->status_is(200);
+    drive();
+    is_deeply $e->units( $studio, $to->id ), [ 1, 2 ], 'the entitlement still holds the same two target seats';
+    is $to->free_units($studio), 2, 'and no more';
+    is_deeply [ map { $_->{state} } $studio->select( 'holds', 'state', { workflow_run_id => $run->id } )->hashes->@* ],
+        ['converted'], 'the run has its one converted hold';
+};
+
+subtest 'zero fee change completes without payment' => sub {
+    my ( $version, $from, $to ) = occurrences( { %WINDOW, fee_cents => 0 }, 72, 96 );
+    my $e   = booking( $version, $from );
+    my $run = held_run( $e, $to );
+    ok !defined reload($run)->data->{owed_payment}, 'nothing is owed';
+    my $done = $run->process( $studio, step('complete'), {} );
+    ok !$done->{errors}, 'the change completes' or diag explain $done;
+    is_deeply $e->units( $studio, $to->id ), [1], 'the entitlement holds the target seat';
+    is $from->free_units($studio), 4, 'and the old one is free';
+    is hold_state($run), 'converted', 'the hold is converted';
+    is_deeply payments_of($run), [], 'with no payment';
 };
 
 subtest 'failed charge or lapsed hold releases hold' => sub {
