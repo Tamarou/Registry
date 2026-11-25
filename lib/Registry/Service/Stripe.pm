@@ -150,19 +150,6 @@ class Registry::Service::Stripe {
         return $self->_request_async('POST', "payment_intents/$intent_id/cancel");
     }
     
-    # Setup Intents API (for saved payment methods)
-    method create_setup_intent_async($params) {
-        return $self->_request_async('POST', 'setup_intents', $params);
-    }
-    
-    method retrieve_setup_intent_async($intent_id) {
-        return $self->_request_async('GET', "setup_intents/$intent_id");
-    }
-    
-    method confirm_setup_intent_async($intent_id, $params = {}) {
-        return $self->_request_async('POST', "setup_intents/$intent_id/confirm", $params);
-    }
-    
     # Customers API
     method create_customer_async($params) {
         my %p  = %$params;
@@ -432,10 +419,6 @@ class Registry::Service::Stripe {
 
     method create_customer($params) {
         return $self->_await($self->create_customer_async($params));
-    }
-
-    method create_setup_intent($params) {
-        return $self->_await($self->create_setup_intent_async($params));
     }
 
     method create_subscription($params) {

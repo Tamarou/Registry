@@ -51,9 +51,6 @@ subtest 'Stripe Service async/promise handling with mocked responses' => sub {
         retrieve_payment_intent_async
         confirm_payment_intent_async
         cancel_payment_intent_async
-        create_setup_intent_async
-        retrieve_setup_intent_async
-        confirm_setup_intent_async
         create_customer_async
         retrieve_customer_async
         update_customer_async
@@ -85,7 +82,6 @@ subtest 'Stripe Service async/promise handling with mocked responses' => sub {
         retrieve_payment_intent
         create_refund
         create_customer
-        create_setup_intent
         create_subscription
         retrieve_subscription
         update_subscription

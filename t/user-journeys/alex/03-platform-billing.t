@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
-# ABOUTME: Alex (platform owner) journey: Registry bills the tenant for the
-# ABOUTME: platform subscription established during signup.
+# ABOUTME: Alex (platform owner) journey: Registry bills the tenant through the
+# ABOUTME: Solo entitlement it accepts at signup, not through a subscription.
 #
 # Asserts at the DAO and job layer on purpose. Alex has no screens -- no
 # platform-owner route, template or nav exists -- so unlike the other personas
@@ -30,10 +30,8 @@ use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowRun;
 
 # ---------------------------------------------------------------------------
-# Non-goal: recurring usage-based billing.
-# The _get_usage_data branch is deliberately non-functional pending redesign
-# (issue #263).  This leg asserts that the subscription is *established* at
-# signup time, not that monthly invoices flow afterwards.
+# Non-goal: the revenue-share charge itself. This leg asserts the terms the
+# tenant accepts at signup, not that a sale is charged on them afterwards.
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
@@ -175,26 +173,21 @@ subtest 'run data carries the chosen offer version' => sub {
 };
 
 # ---------------------------------------------------------------------------
-# Assertion 1b: the provisioned tenant row carries billing fields
+# Assertion 1b: the platform bills the tenant through its Solo entitlement --
+# $0 and 2.5% of each sale -- and through no Stripe subscription.
 # ---------------------------------------------------------------------------
-subtest 'provisioned tenant row carries billing fields' => sub {
-    # _provision_tenant writes the tenant slug into run_data as 'subdomain'.
+subtest 'platform billing is solo not a subscription' => sub {
     my $slug = $run_data->{subdomain};
     ok $slug, "provisioned tenant slug present in run data ($slug)";
 
-    my $tenant_row = $db->query(
-        q{SELECT stripe_subscription_id, billing_status, trial_ends_at
-          FROM registry.tenants WHERE slug = ?},
-        $slug
-    )->hash;
-    ok $tenant_row, 'provisioned tenant row found in registry.tenants';
+    my $terms = platform_entitlement_terms( $db, $slug );
+    is $terms->{name},         'Solo', 'the tenant is billed through Solo';
+    is $terms->{amount_cents}, 0,      'Solo has no monthly base to subscribe to';
+    is $terms->{fraction},     0.025,  'Solo bills 2.5% of each sale';
 
-    is $tenant_row->{stripe_subscription_id}, undef,
-        'no Stripe subscription: a $0 plan has nothing to subscribe to';
-    is $tenant_row->{billing_status}, 'active',
-        'billing_status is "active" -- the tenant is live, not on a clock';
-    is $tenant_row->{trial_ends_at}, undef,
-        'no trial end date, because there is no trial';
+    is $db->query( q{SELECT stripe_subscription_id FROM registry.tenants WHERE slug = ?},
+        $slug )->hash->{stripe_subscription_id}, undef,
+        'no Stripe subscription bills the tenant';
 };
 
 # ---------------------------------------------------------------------------
