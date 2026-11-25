@@ -628,12 +628,18 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             'A payment for the wrong amount was refused and is being refunded', $why, $meta );
         Registry::DAO::Notification->alert_platform( $db,
             'A payment for the wrong amount was refused and is being refunded', $why, $meta );
+        # Told by what the payment was for: a change fee buys a reschedule, not a booking.
+        my $fee = ( $payment->metadata->{purpose} // '' ) eq 'change_fee';
         Registry::DAO::Notification->create( $db, {
             user_id  => $payment->user_id, type => 'general', channel => 'email',
             subject  => 'Your payment could not be accepted and is being refunded',
-            message  => "You were charged $took, but the price was $quote, so nothing was booked. We are "
-                      . 'refunding the charge in full; it can take 5-10 business days to show on your '
-                      . 'statement. Please book again.',
+            message  => ( $fee
+                ? "You were charged $took for your change fee, but the fee was $quote, so your reschedule "
+                  . 'did not happen and your booking is where it was. The change fee is being refunded in full'
+                : "You were charged $took, but the price was $quote, so nothing was booked. We are "
+                  . 'refunding the charge in full' )
+                . '; it can take 5-10 business days to show on your statement.'
+                . ( $fee ? ' Please try the reschedule again.' : ' Please book again.' ),
             metadata => $meta,
         } );
     }
