@@ -11,8 +11,9 @@ class Registry::Job::ContinueWorkflowRun {
     use Registry::DAO::WorkflowRun;
 
     sub register ($class, $app) {
+        # Only the run's arguments: options such as alert_admins are for code, never job args.
         $app->minion->add_task( continue_workflow_run => sub ($job, @args) {
-            $job->finish( $class->new->run( $job, @args ) );
+            $job->finish( $class->new->run( $job, $args[0] ) );
         } );
     }
 

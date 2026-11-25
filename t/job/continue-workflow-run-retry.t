@@ -180,6 +180,14 @@ subtest 'halted run alerts tenant admins' => sub {
         'naming the run and the step it halted at';
 };
 
+subtest 'job arguments cannot turn the halt alert off' => sub {
+    my $run = parked_run( payment_workflow(), \%dies_at_payment );
+    retry_at_once( $minion->enqueue( continue_workflow_run =>
+        [ { tenant => $slug, run_id => $run->id }, alert_admins => 0 ], { attempts => 3 } ) );
+    is reload($run)->data->{__driver}{state}, 'halted', 'the last attempt halts the run';
+    ok halt_alerts($run) >= 1, "and still alerts the tenant's admins";
+};
+
 subtest 'halted run resumes at halted step' => sub {
     my $run = parked_run( payment_workflow(), \%dies_at_payment );
     my $id  = enqueue($run);

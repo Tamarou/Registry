@@ -1,5 +1,6 @@
 -- ABOUTME: Puts the schedule-next step back as the last step of every stored attendance-check workflow.
 -- ABOUTME: Runs that ended on the step before it move forward onto it, so they still read as completed.
+-- ABOUTME: That also completes any run that had stopped before schedule-next: deploy already lost that state.
 
 -- Revert registry:attendance-check-drops-schedule-next from pg
 
