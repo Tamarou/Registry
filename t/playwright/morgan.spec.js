@@ -261,6 +261,7 @@ test.describe('Morgan: from signup to a program a parent can find', () => {
     // location-details step: fill name + address
     await expect(page.locator('input[name="name"]')).toBeVisible();
     await page.fill('input[name="name"]', `Lifecycle Studio ${RUN}`);
+    await page.selectOption('select[name="time_zone"]', 'America/New_York');
     await page.fill('input[name="street_address"]', '123 Art Lane');
     await page.fill('input[name="city"]', 'Orlando');
     await page.fill('input[name="state"]', 'FL');
