@@ -9,6 +9,10 @@ use App::Sqitch;
 use Test::PostgreSQL;
 use Mojo::Pg;
 use Test::Registry::DB ();
+use Test::Registry::Offers qw( offer_terms );
+use Registry::DAO;
+use Registry::DAO::Offer;
+use Registry::DAO::Entitlement;
 
 # Changes graded here.  A leg that ships a migration appends its change name in
 # the same commit; that is the whole registration mechanism.  Pinning '@HEAD^'
@@ -193,6 +197,63 @@ subtest 'location-time-zone revert leaves no zone guard in a tenant cloned after
         } )->array->[0], undef, 'no zone guard function is left in any schema';
     is $db->query( q{SELECT count(*) FROM pg_trigger WHERE tgname = 'locations_time_zone_known'} )->array->[0],
         0, 'no zone guard trigger is left';
+};
+
+# The terms version guard lives in each tenant's own copy of entitlement_stamp,
+# which clone_schema makes; the revert must put every copy back, or an update
+# in a reverted tenant reads a column that is gone.
+subtest 'entitlement-terms-version revert restores the guard in tenants cloned after deploy' => sub {
+    my $pg = Test::PostgreSQL->new or return fail $Test::PostgreSQL::errstr;
+    my $to = $pg->uri;
+    my $db = Mojo::Pg->new($to)->db;
+    my @tenants = qw( xregistry kidsregistry symmetric );
+
+    $sqitch->run( 'sqitch', 'deploy', '-t', $to, '--to', 'entitlement-terms-version' );
+    for my $slug (@tenants) {
+        $db->query( 'INSERT INTO registry.tenants (name, slug) VALUES (?, ?)', "Terms $slug", $slug );
+        $db->query( 'SELECT registry.clone_schema(?)', $slug );
+    }
+
+    my sub has ($slug) {
+        return $db->query( q{
+            SELECT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                            WHERE n.nspname = $1 AND p.proname = 'entitlement_stamp'
+                              AND p.prosrc LIKE '%terms_version%') AS guard,
+                   EXISTS (SELECT 1 FROM pg_constraint
+                            WHERE conrelid = to_regclass(quote_ident($1) || '.entitlements')
+                              AND conname = 'entitlements_terms_version_check') AS check,
+                   EXISTS (SELECT 1 FROM information_schema.columns
+                            WHERE table_schema = $1 AND table_name = 'entitlements'
+                              AND column_name = 'terms_version') AS column
+        }, $slug )->hash;
+    }
+    is_deeply has($_), { guard => 1, check => 1, column => 1 }, "$_ has the guard, the check and the column"
+        for @tenants;
+
+    # A real booking in the reserved-word tenant, made while the column exists.
+    my $tenant = Registry::DAO->new( url => $to, schema => 'symmetric' )->db;
+    my $class  = $tenant->insert( 'projects', { name => 'Class', slug => 'class' }, { returning => 'id' } )
+        ->hash->{id};
+    my $version = Registry::DAO::Offer->create( $tenant, { name => 'Wheel class' } )
+        ->draft( $tenant, offer_terms( undef, class_project_id => $class ) )->publish($tenant);
+    my $booking = Registry::DAO::Entitlement->create( $tenant, {
+        holder_user_id   => $tenant->insert( 'users', { username => 'booker' }, { returning => 'id' } )->hash->{id},
+        offer_version_id => $version->id,
+        payment_plan_id  => 'pay',
+        starts_at        => '2020-01-01T00:00:00Z',
+        terms_version    => 'draft',
+    } )->id;
+
+    $sqitch->run( 'sqitch', 'revert', '-t', $to, '--to', 'entitlement-terms-version^', '-y' );
+
+    is_deeply has($_), { guard => 0, check => 0, column => 0 }, "$_ has none of them after revert"
+        for @tenants;
+    # Through the tenant's own handle: its other entitlement triggers name
+    # tables unqualified and resolve them by the tenant's search_path.
+    is $tenant->query( "UPDATE entitlements SET in_effect = tstzrange('2020-01-01', '2099-01-01', '[)') WHERE id = ?",
+            $booking )->rows, 1, 'an entitlement in a reverted tenant still updates';
+    # Before $pg stops its server, or their cached statements warn as they die.
+    $_->disconnect for $tenant, $db;
 };
 
 subtest 'revert restores pricing relationship view and keys' => sub {
