@@ -12,7 +12,11 @@ use POSIX qw( strftime );
 use Test::Registry::DB;
 use Test::Registry::Mojo;
 use Test::Registry::Fixtures;
-use Test::Registry::Helpers qw( authenticate_as import_all_workflows );
+use Mojo::URL;
+use Test::Registry::Helpers qw( authenticate_as import_all_workflows join_tenant );
+use Test::Registry::Offers qw( offer_terms );
+use Test::Registry::Async qw( settle );
+use Test::Registry::StripeWebhook;
 use Registry::DAO;
 use Registry::DAO::Tenant;
 use Registry::DAO::User;
@@ -20,6 +24,8 @@ use Registry::DAO::Location;
 use Registry::DAO::Project;
 use Registry::DAO::Event;
 use Registry::DAO::Resource;
+use Registry::DAO::Offer;
+use Registry::DAO::Payment;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowRun;
 use Registry::DAO::Entitlement;
@@ -172,6 +178,125 @@ subtest 'booking holds seats and quotes the solo fee' => sub {
     is $intent->{application_fee_amount}, 225, 'the quoted fee is 2.5% of $90: $2.25';
     ok !exists $intent->{'transfer_data[destination]'} && !exists $intent->{on_behalf_of},
         'a direct charge: no transfer_data, no on_behalf_of';
+};
+
+subtest 'studio and empire not published' => sub {
+    is_deeply [ map { $_->{name} } offers_to_tenants()->@* ], ['Solo'], 'the platform offers tenants Solo alone';
+
+    # Signup's review page, walked over HTTP on the platform's host.
+    my $t = client();
+    $t->post_ok('/tenant-signup')->status_is(302);
+    $t->post_ok( $t->tx->res->headers->location => form => { name => 'Looking Studio', billing_email => 'look@day-one.test' } )
+        ->status_is(302);
+    $t->post_ok( $t->tx->res->headers->location => form => { admin_name => 'Look', admin_email => 'look_admin@day-one.test',
+        admin_username => 'look_admin', admin_user_type => 'admin' } )->status_is(302);
+    $t->get_ok( $t->tx->res->headers->location )->status_is(200);
+    my $dom = $t->tx->res->dom;
+    is_deeply $dom->find('input[name="offer_version"]')->map( attr => 'value' )->to_array, [ offers_to_tenants()->[0]{id} ],
+        'signup lists one plan to choose';
+    my $labels = $dom->find('label[for^="offer-"]')->map('all_text')->join(' ');
+    like $labels, qr/Solo/, 'Solo';
+    unlike $labels, qr/Studio|Empire/, 'and neither Studio nor Empire';
+};
+
+# A tenant that never accepted Solo, though it holds copies of the workflows
+# and a ready Stripe account, with a priced class offer and an occurrence.
+subtest 'tenant without solo cannot charge' => sub {
+    my $tenant = Registry::DAO::Tenant->provision( $db, { name => 'No Solo Studio', slug => 'no_solo', users => [],
+        stripe_connect_account_id => 'acct_day_one_no_solo', stripe_charges_enabled => 1, stripe_details_submitted => 1 } );
+    $db->query('SET search_path = registry, public');
+    my $ndao = Registry::DAO->new( url => $test_db->uri, schema => 'no_solo' );
+    my $ndb  = $ndao->db;
+    import_all_workflows($ndao);
+    ok !Registry::DAO::Entitlement->held_by( $db, $tenant->id ), 'it holds no entitlement';
+
+    my $t = client();
+    $t->get_ok( '/in-studio-booking' => { Host => 'no_solo.localhost' } );
+    isnt $t->tx->res->code, 200, 'its booking page is refused';
+
+    my $room   = Test::Registry::Fixtures::create_location( $ndb, { name => 'Room', slug => 'room', time_zone => 'America/New_York' } );
+    my $who    = Test::Registry::Fixtures::create_user( $ndao,
+        { username => 'no_solo_booker', name => 'No Solo Booker', email => 'b@no-solo.test', user_type => 'parent' } );
+    my $class  = Registry::DAO::Project->create( $ndb, { name => 'Unpriced', seats_per_occurrence => 6 } );
+    my $event  = Registry::DAO::Event->create( $ndb, { project_id => $class->id, location_id => $room->id,
+        teacher_id => $who->id, time => \q{now() + interval '7 days'}, duration => 90, capacity => 6, status => 'published' } );
+    my $seats  = Registry::DAO::Resource->for_occurrence( $ndb, $event->id );
+    my $version = Registry::DAO::Offer->create( $ndb, { name => 'One seat' } )->draft( $ndb, offer_terms( undef,
+        class_project_id => $class->id, price_cents => 4500,
+        policies => { refund => { kind => 'none' }, use => { kind => 'optional_attendance' },
+                      expiry => { kind => 'end_of_occurrence' } } ) )->publish($ndb);
+
+    my $workflow = Registry::DAO::Workflow->find( $ndb, { slug => 'in-studio-booking' } );
+    my $run = Registry::WorkflowProcessor->new( dao => $ndao )->new_run( $workflow,
+        { user => { id => $who->id, name => $who->name }, user_id => $who->id, __tenant_slug => 'no_solo' } );
+    for (
+        [ occurrence => { occurrence_id => $seats->id } ],
+        [ offer      => { offer_version_id => $version->id, count => 1, agree_to_terms => 1,
+                          terms_version_shown => Registry::Terms::VERSION } ],
+        [ account    => { action => 'continue_logged_in' } ],
+        [ hold       => {} ],
+    ) {
+        my $r = $run->process( $ndb, $workflow->get_step( $ndb, { slug => $_->[0] } ), $_->[1] );
+        return fail "$_->[0] refused: @{ $r->{errors} }" if ref $r eq 'HASH' && $r->{errors};
+    }
+
+    my @warned;
+    my $out = do {
+        local $SIG{__WARN__} = sub { push @warned, @_ };
+        settle( $run->process( $ndb, $workflow->get_step( $ndb, { slug => 'payment' } ), {} ) );
+    };
+    like "@{ $out->{errors} // [] }", qr/cannot be taken right now\. Nothing has been charged/, 'the priced booking is refused';
+    like "@warned", qr/'no_solo' holds no platform entitlement/, 'because it holds no platform entitlement';
+    is scalar( my @none = Registry::DAO::Payment->find( $ndb, {} ) ), 0, 'and no payment is written, so nothing is charged';
+};
+
+subtest 'other tenant cannot see sacp booking' => sub {
+    local $ENV{STRIPE_CONNECT_WEBHOOK_SECRET} = 'whsec_day_one_connect_local';
+
+    # The visitor's payment succeeds on SACP's account: as Stripe would report it
+    # to the Connect endpoint, signed here. The run driver makes the booking.
+    my $payment = Registry::DAO::Payment->find( $sdb, { id => $run->data->{owed_payment_id} } )
+        or return fail 'no payment from the booking';
+    $payment->_record_intent( $sdb, { id => 'pi_day_one_' . $payment->id, client_secret => 'x_secret' } );
+    my $t = client();
+    Test::Registry::StripeWebhook::post_connect( $t, {
+        type => 'payment_intent.succeeded', account => 'acct_day_one_sacp',
+        data => { object => { id => 'pi_day_one_' . $payment->id, amount => 9000, application_fee_amount => 225,
+            metadata => { payment_id => $payment->id, tenant_slug => 'sacp' } } },
+    } )->status_is(200);
+    my $jobs = $t->app->minion->jobs( { tasks => ['continue_workflow_run'], states => ['inactive'] } );
+    while ( my $job = $jobs->next ) { $t->app->minion->perform_jobs( { id => $job->{id} } ) }
+    my ($booking) = Registry::DAO::Entitlement->created_by_payment( $sdb, $payment->id ) or return fail 'no booking';
+    is $booking->holder_user_id, $booker->id, "the booker's entitlement exists";
+
+    # A string: a Mojo::URL is made absolute by the first client to use it.
+    my $url = Mojo::URL->new('/in-studio-day-view')->query( location_id => $studio->id, day => $day )->to_string;
+    my $mine = client( Registry::DAO::User->find( $db, { username => 'sacp_admin' } ) );
+    $mine->get_ok( $url => \%SACP )->status_is(200)->content_like( qr/Day One Booker/, "sacp's admin sees the booking" );
+    ok $mine->tx->res->dom->at(qq{[data-entitlement="${\ $booking->id }"]}), 'its entitlement is listed';
+    my $form = $mine->tx->res->dom->at(qq{[data-occurrence="${\ $occurrence->id }"] form})
+        or return fail 'no attendance form';
+
+    sign_up( 'clay_other', 'Clay Other' );
+    my $staff = Test::Registry::Fixtures::create_user( $dao,
+        { username => 'clay_other_staff', name => 'Other Staff', email => 'staff@clay-other.test', user_type => 'staff' } );
+    join_tenant( $dao, $staff, 'staff', 'clay_other' );
+    my %OTHER = ( Host => 'clay_other.localhost' );
+    for ( [ admin => Registry::DAO::User->find( $db, { username => 'clay_other_admin' } ) ], [ staff => $staff ] ) {
+        my ( $role, $user ) = @$_;
+        my $c = client($user);
+        $c->get_ok( $url => \%SACP )->status_is( 403, "the other tenant's $role is refused sacp's day view" )
+            ->content_unlike( qr/Day One Booker/, 'and shown no booking' );
+        $c->post_ok( $form->attr('action') => \%SACP => form => { entitlement_id => $booking->id,
+            occurrence_id => $occurrence->id } )->status_is( 403, 'nor may they mark it' );
+    }
+    # On its own host, naming SACP's studio and booking finds neither.
+    my $c = client( Registry::DAO::User->find( $db, { username => 'clay_other_admin' } ) );
+    $c->get_ok( $url => \%OTHER )->status_is( 400, "its own day view does not know sacp's studio" )
+        ->content_unlike( qr/Day One Booker/, 'and shows no booking' );
+    my $odb = Registry::DAO->new( url => $test_db->uri, schema => 'clay_other' )->db;
+    ok !Registry::DAO::Entitlement->find( $odb, { id => $booking->id } ), "nor does its data hold the booker's entitlement";
+    ok !Registry::DAO::Entitlement->held_by( $odb, $booker->id ), 'or any held by the booker';
 };
 
 done_testing;
