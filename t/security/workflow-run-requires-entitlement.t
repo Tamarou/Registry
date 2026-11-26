@@ -4,7 +4,7 @@
 use 5.42.0;
 use warnings;
 use utf8;
-use experimental 'signatures';
+use experimental qw(signatures defer);
 
 use lib qw(lib t/lib);
 use Test::More;
@@ -103,6 +103,81 @@ subtest 'the platform tenant runs its own workflows through the same gate' => su
     my $t = app_as();
     $t->get_ok('/tenant-signup')->status_is(200);
     $t->get_ok('/')->status_is(200);
+};
+
+# --- Negative scenarios ---
+
+subtest 'public workflow refused without tenant entitlement' => sub {
+    ok $bare_dao->find( 'Registry::DAO::Workflow', { slug => 'tenant-storefront' } )->public,
+      "the tenant's storefront copy is public";
+    my $t = app_as();
+    $t->get_ok( '/tenant-storefront' => $BARE )->status_is(403);
+    $t->post_ok( '/tenant-storefront' => $BARE => form => {} )->status_is(403);
+    is runs_of( $bare_dao, 'tenant-storefront' ), 0, 'no run was created';
+};
+
+sub run_state ( $tdao, $id ) {
+    $tdao->db->query( 'SELECT data::text, latest_step_id FROM workflow_runs WHERE id = ?', $id )->hash;
+}
+
+subtest 'parked run refused after entitlement ends' => sub {
+    my $ended     = Registry::DAO::Tenant->provision( $db, { name => 'Ended Studio', slug => 'ended_studio', users => [] } );
+    my $solo_held = accept_solo( $db, $ended )->{entitlement};
+    my $admin     = member( $ended, 'ended_admin', 'admin' );
+    my $HOST      = { Host => 'ended_studio.localhost' };
+    my $tdao      = $dao->connect_schema('ended_studio');
+    my $run  = $tdao->find( 'Registry::DAO::Workflow', { slug => 'program-creation' } )->new_run( $tdao->db );
+    my $step = $run->next_step( $tdao->db )->slug;
+    my $url  = "/program-creation/@{[ $run->id ]}/$step";
+    app_as($admin)->get_ok( $url => $HOST )->status_is( 200, 'the parked run is reachable while Solo is held' );
+
+    $solo_held->end( $db, 'refunded', 're_run_entitlement_probe' );
+    ok !Registry::DAO::Entitlement->may_run( $db, $ended->id, 'program-creation' ), 'the run right has ended';
+    my $before = run_state( $tdao, $run->id );
+    my $t      = app_as($admin);
+    $t->get_ok( $url => $HOST )->status_is(403);
+    $t->post_ok( $url => $HOST => form => { name => 'Advanced anyway' } )->status_is(403);
+    is_deeply run_state( $tdao, $run->id ), $before, "the run's data did not advance";
+};
+
+subtest 'forged tenant selector does not borrow entitlement' => sub {
+    my $on_solo = runs_of( $solo_dao, 'program-creation' );
+    my $t       = app_as($bare_admin);
+    $t->get_ok( '/program-creation' => { %$BARE, 'X-As-Tenant' => 'solo_studio' } )
+      ->status_is( 403, 'a tenant header naming the entitled tenant' );
+    $t->get_ok( '/program-creation' => { %$BARE, Cookie => 'as-tenant=solo_studio' } )
+      ->status_is( 403, 'the as-tenant cookie naming it' );
+    $t->post_ok( '/program-creation' => $BARE => form => { __tenant_slug => 'solo_studio' } )
+      ->status_is( 403, 'a form __tenant_slug naming it' );
+    is runs_of( $bare_dao, 'program-creation' ), 0, 'no run was created on the request tenant';
+    is runs_of( $solo_dao, 'program-creation' ), $on_solo, 'nor on the named tenant';
+};
+
+subtest 'callcc into unentitled workflow refused without child run' => sub {
+    ok !Registry::DAO::Entitlement->may_run( $db, $solo->id, 'unoffered-flow' ), 'Solo does not grant unoffered-flow';
+    ok $solo_dao->find( 'Registry::DAO::Workflow', { slug => 'unoffered-flow' } ), 'but the tenant holds a copy';
+    my $source = $solo_dao->find( 'Registry::DAO::Workflow', { slug => 'program-creation' } )
+      ->new_run( $solo_dao->db );
+    app_as($solo_admin)->post_ok( "/program-creation/@{[ $source->id ]}/callcc/unoffered-flow" => $SOLO => form => {} )
+      ->status_is(403);
+    is children_of( $solo_dao, $source ), 0, 'no child run was created';
+    is runs_of( $solo_dao, 'unoffered-flow' ), 0, 'no run of the unentitled workflow exists';
+};
+
+subtest 'entitlement lookup error fails closed' => sub {
+    my $t = app_as($solo_admin);
+    $t->get_ok( '/program-creation' => $SOLO )->status_is( 200, 'admitted while the lookup works' );
+    my $before = runs_of( $solo_dao, 'program-creation' );
+
+    my @logged;
+    $t->app->log->unsubscribe('message')->level('error');
+    $t->app->log->on( message => sub ( $log, $level, @lines ) { push @logged, [ $level, "@lines" ] } );
+    $db->query('ALTER TABLE registry.entitlements RENAME TO entitlements_gone');
+    defer { $db->query('ALTER TABLE registry.entitlements_gone RENAME TO entitlements') }
+    $t->get_ok( '/program-creation' => $SOLO )->status_is(403);
+    is runs_of( $solo_dao, 'program-creation' ), $before, 'no run was created';
+    ok( ( grep { $_->[0] eq 'error' && $_->[1] =~ /run entitlement lookup for 'program-creation' failed/ } @logged ),
+        'the failed lookup is logged as an error' );
 };
 
 done_testing;

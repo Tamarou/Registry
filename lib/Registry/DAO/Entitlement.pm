@@ -216,6 +216,15 @@ active and the period covers T (in_effect_sql).
         return Registry::DAO::Tenant->holds( $db, $tenant_id, "run:$slug" );
     }
 
+    # may_run for the tenant whose schema is $tenant_slug: the workflow gate's
+    # question. False for a slug that names no tenant.
+    sub tenant_may_run ( $class, $db, $tenant_slug, $slug ) {
+        $db = $db->db if $db isa Registry::DAO;
+        require Registry::DAO::Tenant;
+        my $tenant = Registry::DAO::Tenant->find( $db, { slug => $tenant_slug } ) or return 0;
+        return $class->may_run( $db, $tenant->id, $slug );
+    }
+
     # The one in-effect rule, as SQL over entitlement row $e (an alias or table
     # name): it is active and its period meets $when, a tstzrange expression.
     # A point T is tstzrange(T, T, '[]').

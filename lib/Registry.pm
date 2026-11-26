@@ -28,7 +28,6 @@ class Registry :isa(Mojolicious) {
     use YAML::XS                 qw(Load);
     use Registry::Utility::Logger;
     use Registry::DAO::Entitlement;
-    use Registry::DAO::Tenant;
 
     # What production depends on, what happens without it, and whether the value
     # is safe to print. Every consequence here was read out of the code rather
@@ -814,14 +813,12 @@ class Registry :isa(Mojolicious) {
         # creates the visitor's account partway through, so even a login
         # would be wrong). Returns true when the request may proceed.
         # Before any of that, the request's tenant must hold the run right
-        # (Entitlement->may_run, registry's live rows), whoever is asking: a
-        # copy without one is refused, and so is any lookup that errors.
+        # (Entitlement->tenant_may_run, registry's live rows), whoever is
+        # asking: a copy without one is refused, and so is any lookup that errors.
         $self->helper(
             require_workflow_role => sub ( $c, $slug ) {
                 my $entitled = eval {
-                    my $rdb    = $c->dao('registry')->db;
-                    my $tenant = Registry::DAO::Tenant->find( $rdb, { slug => $c->tenant } );
-                    $tenant && Registry::DAO::Entitlement->may_run( $rdb, $tenant->id, $slug );
+                    Registry::DAO::Entitlement->tenant_may_run( $c->dao('registry'), $c->tenant, $slug );
                 };
                 $c->app->log->error("run entitlement lookup for '@{[ $slug // '' ]}' failed: $@") if $@;
 
