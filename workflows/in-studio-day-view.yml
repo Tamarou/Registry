@@ -1,0 +1,14 @@
+# ABOUTME: In-studio staff day view: one studio-local day's occurrences, seats held and bookings.
+# ABOUTME: Staff and admins may mark a booker present (optional attendance); the one step always stays.
+
+name: In-studio Day View
+description: One studio-local day's occurrences, seats held and bookings
+slug: in-studio-day-view
+roles: [admin, staff]
+
+steps:
+  - slug: day
+    label: Day
+    description: The chosen day's occurrences at one location, in its local time
+    template: in-studio-day-view/day
+    class: Registry::DAO::WorkflowSteps::DayView
