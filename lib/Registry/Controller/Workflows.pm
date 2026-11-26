@@ -19,7 +19,36 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
     # undef either way, so callers answer 404 without confirming the run exists.
     method run ( $id = $self->param('run') ) {
         my $workflow = $self->workflow or return undef;
-        ( $self->dao->find( WorkflowRun => { id => $id, workflow_id => $workflow->id } ) )[0];
+        my ($run) = $self->dao->find( WorkflowRun => { id => $id, workflow_id => $workflow->id } );
+        return $run && $self->_may_act_on($run) ? $run : undef;
+    }
+
+    # A run answers only to whoever started it. Once it names a user -- the
+    # signed-in starter, or the account it created or was seeded for partway --
+    # only that user; before then, only the browser session that started it.
+    # Everyone else gets the same undef as an unknown run, before anything is
+    # written to it.
+    method _may_act_on ($run) {
+        my $data   = $run->data // {};
+        my @owners = grep { defined && length }
+          $data->{user_id}, ( ref $data->{user} eq 'HASH' ? $data->{user}{id} : () );
+
+        if (@owners) {
+            my $current_user = $self->stash('current_user');
+            my $me = ref $current_user ? $current_user->{id} : undef;
+            return 0 unless defined $me;
+            return !grep { $_ ne $me } @owners;
+        }
+
+        return !!grep { $_ eq $run->id } @{ $self->session->{workflow_runs} // [] };
+    }
+
+    # shortcut: the session cookie keeps only the latest 20 unowned runs; a
+    # visitor juggling more loses the oldest. Move to a server-side table if that bites.
+    method _bind_to_session ($run) {
+        my @runs = ( ( grep { $_ ne $run->id } @{ $self->session->{workflow_runs} // [] } ), $run->id );
+        splice @runs, 0, @runs - 20 if @runs > 20;
+        $self->session->{workflow_runs} = \@runs;
     }
 
     method new_run ( $workflow, $config //= {} ) {
@@ -54,6 +83,9 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         }
         
         my $run = $workflow->new_run( $dao->db, $config );
+        # Bound before its first step runs: a signed-in starter by the `user`
+        # written below, anyone else by this session.
+        $self->_bind_to_session($run) unless ref $self->stash('current_user');
         my $data =
           $self->_apply_server_owned_data( $self->req->params->to_hash, $run );
 
@@ -252,7 +284,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         my $run_id = $self->session->{$session_key};
         if ($run_id) {
             my ($run) = $dao->find(WorkflowRun => { id => $run_id });
-            if ($run && !$run->completed($dao->db)) {
+            if ($run && !$run->completed($dao->db) && $self->_may_act_on($run)) {
                 return $run;
             }
         }
@@ -345,6 +377,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
             
             # Create the run manually with the step ID we found/created
             $run = $workflow->new_run($dao->db);
+            $self->_bind_to_session($run);
             
             # Process the run with the step ID directly
             my $data = $self->req->params->to_hash;

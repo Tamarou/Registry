@@ -11,6 +11,7 @@ use Test::MockObject;
 use Test::Registry::Mojo;
 use Registry;
 use Test::Registry::DB;
+use Test::Registry::Helpers qw(authenticate_as start_run);
 use Registry::DAO qw(Workflow);
 use Registry::DAO::Payment;
 use Registry::DAO::WorkflowRun;
@@ -34,6 +35,11 @@ my $t = Test::Registry::Mojo->new('Registry');
 # advanced past payment rather than re-rendering the card form.
 $t->ua->max_redirects(0);
 
+# The parent the runs belong to: a run answers only to its own user.
+my $parent = $dao->create( User => { username => 'return_parent', name => 'Return Parent',
+    email => 'return_parent@example.com', user_type => 'parent' } );
+authenticate_as( $t, $parent );
+
 my $workflow     = $dao->find(Workflow => { slug => 'summer-camp-registration' });
 my $payment_step = Registry::DAO::WorkflowStep->find($dao->db, {
     workflow_id => $workflow->id, slug => 'payment',
@@ -47,7 +53,7 @@ sub run_awaiting_payment () {
         { id => $run->id },
     );
     $run->update_data($dao->db, {
-        user_id    => 'some-user-id',
+        user_id    => $parent->id,
         payment_id => '00000000-0000-0000-0000-000000000001',
     });
     return $run;
@@ -112,7 +118,7 @@ subtest 'the Stripe params alone do not advance a non-payment step' => sub {
     # The dispatch is keyed on the step handling payment callbacks, not on the
     # query string. Otherwise any step URL could be advanced by appending
     # ?payment_intent=... to a GET.
-    my $run = $workflow->new_run($dao->db);
+    my $run = start_run( $t, $dao->db, $workflow );
     my ($landing) = Registry::DAO::WorkflowStep->find($dao->db, {
         workflow_id => $workflow->id, slug => 'landing',
     });

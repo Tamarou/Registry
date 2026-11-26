@@ -146,7 +146,9 @@ subtest 'Account check - continue as logged-in returning parent' => sub {
     my $step = $run->next_step($dao->db);
     is $step->slug, 'account-check', 'Next step is account-check';
 
-    # Set user_id in run data (simulates prior auth step setting session identity)
+    # The returning parent signs in (the account-check login path), and the
+    # run records them, as the prior auth step does.
+    authenticate_as($t, $returning_parent);
     $run->update_data($dao->db, { user_id => $returning_parent->id });
 
     my $step_url = workflow_process_step_url($workflow, $run, $step);
