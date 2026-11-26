@@ -12,6 +12,7 @@ use Test::Registry::StripeWebhook;
 use Test::Registry::DB;
 use Test::Registry::SoloVersion qw( accept_solo );
 use Test::Registry::Mojo;
+use Test::Registry::Helpers qw(authenticate_as);
 use Test::Registry::Async qw( settle );
 
 use Registry::DAO;
@@ -673,6 +674,10 @@ subtest "I8: the browser return alone finalizes a real payment" => sub {
     is Registry::DAO::Payment->find( $tdb, { id => $payment_id } )->status,
         'pending',
         'I8: still unsettled before the return -- only the GET can complete it';
+
+    # Stripe sends the payer's own browser back, signed in as the parent the
+    # run belongs to: a run answers only to its own user (01a210cd).
+    authenticate_as( $t, $parent );
 
     # Exactly what Stripe appends to return_url.
     my $return_url = sprintf '/%s/%s/payment?payment_intent=%s&redirect_status=succeeded',
