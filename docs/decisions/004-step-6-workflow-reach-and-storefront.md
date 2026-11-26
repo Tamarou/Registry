@@ -31,6 +31,16 @@ Consequences:
 - `01a20417-1146` (one resource per offer version) is relaxed before step 6
   so that an offer version may buy a set. Day one still sells a
   single-resource Solo.
+  - Note (2026-11-26): superseded by perigrin's later ruling, "Yes it may
+    grant every workflow, that grant should be built into the offer though
+    so a later offer maybe only offers *some* workflows (e.g in-studio
+    classes only)"
+    (https://claude.ai/code/session_01V7rs98q3bwA7Cs9ZBpVuL5). Since no
+    studio held Solo v1, the migration `solo-grants-workflow-set` publishes
+    Solo v2. Its stored resource set lists payment processing and a run right
+    for every shipped workflow except `tenant-signup` and
+    `registry-storefront`. A workflow added later is granted only when an
+    offer version lists it.
 - How existing holders move to a new version (automatically when the new
   version is a pure superset, always automatically, or by opting in) is not
   decided. Asked about it, perigrin replied "Are there v1 holders?". There are
