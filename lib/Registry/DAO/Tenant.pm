@@ -407,6 +407,26 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         }, $tenant_id, $resource )->array->[0] ? 1 : 0;
     }
 
+    # Does tenant $slug hold, in effect now, the unbounded resource named
+    # $resource? Read from registry by name, as holds is: a tenant's cloned
+    # entitlements are its own to write.
+    sub holds_unbounded_by_slug ( $class, $db, $slug, $resource ) {
+        my $in_effect = Registry::DAO::Entitlement->in_effect_sql( 'e', q{tstzrange(now(), now(), '[]')} );
+        return $db->query( <<~"SQL", $slug, $resource )->array->[0];
+            SELECT EXISTS (
+                SELECT 1
+                  FROM registry.entitlements e
+                  JOIN registry.tenants t        ON t.id = e.holder_tenant_id
+                  JOIN registry.offer_versions v ON v.id = e.offer_version_id
+                  JOIN registry.resources r      ON r.id = v.resource_id
+                      OR r.id IN (SELECT s.resource_id FROM registry.offer_version_resources s
+                                  WHERE s.offer_version_id = v.id)
+                 WHERE t.slug = ? AND r.name = ? AND r.kind = 'unbounded'
+                   AND $in_effect
+            )
+            SQL
+    }
+
     # Is $user_id an admin of some tenant that holds $resource?
     #
     # A right a tenant holds is usable by that tenant's admins: a membership

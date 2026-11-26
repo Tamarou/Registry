@@ -6,6 +6,7 @@ use Object::Pad;
 class Registry::Job::ExpireEntitlements {
     use Registry::Job::Recurring;
     use Registry::DAO::Entitlement;
+    use Registry::DAO::Tenant;
 
     sub register ($class, $app) {
         Registry::Job::Recurring->add_task( $app, expire_entitlements => sub ($job, @args) {
@@ -15,7 +16,7 @@ class Registry::Job::ExpireEntitlements {
 
     method run ($job) {
         my $app     = $job->app;
-        my $tenants = $app->dao('registry')->db->select( 'registry.tenants', 'slug' )->arrays->flatten;
+        my $tenants = [ map { $_->{slug} } Registry::DAO::Tenant->get_all_tenant_schemas( $app->dao('registry')->db )->@* ];
         # One broken tenant must not hold up the rest; it is reported by slug, as the other sweeps do.
         my ( @covered, @skipped, %expired );
         for my $slug (@$tenants) {

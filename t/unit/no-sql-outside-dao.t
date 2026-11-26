@@ -20,8 +20,7 @@ my %ALLOWED = (
     'lib/Registry/Controller/Workflows.pm'      => 7,
     'lib/Registry/Job/DomainVerification.pm'    => 2,
     'lib/Registry/Job/ProcessWaitlist.pm'       => 3,
-    'lib/Registry/Job/SendNotifications.pm'     => 4,
-    'lib/Registry/Job/ExpireEntitlements.pm'    => 1,
+    'lib/Registry/Job/SendNotifications.pm'     => 3,
     'lib/Registry/Job/InstalmentReconcile.pm'   => 3,
 );
 
