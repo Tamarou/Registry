@@ -23,15 +23,16 @@ class Registry::DAO::WorkflowSteps::PayChangeFee :isa(Registry::DAO::WorkflowSte
             return { stay => 1, errors => [$refusal] };
         }
         return {} unless $change->{fee_cents};
-        # shortcut: who pays a change fee when staff or an admin start the change
-        # for the booker is an open perigrin decision; until he rules, only the
-        # booker (holder or payer) may run a change that charges a fee.
-        return { stay => 1, errors => ['This change has a fee, so the booker must start it from their booking.'] }
-            unless grep { ( $_ // '' ) eq $user->{id} } $entitlement->holder_user_id, $entitlement->payer_user_id;
+        # The booker-only fee rule (shortcut in ChooseChangeTarget::fee_refusal),
+        # again here as a backstop to the hold step's check.
+        if ( my $refusal = Registry::DAO::WorkflowSteps::ChooseChangeTarget->fee_refusal(
+                $entitlement, $user, $change->{fee_cents} ) ) {
+            return { stay => 1, errors => [$refusal] };
+        }
         if ( my $refusal = Registry::Terms::checkout_refusal() ) {
             return $self->_stay( errors => [$refusal] );
         }
-        # Whoever pays the fee is the one paying now: the booker (see the shortcut above).
+        # Whoever pays the fee is the one paying now: the booker (see fee_refusal).
         $run->update_data( $db, { user_id => $user->{id} } );
         return $self->SUPER::process( $db, $form_data, $run );
     }

@@ -51,6 +51,18 @@ class Registry::DAO::WorkflowSteps::ChooseChangeTarget :isa(Registry::DAO::Workf
         return "That booking is not yours to $verb";
     }
 
+    # Why $user may not run a change of $entitlement that charges $fee_cents,
+    # or nothing. shortcut: who pays a change fee when staff or an admin start
+    # the change for the booker is an open perigrin decision; until he rules,
+    # only the booker (holder or payer) may run a change that charges a fee.
+    # Asked before the hold is placed and again at the charge.
+    sub fee_refusal ( $class, $entitlement, $user, $fee_cents ) {
+        return undef unless $fee_cents;
+        my $id = ref $user eq 'HASH' ? $user->{id} // '' : '';
+        return undef if grep { ( $_ // '' ) eq $id } $entitlement->holder_user_id, $entitlement->payer_user_id;
+        return 'This change has a fee, so the booker must start it from their booking.';
+    }
+
     # Why $entitlement may not change at $at (default the clock) under the
     # change policy it was sold under (its stamped version, never the current
     # one), or nothing. The cutoff is its occurrence's local start less

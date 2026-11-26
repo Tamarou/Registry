@@ -181,14 +181,29 @@ subtest 'an admin changes a customer\'s entitlement for them' => sub {
 subtest 'staff started change with a fee is refused until the payer is decided' => sub {
     my ( $version, $from, $to ) = occurrences( 1000, 4, 72, 96 );
     my $e = booking( $version, $from, member('parent') );
-    my ( $t, $run ) = to_payment( member('staff'), $e, $to );
-    my $form = form_of($t) or return fail 'the payment page has a form';
-    $t->post_ok( $form->attr('action') => form => {} )->status_is(302);
+    my $t = client( member('staff') );
+    $t->get_ok( '/entitlement-change?entitlement_id=' . $e->id )->status_is(200);
+    my $form = form_of($t) or return fail 'the target page has a form';
+    my $run  = run_of( $form->attr('action') );
+    $t->post_ok( $form->attr('action') => form => { target_occurrence_id => $to->id } )->status_is(302);
     $t->get_ok( $t->tx->res->headers->location )
         ->content_like( qr/This change has a fee, so the booker must start it from their booking\./, 'refused with why' );
+    is holds_on($to), 0, 'no seat is held in the target';
+    ok !run_of( $form->attr('action') )->data->{change_hold}, 'the run holds no change';
     is payments_of($run), 0, 'no payment row is written';
     is_deeply $e->units( $db, $from->id ), [1], 'the booking stays where it was';
     is_deeply $e->units( $db, $to->id ), [], 'and does not move';
+
+    # The pay step asks again: staff posting a booker's paid change are refused there too.
+    my $holder = member('parent');
+    my $mine   = booking( $version, $from, $holder );
+    my ( $own, $paid ) = to_payment( $holder, $mine, $to );
+    my $staff = client( member('staff') );
+    $staff->post_ok( form_of($own)->attr('action') => form => {} )->status_is(302);
+    $staff->get_ok( $staff->tx->res->headers->location )
+        ->content_like( qr/This change has a fee, so the booker must start it from their booking\./,
+            'the pay step refuses staff as well' );
+    is payments_of($paid), 0, 'and writes no payment row';
 };
 
 subtest 'stranger cannot change entitlement' => sub {
