@@ -75,8 +75,21 @@ The gate (`require_workflow_role` in `lib/Registry.pm`) guards every entry to
 a workflow: the `/:workflow` routes, the routes that name their workflow in
 the route rather than the URL (`/`, `/admin/dashboard`, the drop and transfer
 approvals, `/admin/templates`), and the callcc leg, which names its target
-workflow in another placeholder. It reads the current tenant's own
-`workflows` row for the slug:
+workflow in another placeholder.
+
+It first asks whether the request's tenant may run the slug at all
+(`Registry::DAO::Entitlement->tenant_may_run`, below), whoever is asking. A
+tenant without the run right is refused 403 before any role is read: an
+admin, an anonymous visitor to a public workflow such as the storefront, a
+step POST on a run parked before the right ended, and a callcc into the slug
+all alike, and no run is created. The tenant is the one the request resolves
+to (`$c->tenant`), so a form `__tenant_slug`, an `X-As-Tenant` header or an
+`as-tenant` cookie naming another tenant borrows nothing. A lookup that
+errors refuses and is logged: the gate fails closed. The platform tenant
+`registry` passes the same way, by holding its own run rights, never by a
+slug check. `t/security/workflow-run-requires-entitlement.t` proves each case.
+
+Then it reads the current tenant's own `workflows` row for the slug:
 
 - the public mark admits anyone, signed in or not;
 - roles admit a user whose role in this tenant is one of them (an anonymous
@@ -114,7 +127,15 @@ it holds from the platform tenant `registry` (PriceOps spec, "The platform
 tenant's offers"). Each workflow slug the platform offers is a resource named
 `run:<slug>`. The right to create workflows is `run:workflow-creation`, and it
 also covers running the workflows the tenant wrote (ADR 004, ruling (b)).
-Nothing reads run rights yet; `01a20415-69df` makes the gate require them.
+The gate above requires them.
+
+- **Tenant-authored workflows.** perigrin's ruling (b) in ADR 004: "(a)
+  Create right covers run (Recommended)". A slug `registry` has no workflow
+  for is one the platform offers no run right to, so the tenant wrote it
+  (through `workflow-creation`, or a tenant-only slug kept by a divergence
+  ruling). `tenant_may_run` admits it when the tenant holds
+  `run:workflow-creation`. A copy of a slug `registry` does have always needs
+  that slug's own run right.
 
 - **The check.** `Registry::DAO::Entitlement->may_run($db, $tenant_id, $slug)`
   answers from live rows through `Registry::DAO::Tenant->holds`. It is true
@@ -131,14 +152,22 @@ Nothing reads run rights yet; `01a20415-69df` makes the gate require them.
   right per workflow in `registry.workflows` at deploy, through its own
   per-slug offer to itself (`holder_is_offerer`), as the bootstrap seeded the
   five product-design rights. Those five are reused, never duplicated.
-  Workflows imported after deploy get no run right from this change.
+- **At import** (`registry-run-right-at-import`). A trigger on
+  `registry.workflows` grants `registry` the run right to each workflow
+  inserted there, the same way, so a fresh database (which imports after
+  deploy) and every later import leave `registry` able to run its own
+  workflows. Its deploy also grants any workflow imported since the backfill.
 - **How a new workflow reaches a Solo holder.** perigrin's ruling (a) in
   ADR 004: "(a) New Solo version". A new Solo version lists the workflow set
   as a set version, published through offer-publishing, and holders move to
   it. The rule for moving them waits until real holders exist. Day one still
   sells a single-resource Solo.
-- **Studios have no run rights yet.** So the backfill refuses to deploy while
-  any studio tenant holds workflow copies, naming each. Production has none.
+- **Studios hold their run rights through Solo.** Solo v2's set
+  (`solo-grants-workflow-set`) lists a run right for every shipped workflow
+  but `tenant-signup` and `registry-storefront`, which only `registry` runs:
+  the signup funnel and the apex storefront are `registry`'s. A studio gains
+  them by accepting Solo at signup. The backfill refuses to deploy while any
+  studio tenant holds workflow copies, naming each. Production has none.
   A dev database with a seeded SACP tenant must re-create it (see
   `sql/seed/README.md`).
 
