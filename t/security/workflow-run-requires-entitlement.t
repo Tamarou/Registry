@@ -127,6 +127,17 @@ subtest 'tenant-authored workflow refused without the create right' => sub {
     is runs_of( $bare_dao, 'own-flow' ), 0, 'no run was created';
 };
 
+subtest 'case variant of a platform slug is not tenant-authored' => sub {
+    ( my $variant = $UNOFFERED ) =~ s/unoffered-flow/Unoffered-Flow/g;
+    Registry::DAO::Workflow->from_yaml( $solo_dao, $variant );
+    my $t = app_as($solo_admin);
+    $t->get_ok( '/Unoffered-Flow' => $SOLO )->status_is(403);
+    $t->post_ok( '/Unoffered-Flow' => $SOLO => form => {} )->status_is(403);
+    is runs_of( $solo_dao, 'Unoffered-Flow' ), 0, 'no run was created';
+    ok !Registry::DAO::Entitlement->tenant_may_run( $db, 'solo_studio', $_ ), "'$_' is registry's unoffered-flow"
+      for 'Unoffered-Flow', ' unoffered-flow ', "UNOFFERED-FLOW\t";
+};
+
 # --- Negative scenarios ---
 
 subtest 'public workflow refused without tenant entitlement' => sub {

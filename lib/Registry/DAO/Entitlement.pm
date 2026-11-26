@@ -225,7 +225,12 @@ active and the period covers T (in_effect_sql).
         require Registry::DAO::Tenant;
         my $tenant = Registry::DAO::Tenant->find( $db, { slug => $tenant_slug } ) or return 0;
         return 1 if $class->may_run( $db, $tenant->id, $slug );
-        return 0 if $db->select( 'registry.workflows', 'id', { slug => $slug // '' } )->rows;
+        # Trimmed and case-folded, so `Program-Creation` is registry's
+        # program-creation, never the tenant's own.
+        return 0 if $db->query( q{
+            SELECT 1 FROM registry.workflows
+             WHERE lower(regexp_replace(slug, '^\s+|\s+$', '', 'g')) = lower(regexp_replace(?, '^\s+|\s+$', '', 'g'))
+        }, $slug // '' )->rows;
         return $class->may_run( $db, $tenant->id, 'workflow-creation' );
     }
 
