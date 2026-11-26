@@ -161,4 +161,83 @@ subtest 'its admin sets up and schedules a class and a visitor reaches booking' 
     $visitor->content_like( qr/One seat/, 'the booking page offers its seats' )->content_like(qr/\$45\.00/);
 };
 
+# Every workflow schema $schema holds, by slug, with its step slugs.
+sub definitions ($schema) { return { map { $_ => steps( $schema, $_ ) } workflows_in($schema)->@* } }
+
+sub entitlements_of ($tenant) {
+    return $db->query( 'SELECT count(*) FROM registry.entitlements WHERE holder_tenant_id = ?', $tenant->id )->array->[0];
+}
+
+subtest 'unaccepted tenant cannot run in studio workflows' => sub {
+    my $tenant = bare_tenant('never_accepted');
+    ok scalar( grep { steps( 'registry', $_ ) } @IN_STUDIO ) == @IN_STUDIO, 'registry holds every in-studio workflow';
+    ok( !Registry::DAO::Entitlement->may_run( $db, $tenant->id, $_ ), "it holds no run right to $_" ) for @IN_STUDIO;
+    is_deeply workflows_in('never_accepted'), [], 'and no copy of any workflow';
+    my $t = client();
+    for my $path (qw( /in-studio-class-setup /in-studio-booking )) {
+        $t->get_ok( $path => { Host => 'never_accepted.localhost' } );
+        isnt $t->tx->res->code, 200, "$path is refused on its host";
+    }
+};
+
+subtest 'accepting twice duplicates nothing' => sub {
+    my ( $held, $copies ) = ( entitlements_of($studio), definitions('clay_new') );
+    my $ok = eval {
+        Registry::DAO::Tenant->accept_platform_offer( $db, $studio, { offer_version_id => $solo, payment_plan_id => 'revenue_share' } );
+        1;
+    };
+    ok !$ok, 'a second accept of Solo is refused';
+    isa_ok $@, 'Registry::DAO::Entitlement::Refused';
+    is entitlements_of($studio), $held, 'no entitlement is added';
+    is_deeply definitions('clay_new'), $copies, 'and no copy';
+};
+
+subtest 'only tenant admin accepts platform offer' => sub {
+    my %actor = ( anonymous => undef );
+    for my $role (qw( staff parent )) {
+        $actor{$role} = Test::Registry::Fixtures::create_user( $dao,
+            { username => "clay_new_$role", name => "Clay \u$role", email => "$role\@clay-new.test", user_type => $role } );
+        $studio->add_user( $db, $actor{$role}, 0, $role );
+        $db->query( 'SELECT copy_user(dest_schema => ?, user_id => ?)', 'clay_new', $actor{$role}->id );
+        $db->query('SET search_path = registry, public');
+    }
+    my $held = entitlements_of($studio);
+    for my $who ( sort keys %actor ) {
+        my $t = client( $actor{$who} );
+        $t->get_ok( '/tenant-signup' => \%HOST );
+        isnt $t->tx->res->code, 200, "the studio's $who finds no signup on its host";
+        $t->post_ok( '/tenant-signup' => \%HOST => form => { offer_version => $solo, tenant => 'clay_new' } );
+        unlike $t->tx->res->headers->location // '', qr{/tenant-signup/}, "and cannot start one there";
+    }
+    is entitlements_of($studio), $held, 'the studio holds no further entitlement';
+};
+
+subtest 'acceptance by one tenant gives another nothing' => sub {
+    my $bystander = bare_tenant('bystander');
+    my ( $held, $copies ) = ( entitlements_of($studio), definitions('clay_new') );
+    sign_up('clay_other');
+    is entitlements_of($bystander), 0, 'a tenant that did not accept holds nothing';
+    ok( !Registry::DAO::Entitlement->may_run( $db, $bystander->id, $_ ), "and may not run $_" ) for @IN_STUDIO;
+    is_deeply workflows_in('bystander'), [], 'nor holds any copy';
+    is entitlements_of($studio), $held, 'another studio that accepted earlier gains no entitlement';
+    is_deeply definitions('clay_new'), $copies, 'and no copy';
+};
+
+# Every workflow and step row schema $schema holds, as stored.
+sub stored ($schema) {
+    my $q = $db->dbh->quote_identifier($schema);
+    return $db->query( qq{
+        SELECT w.id, w.slug, w.first_step, w.roles, w.public, w.updated_at, s.id AS step, s.slug AS step_slug,
+               s.class, s.template_id, s.depends_on, s.metadata::text, s.updated_at AS step_updated
+          FROM $q.workflows w LEFT JOIN $q.workflow_steps s ON s.workflow_id = w.id ORDER BY w.slug, s.slug
+    } )->hashes->to_array;
+}
+
+subtest 'existing workflows untouched by acceptance' => sub {
+    my ( $platform, $copies ) = ( stored('registry'), stored('clay_new') );
+    sign_up('clay_third');
+    is_deeply stored('registry'), $platform, 'the platform\'s workflows are unchanged, row for row';
+    is_deeply stored('clay_new'), $copies, 'and so are an existing studio\'s copies';
+};
+
 done_testing;
