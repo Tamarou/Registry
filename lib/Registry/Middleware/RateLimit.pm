@@ -23,11 +23,15 @@ our @AUTH_PATHS = qw(
     magic/request
 );
 
-# Route prefixes that bypass rate limiting entirely
+# Route prefixes that bypass rate limiting entirely. The asset prefixes are
+# where public/ is served, so a page's CSS, JS and images don't spend the
+# visitor's page budget.
 our @EXCLUDED_PREFIXES = qw(
     /webhooks/
-    /static/
-    /public/
+    /css/
+    /js/
+    /images/
+    /favicon.svg
     /auth/magic/poll/
 );
 
