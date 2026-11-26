@@ -17,6 +17,7 @@ use Mojo::File qw(path);
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Test::Registry::Helpers qw( import_all_workflows join_tenant publish_offer );
+use Test::Registry::SoloVersion qw(accept_solo);
 use Registry::DAO;
 use Registry::DAO::Tenant;
 
@@ -26,7 +27,7 @@ import_all_workflows($dao);
 
 my $admin = Test::Registry::Fixtures::create_user( $dao,
     { username => 'kiln_admin', name => 'Kiln Admin', email => 'admin@kiln.test', user_type => 'admin' } );
-Registry::DAO::Tenant->provision( $dao->db, { name => 'Kiln', slug => 'kiln', users => [$admin] } );
+accept_solo( $dao, Registry::DAO::Tenant->provision( $dao->db, { name => 'Kiln', slug => 'kiln', users => [$admin] } ) );
 join_tenant( $dao, $admin, 'admin', 'kiln' );
 
 # Step slugs of $schema's offer-publishing, in walk order.

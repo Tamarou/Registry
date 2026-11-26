@@ -12,6 +12,7 @@ use Registry::DAO::Tenant;
 use Registry::DAO::User;
 use Test::Registry::DB;
 use Test::Registry::Helpers qw(import_all_workflows);
+use Test::Registry::SoloVersion qw(accept_solo);
 
 # PostgreSQL reserved words that are valid slug values (match [a-z][a-z0-9_]*)
 # but cause DDL syntax errors when interpolated unquoted into:
@@ -44,6 +45,7 @@ subtest 'provision succeeds for slug "user" (PostgreSQL reserved word)' => sub {
             slug  => 'user',
             users => [ $admin ],
         });
+        accept_solo( $db, $tenant );    # which copies Solo's workflows into the quoted schema
     };
     my $err = $@;
 

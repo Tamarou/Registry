@@ -11,11 +11,11 @@ use Mojo::File;
 use Registry::DAO::Tenant;
 use Registry::DAO::Workflow;
 
-# Provisioning never copies these to a tenant, so their absence is expected.
+# Accepting an offer never copies these to a tenant, so their absence is expected.
 my %NOT_COPIED = map { $_ => 1 } qw( tenant-signup registry-storefront );
 
-# Is workflow $slug the platform's alone, never copied to a tenant? The one
-# list provisioning and accepting the platform's offer both read.
+# Is workflow $slug the platform's alone, never copied to a tenant? The list
+# accepting the platform's offer reads, whatever the offer grants.
 sub never_copied ($slug) { $NOT_COPIED{$slug} ? 1 : 0 }
 
 # Steps whose template provisioning unlinks in the tenant on purpose (refs #173

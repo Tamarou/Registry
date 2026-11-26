@@ -7,7 +7,7 @@ use lib qw(lib t/lib);
 use Test::More;
 use experimental 'signatures';
 use Test::Registry::DB;
-use Test::Registry::PricingProbe qw( state_platform_terms );
+use Test::Registry::SoloVersion qw( accept_solo );
 use Test::Registry::Fixtures;
 use Registry::DAO::Tenant;
 use Registry::DAO::User;
@@ -21,8 +21,8 @@ my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 my $db      = $dao->db;
 
-# Workflows have to exist in registry before a tenant can be provisioned WITH
-# them: provision copies per-workflow (and templates per workflow step), so a
+# Workflows have to exist in registry before a tenant can gain them by
+# accepting Solo: the accept copies per-workflow (and templates per step), so a
 # registry schema with none produces a tenant with none -- which the fleet query
 # would then correctly report as unhealthy. Importing them is what makes this
 # fixture a provisioned tenant rather than an empty one.
@@ -32,7 +32,7 @@ for my $file ( Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/
 }
 
 # Templates too, through the command production uses (docker-entrypoint.sh runs
-# `template import` on every deploy). provision copies them per workflow step,
+# `template import` on every deploy). Accepting copies them per workflow step,
 # so a registry schema without them produces a tenant without them.
 {
     local $ENV{DB_URL} = $test_db->uri;
@@ -54,7 +54,7 @@ my $healthy = Registry::DAO::Tenant->provision( $db, {
     name => 'Healthy Studio', slug => 'healthy_studio',
     users => [ $owner ],
 } );
-state_platform_terms( $db, $healthy->slug, { rate => 0, name => 'Fleet Terms' } );
+accept_solo( $db, $healthy );    # as signup does: its workflows and its platform terms
 
 # And one whose schema was never built: a tenant row with nothing behind it.
 # This is the shape #265 is about -- the sweeps isolate these and nothing
@@ -131,7 +131,7 @@ subtest 'a half-provisioned schema does not take the fleet down' => sub {
 subtest 'fleet view reports platform offer from entitlement' => sub {
     my $row = fleet_by_slug()->{healthy_studio};
 
-    is $row->{plan_name}, 'Fleet Terms', 'the offer named is the one its entitlement holds';
+    is $row->{plan_name}, 'Solo', 'the offer named is the one its entitlement holds';
     ok !exists $row->{$_}, "and no $_ is reported"
         for qw( billing_status trial_ends_at stripe_subscription_id );
 };

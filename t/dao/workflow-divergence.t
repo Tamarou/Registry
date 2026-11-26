@@ -7,6 +7,7 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
+use Test::Registry::SoloVersion qw(accept_solo);
 use Registry::DAO::Tenant;
 use Registry::DAO::Workflow;
 use Registry::WorkflowDivergence;
@@ -49,7 +50,7 @@ my $owner = Test::Registry::Fixtures::create_user( $db,
 my $n = 0;
 sub provision () {
     my $slug = 'div_' . ++$n;
-    Registry::DAO::Tenant->provision( $db, { name => "Div $n", slug => $slug, users => [$owner] } );
+    accept_solo( $db, Registry::DAO::Tenant->provision( $db, { name => "Div $n", slug => $slug, users => [$owner] } ) );
     return $slug;
 }
 

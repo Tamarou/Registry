@@ -1,5 +1,5 @@
 # ABOUTME: Tests for Registry::DAO::Tenant->provision class method.
-# ABOUTME: Verifies tenant creation copies all workflows (except tenant-signup) and users.
+# ABOUTME: Verifies a tenant that accepts Solo, as signup does, holds Solo's workflows (never tenant-signup) and its users.
 use 5.42.0;
 use lib qw(lib t/lib);
 use experimental qw(defer keyword_any);
@@ -13,6 +13,7 @@ use Registry::DAO::Tenant;
 use Registry::DAO::User;
 use Test::Registry::DB;
 use Test::Registry::Helpers qw(import_all_workflows);
+use Test::Registry::SoloVersion qw(accept_solo);
 
 my $t_db = Test::Registry::DB->new;
 my $dao  = $t_db->db;            # keep $dao alive
@@ -32,6 +33,7 @@ my $tenant = Registry::DAO::Tenant->provision($db, {
     users => [ $admin ],
 });
 ok $tenant, 'provision returned a tenant';
+accept_solo( $db, $tenant );    # its workflows come from Solo's run rights
 is $tenant->slug, 'provision1', 'tenant slug as requested';
 
 my $tenant_dao = Registry::DAO->new(url => $ENV{DB_URL}, schema => $tenant->slug);
@@ -96,6 +98,7 @@ subtest 'provision copies outcome definitions before workflows (FK ordering pin)
         users => [ $pin_admin ],
     });
     ok $pin_tenant, 'provision succeeded with outcome definitions pre-loaded';
+    accept_solo( $pin_db, $pin_tenant );    # which copies each workflow after its outcome definitions
 
     my $pin_tdao = Registry::DAO->new(url => $ENV{DB_URL}, schema => $pin_tenant->slug);
     my $pin_tdb  = $pin_tdao->db;

@@ -12,6 +12,7 @@ use Test::Registry::Mojo;
 use Test::Registry::Offers qw( offer_terms );
 use Test::Registry::StripeWebhook;
 use Test::Registry::Helpers qw( authenticate_as import_all_workflows join_tenant );
+use Test::Registry::SoloVersion qw(accept_solo);
 use Test::Registry::Fixtures;
 use Registry::DAO;
 use Registry::DAO::Entitlement;
@@ -37,11 +38,11 @@ import_all_workflows($dao);
 my $admin = Registry::DAO::User->create( $db, {
     username => "srm_admin_$$", email => "srm_admin_$$\@test.example", name => 'SRM Admin', user_type => 'admin' } );
 
-# A tenant on its own connected account, provisioned with every workflow.
+# A tenant on its own connected account, holding Solo's workflows.
 sub tenant ($name) {
     my $slug = "srm_${name}_$$";
-    Registry::DAO::Tenant->provision( $db, {
-        name => "SRM $name $$", slug => $slug, users => [$admin], stripe_connect_account_id => "acct_$slug" } );
+    accept_solo( $db, Registry::DAO::Tenant->provision( $db, {
+        name => "SRM $name $$", slug => $slug, users => [$admin], stripe_connect_account_id => "acct_$slug" } ) );
     return ( $slug, "acct_$slug", $dao->connect_schema($slug)->db );
 }
 my ( $A, $ACCOUNT_A, $adb ) = tenant('a');

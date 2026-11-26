@@ -1144,18 +1144,16 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         $db->query( "DELETE FROM $schema.workflows WHERE id = ?", $workflow_id );
     }
 
-    # Copies registry's outcome definitions into tenant $slug's schema, those
-    # workflow $workflow_id's steps use or, without one, all; any it already
-    # holds is kept.
-    sub _copy_outcome_definitions ( $class, $db, $slug, $workflow_id = undef ) {
+    # Copies registry's outcome definitions that workflow $workflow_id's steps
+    # use into tenant $slug's schema; any it already holds is kept.
+    sub _copy_outcome_definitions ( $class, $db, $slug, $workflow_id ) {
         my $schema = $db->dbh->quote_identifier($slug);
         $db->query( qq{
             INSERT INTO ${schema}.outcome_definitions (id, name, description, schema)
             SELECT id, name, description, schema FROM registry.outcome_definitions
-             WHERE ?::uuid IS NULL
-                OR id IN (SELECT outcome_definition_id FROM registry.workflow_steps WHERE workflow_id = ?)
+             WHERE id IN (SELECT outcome_definition_id FROM registry.workflow_steps WHERE workflow_id = ?)
             ON CONFLICT DO NOTHING
-        }, $workflow_id, $workflow_id );
+        }, $workflow_id );
     }
 
     # Copies registry workflow $wf ({ id, slug }) into tenant $slug's schema,
@@ -1193,9 +1191,9 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     }
 
     # provision: single canonical path for creating a fully-provisioned tenant.
-    # Creates the tenant row, clones the schema, copies seed data, copies all
-    # workflows from registry (except those never_copied), copies users, and copies
-    # OutcomeDefinitions.  The entire operation runs inside a single transaction
+    # Creates the tenant row, clones the schema, copies seed data and users,
+    # and accepts the platform offer it names, which copies the workflows its
+    # entitlements grant and the outcome definitions they use.  The entire operation runs inside a single transaction
     # so a failure partway through does not leave orphaned rows or a half-cloned
     # schema.  Returns the created Tenant object.
     #
@@ -1294,30 +1292,13 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
                 SQL
         }
 
-        # Outcome definitions before workflows: a copied step's
-        # outcome_definition_id references the tenant's own table.
-        $class->_copy_outcome_definitions( $db, $tenant->slug );
-
         # $data->{platform_entitlement} names { offer_version_id,
         # payment_plan_id }: the tenant accepts it in registry from now on,
         # which copies the workflows it grants, or the tenant is not created
-        # (a refusal throws, rolling it all back).
+        # (a refusal throws, rolling it all back). Accepting is the only way
+        # a tenant gains a workflow: without a grant it holds none.
         if ( my $grant = $data->{platform_entitlement} ) {
             $class->accept_platform_offer( $db, $tenant, $grant );
-        }
-
-        # Copy every other workflow in registry except tenant-signup; one the
-        # accept above copied is not copied twice.
-        my @workflows = $db->query( qq{
-            SELECT id, slug FROM registry.workflows
-             WHERE slug NOT IN (SELECT slug FROM ${schema}.workflows)
-        } )->hashes->each;
-        for my $wf (@workflows) {
-            # tenant-signup onboards tenants; registry-storefront is the
-            # platform's own shop window. Handing either to a tenant is the
-            # mirror of the bug that made the apex serve a tenant's storefront.
-            next if Registry::WorkflowDivergence::never_copied( $wf->{slug} );
-            $class->_copy_platform_workflow( $db, $tenant->slug, $wf );
         }
 
         $tx->commit if $tx;
