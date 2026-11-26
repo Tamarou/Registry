@@ -273,7 +273,11 @@ subtest 'window closing between steps refused' => sub {
     my $e = booking( $version, $held );
     my ( $run, $chose ) = chosen($e);
     ok !$chose->{errors}, 'the change is allowed when chosen';
-    $studio->query( q{UPDATE events SET time = now() + interval '47 hours 59 minutes'
+    # 46 hours on the location's wall clock: 2 inside the window, so no DST
+    # change (an hour) moves the cutoff past the clock on any date.
+    $studio->query( q{UPDATE events
+                         SET time = ((now() AT TIME ZONE 'America/New_York') + interval '46 hours')
+                                    AT TIME ZONE 'America/New_York'
                        WHERE id = ?}, $held->event_id );
     like "@{ hold_target( $run, $target )->{errors} // [] }", qr/48 hours/,
         'once the window closes the hold step refuses';
