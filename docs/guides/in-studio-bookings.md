@@ -191,11 +191,11 @@ when the platform's Stripe key is not configured, or when the studio's own
 Stripe account is not connected and ready. No charge is attempted and nothing
 is recorded.
 
-**Terms of service.** `/terms` currently shows a marked DRAFT placeholder,
-because the platform's final terms have not been published. While it does,
-checkout is refused in production with "Checkout is closed until the terms of
-service are final. Nothing has been charged." The studio's own booking terms
-are never on `/terms`; they are shown with each offer on the booking page.
+**Terms of service.** `/terms` states the platform's terms of service
+(Tamarou LLC, effective 2026-11-26). The booking page asks the customer to agree
+to them, and each booking records the version agreed to. The studio's own
+booking terms are never on `/terms`; they are shown with each offer on the
+booking page.
 
 ## 6. Payment, refunds and disputes
 

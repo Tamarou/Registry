@@ -7,7 +7,6 @@ use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::PayChangeFee :isa(Registry::DAO::WorkflowSteps::OneTimePayment) {
     use Registry::DAO::Entitlement;
-    use Registry::Terms ();
     use Registry::DAO::WorkflowSteps::ChooseChangeTarget;
 
     method process ( $db, $form_data, $run = undef ) {
@@ -28,9 +27,6 @@ class Registry::DAO::WorkflowSteps::PayChangeFee :isa(Registry::DAO::WorkflowSte
         if ( my $refusal = Registry::DAO::WorkflowSteps::ChooseChangeTarget->fee_refusal(
                 $entitlement, $user, $change->{fee_cents} ) ) {
             return { stay => 1, errors => [$refusal] };
-        }
-        if ( my $refusal = Registry::Terms::checkout_refusal() ) {
-            return $self->_stay( errors => [$refusal] );
         }
         # Whoever pays the fee is the one paying now: the booker (see fee_refusal).
         $run->update_data( $db, { user_id => $user->{id} } );

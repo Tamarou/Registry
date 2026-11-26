@@ -10,7 +10,6 @@ use Registry::DAO::Payment;
 use Registry::DAO::Tenant;
 use Registry::DAO::User;
 use Registry::PriceOps::Hold;
-use Registry::Terms ();
 
 my $UUID = qr/\A[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\z/i;
 
@@ -36,11 +35,6 @@ method process ( $db, $form_data, $run = undef ) {
         return $self->_returned( $db, $run, $intent_id );
     }
 
-    # Before the hold is extended or a payment row written (ADR 005, ruling
-    # 12). Below the paid and return legs, so money already taken still settles.
-    if ( my $refusal = Registry::Terms::checkout_refusal() ) {
-        return $self->_stay( errors => [$refusal] );
-    }
     if ( my $refusal = $self->hold_for_charge( $db, $run ) ) {
         return $self->_stay( errors => [$refusal] );
     }

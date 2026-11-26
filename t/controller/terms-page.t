@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 # ABOUTME: /terms is served anonymously on the apex and every tenant host, and signup's link to it resolves.
-# ABOUTME: Until perigrin supplies the text the page is a marked DRAFT placeholder carrying the version marker.
+# ABOUTME: The page states perigrin's terms (Tamarou LLC, effective 2026-11-26) with their version marker, and no DRAFT banner.
 
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
@@ -64,12 +64,19 @@ subtest 'signup review page link to terms resolves' => sub {
     is_terms_page( $s, 'followed link' );
 };
 
-subtest 'terms page is a marked draft placeholder' => sub {
-    ok Registry::Terms::is_placeholder(), 'the terms in force are the placeholder';
+subtest 'terms page states the final terms' => sub {
+    is Registry::Terms::VERSION, '2026-11-26', 'the terms in force are the version effective 2026-11-26';
     $t->get_ok('/terms')->status_is(200)
-      ->element_exists( qq{[data-terms-version="${\ Registry::Terms::VERSION}"]},
-        'the page carries the terms version marker' )
-      ->text_is( '.notification.warning strong' => 'DRAFT', 'the page says it is a DRAFT' );
+      ->element_exists( q{[data-terms-version="2026-11-26"]}, 'the page carries that version marker' )
+      ->element_exists_not( '.notification.warning', 'no DRAFT banner' );
+    my $text = $t->tx->res->dom->at('article')->all_text =~ s/\s+/ /gr;
+    unlike $text, qr/\bDRAFT\b/, 'the page does not call itself a draft';
+    like $text, qr/Tamarou LLC/,                 'it names the operator';
+    like $text, qr/2\.5% of each sale/,          "it states Solo's fee";
+    like $text, qr/laws of the State of Florida/, 'it names the governing law';
+    like $text, qr/18 or older/,                 'it states the minimum age';
+    like $text, qr/registry\@tamarou\.com/,      'it gives the contact address';
+    like $text, qr/429 Hoffer Ave/,              'and the postal address';
 };
 
 subtest 'post to terms is not a server error' => sub {

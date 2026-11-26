@@ -125,3 +125,19 @@ still gates step 7.
 **Ruling:** the executor builds the `/terms` page, the agreement step and
 terms versioning. Until perigrin supplies the text, a marked DRAFT placeholder
 stands in, and production checkout is refused while it is in place.
+
+*Note, 2026-11-26:* perigrin asked the executor to "Generate some /terms text
+for me please" and supplied its facts: "Tamarou's legal entity is Tamarou LLC,
+its registered in New Mexico, minimum age is 18. Effective date is today.
+Contact details is 429 Hoffer Ave. Orlando FL 32809 or registry@tamarou.com"
+and, on governing law, "Florida Law I think since we are focusing on Florida
+businesses first" (https://claude.ai/code/session_01V7rs98q3bwA7Cs9ZBpVuL5):
+Florida law, heard in Florida's state or federal courts. The executor chose the
+liability cap, the greater of twelve months' fees or $100; perigrin approves it
+by merging. The text is version
+`2026-11-26`. With it in place the placeholder is removed and in-studio
+booking, which records the agreed version, opens in production. Asked whether
+summer-camp checkout, which prices from the old tables and records no /terms
+agreement, should open too, perigrin chose "Keep it closed (Recommended)": the
+enrollment Payment step refuses a charge in production until camp moves to the
+PriceOps model.
