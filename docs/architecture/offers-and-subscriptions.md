@@ -25,8 +25,9 @@ scales line up.
 ### At the platform scale
 
 Alex publishes the platform's offer to tenants as an offer version in
-`registry.offer_versions`: today Solo v1, $0 plus a 2.5% `percentage_of_sales`
-payment plan. Jordan subscribes by completing tenant signup, which gives his
+`registry.offer_versions`: today Solo v2, $0 plus a 2.5% `percentage_of_sales`
+payment plan, whose resource set grants payment processing and the run right to
+every shipped workflow. Jordan subscribes by completing tenant signup, which gives his
 tenant an entitlement to that version in `registry.entitlements`. That
 entitlement is the source of his rate. See
 [The platform is just a tenant](priceops-model.md#the-platform-is-just-a-tenant).

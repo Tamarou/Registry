@@ -169,7 +169,7 @@ steps and screens as any tenant.
 ```mermaid
 flowchart TD
     subgraph registry["registry schema: the platform tenant"]
-        SV["Solo v1<br/>$0 + 2.5% percentage_of_sales"]
+        SV["Solo v2<br/>$0 + 2.5% percentage_of_sales<br/>payment processing and workflow run rights"]
         SE["SACP's entitlement<br/>holder_tenant_id = SACP"]
         OR["registry's own entitlements<br/>operator right, 0% payment processing"]
         SV -->|accepted at signup| SE
