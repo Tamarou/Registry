@@ -188,6 +188,18 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
         );
     }
 
+    # One driver per run (Job::ContinueWorkflowRun): a session-level advisory
+    # lock keyed on the run id, waited for, and held until release_driver_lock.
+    my $DRIVER_LOCK = q{SELECT %s(hashtextextended('workflow_run:' || ?, 0))};
+
+    sub take_driver_lock ( $class, $db, $run_id ) {
+        $db->query( sprintf( $DRIVER_LOCK, 'pg_advisory_lock' ), $run_id );
+    }
+
+    sub release_driver_lock ( $class, $db, $run_id ) {
+        $db->query( sprintf( $DRIVER_LOCK, 'pg_advisory_unlock' ), $run_id );
+    }
+
     method has_continuation { defined $continuation_id }
 
     method continuation ($db) {

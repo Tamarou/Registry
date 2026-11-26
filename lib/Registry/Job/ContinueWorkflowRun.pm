@@ -35,15 +35,14 @@ class Registry::Job::ContinueWorkflowRun {
 
         # One driver per run: a second job for it waits here, then finds the
         # run where the first left it. Released however the drive ends.
-        my $lock = q{SELECT %s(hashtextextended('workflow_run:' || ?, 0))};
-        $db->query( sprintf( $lock, 'pg_advisory_lock' ), $run_id );
+        Registry::DAO::WorkflowRun->take_driver_lock( $db, $run_id );
         my $done;
         try { $done = $self->_drive( $job, $db, $tenant, $run_id, $opt{alert_admins} // 1 ) }
         catch ($e) {
-            $db->query( sprintf( $lock, 'pg_advisory_unlock' ), $run_id );
+            Registry::DAO::WorkflowRun->release_driver_lock( $db, $run_id );
             die $e;
         }
-        $db->query( sprintf( $lock, 'pg_advisory_unlock' ), $run_id );
+        Registry::DAO::WorkflowRun->release_driver_lock( $db, $run_id );
         return $done;
     }
 
