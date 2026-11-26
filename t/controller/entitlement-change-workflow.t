@@ -59,7 +59,7 @@ sub occurrences ( $fee, $capacity, @hours ) {
             { returning => 'id' } )->hash->{id};
         my $event = $db->insert( 'events', {
             project_id => $class, location_id => $room, teacher_id => $teacher->id,
-            time       => \"now() + interval '$_ hours'", duration => 90, capacity => $capacity,
+            time       => \"now() + interval '$_ hours'", duration => 90, status => 'published', capacity => $capacity,
         }, { returning => 'id' } )->hash->{id};
         Registry::DAO::Resource->for_occurrence( $db, $event );
     } @hours;
@@ -277,7 +277,7 @@ subtest 'other tenant entitlement not found' => sub {
     my @res = map {
         Registry::DAO::Resource->for_occurrence( $other, $other->insert( 'events', {
             project_id => $class, location_id => $room, teacher_id => $teach,
-            time => \"now() + interval '$_ hours'", duration => 90, capacity => 4 }, { returning => 'id' } )->hash->{id} )
+            time => \"now() + interval '$_ hours'", duration => 90, status => 'published', capacity => 4 }, { returning => 'id' } )->hash->{id} )
     } 72, 96;
     my $version = Registry::DAO::Offer->create( $other, { name => 'Far wheel' } )
         ->draft( $other, offer_terms( undef, class_project_id => $class, policies => {

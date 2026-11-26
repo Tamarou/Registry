@@ -66,7 +66,7 @@ sub occurrences ( $change, @hours ) {
             { returning => 'id' } )->hash->{id};
         my $event = $studio->insert( 'events', {
             project_id => $class, location_id => $room, teacher_id => person(),
-            time       => \"now() + interval '$_ hours'", duration => 90, capacity => 4,
+            time       => \"now() + interval '$_ hours'", duration => 90, status => 'published', capacity => 4,
         }, { returning => 'id' } )->hash->{id};
         Registry::DAO::Resource->for_occurrence( $studio, $event );
     } @hours;

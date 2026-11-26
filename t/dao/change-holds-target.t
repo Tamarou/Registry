@@ -50,6 +50,7 @@ sub occurrences ( $change, @hours ) {
         my $event = $studio->insert( 'events', {
             project_id => $class, location_id => $room, teacher_id => person(),
             time       => \"now() + interval '$_ hours'", duration => 90, capacity => $capacity,
+            status     => 'published',
         }, { returning => 'id' } )->hash->{id};
         Registry::DAO::Resource->for_occurrence( $studio, $event );
     } @hours;
@@ -240,6 +241,21 @@ subtest 'started target refused' => sub {
     }
     is_deeply live_holds($run), [], 'no hold is placed';
 };
+
+for my $status (qw( closed draft )) {
+    subtest "$status target refused" => sub {
+        my ( $version, $held, $target ) = occurrences( \%WINDOW, 72, 96 );
+        $studio->update( 'events', { status => $status }, { id => $target->event_id } );
+        my $e = booking( $version, $held );
+        my ( $run, $chose ) = chosen($e);
+        is_deeply $chose->{change_targets}, [], "a $status occurrence is not listed";
+        ok hold_target( $run, $target )->{errors}, "and holding it is refused";
+        is_deeply live_holds($run), [], 'no hold is placed';
+        is $target->free_units($studio), 4, 'the target keeps every seat';
+        is_deeply $e->units( $studio, $held->id ), [1], 'the booking stays on its occurrence';
+        is_deeply $e->units( $studio, $target->id ), [], 'and has nothing on the target';
+    };
+}
 
 subtest 'other offer target refused' => sub {
     my ( $version, $held ) = occurrences( \%WINDOW, 72 );
