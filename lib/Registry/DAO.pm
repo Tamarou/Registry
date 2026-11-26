@@ -39,10 +39,14 @@ class Registry::DAO {
     field $pg = do {
         my $pg_obj = Mojo::Pg->new($url);
         $pg_obj->search_path( [ $schema, 'public' ] );
-        # Mojo::Pg handles UTF-8 by default, but ensure proper client encoding
+        # Mojo::Pg handles UTF-8 by default, but ensure proper client encoding.
+        # Every session runs in UTC, so a bare ::date, date_trunc or the text of
+        # a timestamptz never depends on the server's default zone; local times
+        # are read explicitly with AT TIME ZONE the location's zone.
         $pg_obj->on(connection => sub {
             my ($pg, $dbh) = @_;
             $dbh->do("SET client_encoding = 'UTF8'");
+            $dbh->do("SET TimeZone = 'UTC'");
         });
         $pg_obj;
     };
