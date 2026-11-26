@@ -49,7 +49,7 @@ $dao->db->query('SELECT copy_user(dest_schema => ?, user_id => ?)', $slug, $stud
 
 # ---- minimal tenant-schema test data ----------------------------------------
 
-my $location = Registry::DAO::Location->create( $t_db, {
+my $location = Registry::DAO::Location->create( $t_db, { time_zone => 'America/New_York',
     name         => 'WE Test Location',
     slug         => 'we-test-loc-' . $$,
     address_info => { street => '1 Test St' },
@@ -177,7 +177,7 @@ subtest 'perform: global sweep calls expire_all_old_offers per tenant, registry 
 sub plant_platform_offer ( $label, $expires_in ) {
     my $db = $dao->db;
 
-    my $loc = Registry::DAO::Location->create( $db, {
+    my $loc = Registry::DAO::Location->create( $db, { time_zone => 'America/New_York',
         name         => "Platform $label Location",
         slug         => "platform-$label-loc-$$",
         address_info => { street => '1 Platform St' },

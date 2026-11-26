@@ -1,5 +1,5 @@
-# ABOUTME: Minion job that refunds, in full, a superseded intent a stale tab paid (ruling 7a).
-# ABOUTME: Retried on its attempts; tells the parent when it is made, and staff when the last attempt fails.
+# ABOUTME: Minion job that refunds, in full, a superseded intent a stale tab paid (ruling 7a), or a wrong-amount charge (7b).
+# ABOUTME: Retried on its attempts; tells the parent of a duplicate when it is made, and staff when the last attempt fails.
 use 5.42.0;
 use Object::Pad;
 
@@ -14,17 +14,28 @@ class Registry::Job::SupersededRefund {
         } );
     }
 
+    # Why Registry refunds a charge on its own. A superseded intent is a
+    # duplicate, and its payer is told here once it is refunded; a charge for
+    # the wrong amount was refused by the webhook, which told its payer.
+    my %KIND = (
+        superseded   => { reason => 'duplicate', tell_parent => 1,
+                          what => 'a replaced attempt a stale tab paid' },
+        wrong_amount => { what => 'a charge for other than its quoted amount' },
+    );
+
     # $intent was charged $cents on the seller account $account, for payment
-    # $payment_id in tenant schema $slug, after a newer intent replaced it.
-    method run ( $job, $intent, $account, $cents, $payment_id, $slug ) {
-        my $db = $job->app->dao($slug)->db;
+    # $payment_id in tenant schema $slug: after a newer intent replaced it, or
+    # ($kind wrong_amount) for other than the payment's amount.
+    method run ( $job, $intent, $account, $cents, $payment_id, $slug, $kind = 'superseded' ) {
+        my $db   = $job->app->dao($slug)->db;
+        my $what = $KIND{$kind} or return $job->fail("unknown refund kind '$kind' for intent $intent");
 
         my $refund;
         try {
             $refund = Registry::Service::Stripe->from_env->for_account($account)->create_refund({
                 payment_intent   => $intent,
-                reason           => 'duplicate',
-                _idempotency_key => "refund:superseded:$intent",
+                ( $what->{reason} ? ( reason => $what->{reason} ) : () ),
+                _idempotency_key => "refund:$kind:$intent",
             });
         }
         catch ($err) {
@@ -34,39 +45,39 @@ class Registry::Job::SupersededRefund {
             if ( $err =~ /\AStripe invalid_request_error:/
                  && $err !~ /\((?:rate_limit|lock_timeout|idempotency_key_in_use)\)/ ) {
                 if ( $err =~ /\(charge_already_refunded\)/ ) {
-                    $job->app->log->info("superseded intent $intent was already refunded");
-                    $self->_tell_parent( $db, $cents, $payment_id );
-                    return $job->finish("superseded intent $intent was already refunded");
+                    $job->app->log->info("$kind intent $intent was already refunded");
+                    $self->_tell_parent( $db, $cents, $payment_id ) if $what->{tell_parent};
+                    return $job->finish("$kind intent $intent was already refunded");
                 }
-                $self->_tell_staff( $job, $db, $intent, $cents, $payment_id, $err );
-                return $job->finish("refund of superseded intent $intent refused, not retried: $err");
+                $self->_tell_staff( $job, $db, $intent, $cents, $payment_id, $err, $what );
+                return $job->finish("refund of $kind intent $intent refused, not retried: $err");
             }
 
             # Failing retries the job while it has attempts left; only the last
             # one is worth a person's time. Minion counts attempts down on each
             # retry, so the last run is the one with one left.
-            $self->_tell_staff( $job, $db, $intent, $cents, $payment_id, $err )
+            $self->_tell_staff( $job, $db, $intent, $cents, $payment_id, $err, $what )
                 if $job->info->{attempts} <= 1;
-            return $job->fail("refund of superseded intent $intent failed: $err");
+            return $job->fail("refund of $kind intent $intent failed: $err");
         }
 
-        $job->app->log->info("superseded intent $intent refunded ($refund->{id})");
-        $self->_tell_parent( $db, $cents, $payment_id );
-        return $job->finish("superseded intent $intent refunded as $refund->{id}");
+        $job->app->log->info("$kind intent $intent refunded ($refund->{id})");
+        $self->_tell_parent( $db, $cents, $payment_id ) if $what->{tell_parent};
+        return $job->finish("$kind intent $intent refunded as $refund->{id}");
     }
 
-    method _tell_staff ( $job, $db, $intent, $cents, $payment_id, $err ) {
+    method _tell_staff ( $job, $db, $intent, $cents, $payment_id, $err, $what ) {
         my $sum = _sum($cents);
         Registry::DAO::Notification->alert_admins( $db,
             'Refund failed: refund it by hand',
             "Registry could not refund $sum charged on Stripe intent $intent for "
-          . "payment $payment_id, a replaced attempt a stale tab paid. "
+          . "payment $payment_id, $what->{what}. "
           . 'Refund it by hand in Stripe.',
             { payment_id => $payment_id, payment_intent_id => $intent } );
         # Stripe's text is not ours: escaped, so it cannot forge a log line.
         my $why = "$err" =~ s/\s+\z//r =~ s/([^\x20-\x7e])/sprintf '\\x{%x}', ord $1/ger;
-        $job->app->log->error( "refund of superseded intent $intent ($sum, payment "
-              . "$payment_id) failed; refund it by hand: $why" );
+        $job->app->log->error( "refund of intent $intent ($sum, payment "
+              . "$payment_id, $what->{what}) failed; refund it by hand: $why" );
     }
 
     # Whoever the payment row says paid, as ruling 7a asks. A row that has gone

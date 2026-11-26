@@ -209,7 +209,7 @@ subtest 'Subscription config follows the run in hand, not the newest run' => sub
         'get_subscription_config prices the run it is handed');
 };
 
-my $SOLO_V1 = '00000000-0000-0000-0003-000000000001';
+my $SOLO_V2 = '9bc4069a-f0a7-0026-3a84-aeb0d0732995';    # solo-grants-workflow-set's
 
 # A run that has reached the review page, enough for provisioning to succeed.
 sub signup_run ($slug, %extra) {
@@ -248,7 +248,7 @@ subtest 'signup provisions with no card or subscription' => sub {
     ok !$payment_step->can($_), "the step has no $_"
         for qw( create_setup_intent handle_setup_completion check_stripe_service check_session_validity );
 
-    my $result = $run->process( $db, $payment_step, { offer_version => $SOLO_V1 } );
+    my $result = $run->process( $db, $payment_step, { offer_version => $SOLO_V2 } );
     ok $result->{tenant}, 'the tenant is provisioned';
 
     my $data = Registry::DAO::WorkflowRun->find( $db, { id => $run->id } )->data;
@@ -275,7 +275,7 @@ subtest 'client card or subscription fields ignored' => sub {
     } );
 
     my $result = $run->process( $db, $payment_step, {
-        offer_version          => $SOLO_V1,
+        offer_version          => $SOLO_V2,
         collect_payment_method => 1,
         setup_intent_id        => 'seti_client_chosen',
         payment_method_id      => 'pm_client_chosen',

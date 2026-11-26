@@ -31,8 +31,8 @@ class Registry::Service::Stripe {
     sub from_env ($class) {
         my $api_key = $ENV{STRIPE_SECRET_KEY} || die "STRIPE_SECRET_KEY not set";
 
-        if ($api_key =~ /^sk_live_/ && ($ENV{MOJO_MODE} // '') ne 'production') {
-            die "Refusing to use a live Stripe key (sk_live_) outside production "
+        if ($api_key =~ /^[sr]k_live_/ && ($ENV{MOJO_MODE} // '') ne 'production') {
+            die "Refusing to use a live Stripe key (sk_live_ or rk_live_) outside production "
               . "(MOJO_MODE=" . ($ENV{MOJO_MODE} // 'unset') . "); "
               . "set a Stripe test key (sk_test_) for development and tests.\n";
         }

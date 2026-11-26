@@ -59,6 +59,24 @@ class Registry::DAO::Event :isa(Registry::DAO::Object) {
         Registry::DAO::Location->find( $db, { id => $location_id } );
     }
 
+    # Its start in its location's IANA time zone: { start => 'YYYY-MM-DD HH:MI',
+    # date => 'YYYY-MM-DD', utc_offset => '+HH:MM', time_zone => name }. The
+    # offset tells apart the two instants of a fall-back hour's one wall time.
+    method local_start ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        my $row = $db->query( q{
+            SELECT to_char(e.time AT TIME ZONE l.time_zone, 'YYYY-MM-DD HH24:MI') AS start,
+                   to_char(e.time AT TIME ZONE l.time_zone, 'YYYY-MM-DD') AS date,
+                   extract(epoch FROM (e.time AT TIME ZONE l.time_zone) - (e.time AT TIME ZONE 'UTC'))::int AS offset,
+                   l.time_zone
+              FROM events e JOIN locations l ON l.id = e.location_id
+             WHERE e.id = ?
+        }, $id )->hash;
+        my $offset = delete $row->{offset};
+        $row->{utc_offset} = sprintf '%s%02d:%02d', $offset < 0 ? '-' : '+', abs($offset) / 3600, abs($offset) % 3600 / 60;
+        return $row;
+    }
+
     method teacher ($db) {
         Registry::DAO::User->find( $db, { id => $teacher_id } );
     }

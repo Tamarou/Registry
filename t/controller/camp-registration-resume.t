@@ -53,7 +53,7 @@ $t->app->helper(dao => sub { $dao });
 
 # --- Test Data Setup ---
 
-my $location = $dao->create(Location => {
+my $location = $dao->create(Location => { time_zone => 'America/New_York',
     name         => 'Resume Test Studio',
     address_info => { street => '100 Main', city => 'Orlando', state => 'FL' },
     metadata     => {},

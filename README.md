@@ -130,6 +130,10 @@ Registry is production-ready with the following features implemented:
       `./registry platform bootstrap` writes these onto the `registry`
       tenant and its admin and refuses a production boot without them (see
       DEPLOYMENT.md).
+      `STRIPE_SECRET_KEY` is required to take any priced payment: without
+      it, or when the selling tenant's Stripe account is not ready, a priced
+      cart is refused with a message to the user and nothing is enrolled;
+      only a $0 cart completes without Stripe.
 - [ ] Configure email delivery: set `POSTMARK_SERVER_TOKEN` in the
       Render dashboard (sync: false in render.yaml). Notifications route
       through Postmark's SMTP relay when this is present; the address in

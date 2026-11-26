@@ -23,7 +23,7 @@ my $dao     = $test_db->db;
 
 # --- Shared fixtures ---
 
-my $location = $dao->create(Location => {
+my $location = $dao->create(Location => { time_zone => 'America/New_York',
     name         => 'Offer Window Studio',
     address_info => { street => '1 Test St', city => 'Orlando', state => 'FL' },
     metadata     => {},

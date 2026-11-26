@@ -28,10 +28,16 @@ class Registry::DAO::WorkflowSteps::OfferBasics :isa(Registry::DAO::WorkflowStep
         my $offer_id = $form_data->{offer_id};
         my %basis;
         my %prefill = $run && ( $run->data->{offer_basics} // {} )->{based_on_version_id} ? %cleared : ();
+        my $class_id = $run && ( $run->data->{resource_choice} // {} )->{class_project_id};
         if ( defined $offer_id && !ref $offer_id && length $offer_id ) {
             my $offer   = $offer_id =~ $UUID && Registry::DAO::Offer->find( $db, { id => $offer_id } );
             my $current = $offer && $offer->current_version($db)
                 or return { stay => 1, errors => ['Choose one of your published offers'] };
+            # Its new version sells what the current one does, never this
+            # run's other class or resource: that would take the offer from its own.
+            return { stay => 1, errors => [ $class_id
+                ? 'Choose one of the offers for this class' : 'Choose one of the offers for this resource' ] }
+                unless _sells( $current, $class_id, $resource_id );
             $name    = $offer->name;
             %basis   = ( offer_id => $offer->id, based_on_version_id => $current->id );
             %prefill = ( %cleared, _terms_of( $db, $current ) );
@@ -39,7 +45,6 @@ class Registry::DAO::WorkflowSteps::OfferBasics :isa(Registry::DAO::WorkflowStep
 
         # Class mode: the resource step wrote the class key, re-checked here
         # against this schema, and the offer covers the class's occurrences.
-        my $class_id = $run && ( $run->data->{resource_choice} // {} )->{class_project_id};
         if ($class_id) {
             my @errors;
             push @errors, 'Choose one of your classes'
@@ -63,6 +68,13 @@ class Registry::DAO::WorkflowSteps::OfferBasics :isa(Registry::DAO::WorkflowStep
         return { %prefill, offer_basics => { resource_id => $resource->id, offer_name => $name, %basis } };
     }
 
+    # Does $version sell class $class_id, or else resource $resource_id?
+    sub _sells ( $version, $class_id, $resource_id ) {
+        my $sells = $class_id ? $version->class_project_id : $version->resource_id;
+        my $want  = $class_id // $resource_id;
+        return defined $sells && defined $want && !ref $want && $sells eq $want;
+    }
+
     # $version's terms in the shapes the later steps record them.
     sub _terms_of ( $db, $version ) {
         my %plan     = map { $_->{kind} => $_ } $version->payment_plans($db)->@*;
@@ -82,7 +94,14 @@ class Registry::DAO::WorkflowSteps::OfferBasics :isa(Registry::DAO::WorkflowStep
         my $choice = $run->data->{resource_choice} // {};
         return {
             resources            => [ Registry::DAO::Resource->find( $db, {}, { -asc => 'name' } ) ],
-            offers => [ grep { $_->current_version($db) } Registry::DAO::Offer->find( $db, {}, { -asc => 'name' } ) ],
+            # Only offers a new version of which this run may publish: the
+            # class's, or one selling a single resource (the chosen one, once known).
+            offers => [ grep {
+                my $current = $_->current_version($db);
+                $current && ( $choice->{class_project_id} || $choice->{resource_id}
+                    ? _sells( $current, $choice->@{qw( class_project_id resource_id )} )
+                    : defined $current->resource_id )
+            } Registry::DAO::Offer->find( $db, {}, { -asc => 'name' } ) ],
             selected_resource_id => $choice->{resource_id},
             class                => $choice->{class_project_id}
                 && Registry::DAO::Project->find( $db, { id => $choice->{class_project_id} } ),

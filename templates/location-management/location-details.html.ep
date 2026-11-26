@@ -19,6 +19,16 @@
                value="<%= stash('name') // '' %>">
     </p>
 
+    <p>
+        <label for="loc-time-zone">Time zone</label>
+        <select id="loc-time-zone" name="time_zone" required>
+            <option value="">Choose the location's time zone</option>
+            % for my $zone (@{ stash('time_zones') // [] }) {
+                <option value="<%= $zone %>"<%= $zone eq (stash('time_zone') // '') ? ' selected' : '' %>><%= $zone %></option>
+            % }
+        </select>
+    </p>
+
     <fieldset>
         <legend>Address</legend>
         <p>

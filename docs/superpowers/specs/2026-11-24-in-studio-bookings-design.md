@@ -316,13 +316,28 @@ production checkout is refused (ADR 005, ruling 12; gap G8).
 
 ### How the in-studio offer is published
 
-By an admin run, not bootstrap data. The model's bootstrap creates only the
-root and Solo v1, and "nothing after it is created any other way". Alex runs
-`offer-publishing` on `registry` to publish the Solo version that adds the
-in-studio run rights (ADR 004, ruling (a)); the test publishes it through the
-same workflow (`publish_offer`). SACP's admin then accepts that version, which
-brings the copies (step 6). This needs an offer version that buys a set (gap
-G1).
+As data in the day-one Solo version, by migration. perigrin ruled on
+2026-11-26: "Yes it may grant every workflow, that grant should be built into
+the offer though so a later offer maybe only offers *some* workflows (e.g
+in-studio classes only)"
+(https://claude.ai/code/session_01V7rs98q3bwA7Cs9ZBpVuL5).
+
+So `solo-grants-workflow-set` publishes Solo v2, superseding the unheld Solo
+v1 (the migration refuses while v1 has a holder) on v1's price, policies,
+units, cap and 2.5% revenue share. v2's resource set (`offer_version_resources`,
+G1) lists payment processing and a `run:<slug>` resource for every non-draft
+workflow shipped in `workflows/` when the migration was written, less
+`never_copied`; the five in-studio workflows are among them. The grant is that
+stored set: nothing computes "every workflow" when a tenant accepts, and a
+version listing a subset grants only that subset. A workflow added later is
+granted only by a new Solo version that lists it;
+`t/priceops/solo-lists-every-shipped-workflow.t` fails until one does. The
+list is written into the migration because a fresh deploy has no workflows in
+`registry` until `workflow import` runs. A studio, SACP included, signs up
+afterwards and accepts v2, which brings the run rights and the copies (step 6;
+`t/integration/in-studio-reaches-new-tenant.t`). `offer-publishing` cannot
+version Solo from now on: offer-basics versions an offer only to sell the one
+resource it already sells.
 
 ### Day view as route or workflow
 
@@ -454,7 +469,7 @@ section before it starts.
 | 9 | `01a20415-6b96` direct charge | adds `CompleteBooking` (G2); the money rules once perigrin answers (G3) |
 | 10 | `01a20415-6bae` change window | wall-clock rule; inclusive boundary (G7); no new workflow |
 | 11 | `01a20415-6bf2` day view | workflow `in-studio-day-view` |
-| 12 | `01a20415-6c2f` offer the in-studio workflows | admin run of `offer-publishing` on `registry`; the offered set is all five workflows, `entitlement-change` included; needs G1 |
+| 12 | `01a20415-6c2f` offer the in-studio workflows | the `solo-grants-workflow-set` migration publishes Solo v2 listing every shipped workflow, the five in-studio ones (`entitlement-change` included) among them (perigrin, 2026-11-26); needs G1 |
 | 13 | `01a20415-6d02` `t/priceops/day-one.t` | as above |
 
 The guide for studio admins and staff, `[S7-docs]` `01a20423-1285`, follows

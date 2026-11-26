@@ -29,7 +29,10 @@ class Registry::DAO::WorkflowSteps::HoldChangeTarget :isa(Registry::DAO::Workflo
         my $entitlement    = $entitlement_id && Registry::DAO::Entitlement->find( $db, { id => $entitlement_id } );
         return { stay => 1, errors => ['Choose a booking to change'] } unless $entitlement;
         # The window may have closed while the page was open; the poster may not be the run's person.
-        if ( my $refusal = $choose->stranger( $entitlement, $data->{user} ) // $choose->refusal( $db, $entitlement ) ) {
+        # Before any hold, so a change the booker must run takes no seats (see fee_refusal).
+        if ( my $refusal = $choose->stranger( $entitlement, $data->{user} ) // $choose->refusal( $db, $entitlement )
+            // $choose->fee_refusal( $entitlement, $data->{user},
+                $entitlement->offer_version($db)->policies->{change}{fee_cents} ) ) {
             return { stay => 1, errors => [$refusal] };
         }
         my $live = Registry::PriceOps::Hold->live_sql('holds');

@@ -36,7 +36,7 @@ our $user = $dao->create(
     }
 );
 our $location = $dao->create(
-    Location => {
+    Location => { time_zone => 'America/New_York',
         name => 'Event Venue',
     }
 );

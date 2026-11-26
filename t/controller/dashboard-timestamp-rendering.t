@@ -31,7 +31,7 @@ my $tp = Test::Registry::Mojo->new('Registry');
 $tp->app->helper(dao => sub { $dao });
 
 # --- Seed an enrollment chain plus an OFFERED waitlist entry --------------
-my $location = $dao->create(Location => {
+my $location = $dao->create(Location => { time_zone => 'America/New_York',
     name => 'Timestamp Studio', slug => 'timestamp-studio',
     address_info => { street => '1 Main', city => 'Orlando', state => 'FL' },
     metadata => {},

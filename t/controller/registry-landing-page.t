@@ -13,7 +13,8 @@ use Registry::PriceOps::RevenueShare;
 use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
-use Test::Registry::Helpers qw( join_tenant publish_offer );
+use Test::Registry::Helpers qw( join_tenant );
+use Test::Registry::SoloVersion qw( publish_solo_version );
 use Test::Registry::Fixtures;
 
 use Registry::DAO qw(Workflow);
@@ -43,7 +44,7 @@ for my $file (@tmpl_files) {
 }
 
 # Seed registry-like data: project with registration_workflow metadata
-my $location = $dao->create(Location => {
+my $location = $dao->create(Location => { time_zone => 'America/New_York',
     name => 'Online RegLP Test', slug => 'online-reglp-test',
     address_info => { type => 'virtual' }, metadata => {},
 });
@@ -188,19 +189,11 @@ my $platform_admin = Test::Registry::Fixtures::create_user( $dao,
 join_tenant( $dao, $platform_admin, 'admin', 'registry' );
 
 subtest 'landing and signup index quote the published solo rate' => sub {
-    is_deeply quoted_rates(), { landing => '2.5', signup => '2.5' }, 'both pages quote Solo v1\'s 2.5%';
+    is_deeply quoted_rates(), { landing => '2.5', signup => '2.5' }, 'both pages quote Solo\'s 2.5%';
 
-    publish_offer( $dao, 'registry', $platform_admin, {
-        'offer-basics'                => { resource_id => '00000000-0000-0000-0001-000000000001',
-                                           offer_id    => '00000000-0000-0000-0002-000000000001' },
-        'offer-price'                 => { price_cents => 0, currency => 'usd',
-                                           units_per_acceptance => 1, per_booking_cap => 1 },
-        'one-time-payment'            => { one_time => 'declined' },
-        'percentage-of-sales-payment' => { percentage_of_sales => 'offered', rate_percent => '2.4' },
-        refund                        => 'keep_fee_with_admin_exception',
-    } );
+    publish_solo_version( $dao, 0.024 );
 
-    is_deeply quoted_rates(), { landing => '2.4', signup => '2.4' }, 'both pages quote Solo v2\'s 2.4%';
+    is_deeply quoted_rates(), { landing => '2.4', signup => '2.4' }, 'both pages quote the later Solo version\'s 2.4%';
     $t->get_ok($_)->content_unlike(qr/(?<![\d.])2\.5%/, "$_ no longer says 2.5%") for '/', '/tenant-signup';
 };
 

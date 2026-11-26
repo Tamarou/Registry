@@ -11,6 +11,7 @@ use utf8;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::Mojo;
+use Test::Registry::SoloVersion qw(accept_solo);
 use Test::Registry::DB;
 
 use Registry::DAO qw(Workflow);
@@ -34,11 +35,12 @@ for my $file (@files) {
 
 # A real tenant with a real schema, so `Host: guardtest.localhost` resolves to
 # it rather than degrading to registry.
-Registry::DAO::Tenant->provision($dao->db, {
+# It accepts Solo, as signup does, so it holds the run rights the gate asks for.
+accept_solo( $dao->db, Registry::DAO::Tenant->provision($dao->db, {
     name  => 'Guard Test Studio',
     slug  => 'guardtest',
     users => [],
-});
+}) );
 
 my $TENANT_HOST = 'guardtest.localhost';
 

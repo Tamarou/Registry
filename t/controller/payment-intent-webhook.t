@@ -35,7 +35,7 @@ $t->app->log->level('info');
 $t->app->log->on(message => sub ($log, $level, @lines) { push @logs, [ $level, "@lines" ] });
 
 # --- seed a registration's worth of data ---
-my $loc = $dao->create(Location => { name => 'PI Studio', slug => 'pi-studio', address_info => {}, metadata => {} });
+my $loc = $dao->create(Location => { time_zone => 'America/New_York', name => 'PI Studio', slug => 'pi-studio', address_info => {}, metadata => {} });
 my $prog = $dao->create(Project => { status => 'published', name => 'PI Camp', program_type_slug => 'summer-camp', metadata => {} });
 my $teacher = $dao->create(User => { username => 'pi_teacher', name => 'T', user_type => 'staff', email => 'pit@test.local' });
 my $session = $dao->create(Session => {
@@ -380,7 +380,7 @@ sub a_seller ($tag) {
         stripe_charges_enabled => 1, stripe_details_submitted => 1 });
     my $tdb = Registry::DAO->new(url => $test_db->uri, schema => $slug)->db;
 
-    my $loc = Registry::DAO::Location->create($tdb, { name => "PI $tag Studio",
+    my $loc = Registry::DAO::Location->create($tdb, { time_zone => 'America/New_York', name => "PI $tag Studio",
         slug => "pi-$tag-studio", address_info => {}, metadata => {} });
     my $prog = Registry::DAO::Project->create($tdb, { name => "PI $tag Camp",
         status => 'published', program_type_slug => 'summer-camp', metadata => {} });

@@ -1,0 +1,241 @@
+#!/usr/bin/env perl
+# ABOUTME: The in-studio-booking pages over HTTP: an anonymous visitor picks an occurrence and sees its offers to choose from.
+# ABOUTME: Each offer shows its price, seats and policies in plain words, and the page links /terms; design-system classes only.
+BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
+
+use 5.42.0;
+use warnings;
+use lib qw(lib t/lib);
+use Test::More;
+use List::Util qw( uniq );
+use Mojo::File qw( path );
+use Test::Registry::Mojo;
+use Test::Registry::DB;
+use Test::Registry::Fixtures;
+use Test::Registry::Helpers qw( authenticate_as import_all_workflows );
+use Test::Registry::Offers qw( offer_terms );
+use Registry;
+use Registry::DAO;
+use Registry::DAO::Offer;
+use Registry::DAO::Payment;
+use Registry::DAO::Project;
+use Registry::DAO::Resource;
+use Registry::Terms;
+
+my $test_db = Test::Registry::DB->new;
+my $dao     = $test_db->db;
+my $db      = $dao->db;
+$ENV{DB_URL} = $test_db->uri;
+import_all_workflows($dao);
+
+my $teacher = Test::Registry::Fixtures::create_user( $dao,
+    { username => 'book_teacher', name => 'Book Teacher', email => 'teacher@book.test', user_type => 'staff' } );
+my $room = Test::Registry::Fixtures::create_location( $db,
+    { name => 'Kiln room', slug => 'kiln-room', time_zone => 'America/New_York' } );
+
+# A class named $name with one published occurrence next week, and its seats.
+sub occurrence ($name) {
+    my $class = Registry::DAO::Project->create( $db,
+        { name => $name, seats_per_occurrence => 6, metadata => { location_id => $room->id } } );
+    my $event = $db->query( q{
+        INSERT INTO events (project_id, location_id, teacher_id, time, duration, capacity, status)
+        VALUES (?, ?, ?, now() + interval '7 days', 90, 6, 'published') RETURNING id
+    }, $class->id, $room->id, $teacher->id )->array->[0];
+    return ( $class, Registry::DAO::Resource->for_occurrence( $db, $event ) );
+}
+
+# SACP's four policies: sales final; reschedule up to 48 hours before for $10.
+my %SACP = (
+    refund => { kind => 'none' },
+    change => { kind => 'window', window_hours => 48, fee_cents => 1000, targets => 'same_offer' },
+    use    => { kind => 'optional_attendance' },
+    expiry => { kind => 'end_of_occurrence' },
+);
+
+sub offer ( $class, $name, %terms ) {
+    return Registry::DAO::Offer->create( $db, { name => $name } )
+        ->draft( $db, offer_terms( undef, class_project_id => $class->id, policies => \%SACP, %terms ) )
+        ->publish($db);
+}
+
+my $css = join '', map { path( 'public/css', $_ )->slurp } qw( theme.css app.css );
+
+sub check_screen ( $t, $screen ) {
+    my @classes = uniq map { split ' ', $_->attr('class') } $t->tx->res->dom->find('#workflow-content [class]')->each;
+    is_deeply [ grep { $css !~ /\.\Q$_\E(?![\w-])/ } @classes ], [], "$screen uses design-system classes only";
+}
+
+# An anonymous visitor's client at the offer page for $seats.
+sub at_offers ($seats) {
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->get_ok('/in-studio-booking')->status_is(200);
+    my $form = $t->tx->res->dom->at('#workflow-content form');
+    ok $form, 'the occurrence screen has a form' or return $t;
+    $t->post_ok( $form->attr('action') => form => { occurrence_id => $seats->id } )->status_is(302);
+    my $next = $t->tx->res->headers->location;
+    like $next, qr{/offer\z}, 'on to the offer page';
+    $t->get_ok($next)->status_is(200);
+    return $t;
+}
+
+subtest 'the booking page lists the occurrence\'s offers with price, seats and policies, and links /terms' => sub {
+    my ( $class, $seats ) = occurrence('Wheel basics');
+    my $one    = offer( $class, 'One seat', price_cents => 4500, per_booking_cap => 4 );
+    my $couple = offer( $class, 'Couple',   price_cents => 8000, units_per_acceptance => 2, per_booking_cap => 2 );
+
+    my $t = Test::Registry::Mojo->new('Registry');
+    $t->get_ok('/in-studio-booking')->status_is(200)
+        ->content_like( qr/Wheel basics/, 'an anonymous visitor sees the class' );
+    check_screen( $t, 'occurrence' );
+    $t->element_exists( qq{#workflow-content input[name="occurrence_id"][value="${\ $seats->id }"]},
+        'its occurrence can be chosen' );
+
+    $t = at_offers($seats);
+    check_screen( $t, 'offer' );
+    for my $version ( $one, $couple ) {
+        $t->element_exists( qq{#workflow-content input[name="offer_version_id"][value="${\ $version->id }"]},
+            'each offer can be chosen' );
+    }
+    $t->content_like( qr/One seat/, 'the offer names are shown' )->content_like( qr/Couple/ )
+        ->content_like( qr/\$45\.00/, 'with their prices' )->content_like( qr/\$80\.00/ )
+        ->content_like( qr/2 seats/, 'and seats per unit' )
+        ->content_like( qr/Up to 4 per booking/, 'and the per-booking cap' )
+        ->content_like( qr/Sales are final\./, 'the refund policy in plain words' )
+        ->content_like( qr/Reschedule up to 48 hours before, for \$10\.00\./, 'and the change policy' );
+    $t->element_exists( '#workflow-content a[href="/terms"]', 'the page links /terms' );
+    $t->element_exists( '#workflow-content input[type="checkbox"][name="agree_to_terms"][required]',
+        'with a box to agree to them' );
+    $t->element_exists( sprintf( '#workflow-content input[type="hidden"][name="terms_version_shown"][value="%s"]',
+        Registry::Terms::VERSION ), 'naming the version shown' );
+    $t->element_exists( '#workflow-content input[name="count"][value="1"][min="1"]', 'the count starts at 1' );
+};
+
+subtest 'a signed-in visitor holds the seats and reaches payment' => sub {
+    my ( $class, $seats ) = occurrence('Glazing');
+    my $version = offer( $class, 'One seat', price_cents => 3000, per_booking_cap => 2 );
+    my $booker  = Test::Registry::Fixtures::create_user( $dao,
+        { username => 'book_sam', name => 'Book Sam', email => 'sam@book.test', user_type => 'parent' } );
+    my $t = Test::Registry::Mojo->new('Registry');
+    authenticate_as( $t, $booker );
+    $t->get_ok('/in-studio-booking')->status_is(200);
+    $t->post_ok( $t->tx->res->dom->at('#workflow-content form')->attr('action') => form => { occurrence_id => $seats->id } )
+        ->status_is(302);
+    $t->get_ok( $t->tx->res->headers->location )->status_is(200);
+    $t->post_ok( $t->tx->res->dom->at('#workflow-content form')->attr('action') =>
+        form => { offer_version_id => $version->id, count => 2, agree_to_terms => 1,
+            terms_version_shown => Registry::Terms::VERSION } )->status_is(302);
+    like my $account = $t->tx->res->headers->location, qr{/account\z}, 'on to the account page';
+    $t->get_ok($account)->status_is(200)->content_like( qr/Signed in as Book Sam/, 'which knows who is signed in' );
+    check_screen( $t, 'account' );
+    $t->post_ok( $t->tx->res->dom->at('#workflow-content form')->attr('action') => form => { action => 'continue_logged_in' } )
+        ->status_is(302);
+    like my $hold = $t->tx->res->headers->location, qr{/hold\z}, 'on to the hold page';
+    $t->get_ok($hold)->status_is(200)->content_like( qr/Total: \$60\.00/, 'which shows the total' );
+    check_screen( $t, 'hold' );
+    $t->post_ok( $t->tx->res->dom->at('#workflow-content form')->attr('action') => form => {} )->status_is(302);
+    like my $payment = $t->tx->res->headers->location, qr{/payment\z}, 'on to payment';
+    is $seats->free_units($db), 4, 'with two seats held';
+    $t->get_ok($payment)->status_is(200)->content_like( qr/One seat x 2: \$60\.00/, 'which shows what is owed' );
+    check_screen( $t, 'payment' );
+};
+
+subtest 'offer text is html escaped' => sub {
+    my ( $class, $seats ) = occurrence('<b>Bold</b> class');
+    offer( $class, '<script>alert("seat")</script>' );
+    my $t = at_offers($seats);
+    $t->content_unlike( qr/<script>alert/, 'the offer name\'s markup is not rendered' )
+        ->content_like( qr/&lt;script&gt;alert/, 'it is shown escaped' )
+        ->content_unlike( qr/<b>Bold<\/b>/, 'nor is the class name\'s' );
+    is $t->tx->res->dom->find('#workflow-content script')->size, 0, 'the page body carries no script';
+};
+
+subtest 'no offer preselected' => sub {
+    my ( $class, $seats ) = occurrence('Handbuilding');
+    offer( $class, 'One seat' );
+    offer( $class, 'Couple', units_per_acceptance => 2 );
+    my $t = at_offers($seats);
+    is $t->tx->res->dom->find('#workflow-content input[name="offer_version_id"]')->size, 2, 'both offers are listed';
+    is $t->tx->res->dom->find('#workflow-content input[name="offer_version_id"][checked]')->size, 0,
+        'and neither is chosen for the visitor';
+};
+
+# A signed-in booker's client walked to the payment page for one seat of a
+# fresh class; returns the client, the occurrence and the payment page's URL.
+sub at_payment ($who) {
+    my ( $class, $seats ) = occurrence("Class for $who");
+    my $version = offer( $class, 'One seat', price_cents => 3000 );
+    my $booker  = Test::Registry::Fixtures::create_user( $dao,
+        { username => "book_$who", name => "Book \u$who", email => "$who\@book.test", user_type => 'parent' } );
+    my $t = Test::Registry::Mojo->new('Registry');
+    authenticate_as( $t, $booker );
+    $t->get_ok('/in-studio-booking')->status_is(200);
+    my $post = sub (%form) {
+        $t->post_ok( $t->tx->res->dom->at('#workflow-content form')->attr('action') => form => \%form )->status_is(302);
+        my $next = $t->tx->res->headers->location;
+        $t->get_ok($next)->status_is(200);
+        return $next;
+    };
+    $post->( occurrence_id => $seats->id );
+    $post->( offer_version_id => $version->id, count => 1, agree_to_terms => 1,
+        terms_version_shown => Registry::Terms::VERSION );
+    $post->( action => 'continue_logged_in' );
+    return ( $t, $seats, $post->() );
+}
+
+subtest 'a lapsed hold at payment offers a new booking' => sub {
+    my ( $t, $seats, $payment ) = at_payment('lapsed');
+    my ($old) = $payment =~ m{/in-studio-booking/([^/]+)/payment\z} or return fail 'at payment';
+    $db->query( q{UPDATE holds SET expires_at = clock_timestamp() - interval '1 minute' WHERE workflow_run_id = ?}, $old );
+
+    $t->post_ok( $t->tx->res->dom->at('#workflow-content form')->attr('action') => form => {} )->status_is(302);
+    $t->get_ok( $t->tx->res->headers->location )->status_is(200)
+        ->content_like( qr/The seats held for this payment lapsed\. Nothing has been charged\./, 'the refusal is shown' );
+    check_screen( $t, 'payment refused' );
+    my $start = $t->tx->res->dom->at('#workflow-content form[action="/in-studio-booking"]');
+    ok $start, 'with a form that starts a new booking' or return;
+    is lc $start->attr('method'), 'post', 'by POST, since a GET resumes this run';
+    like $start->all_text, qr/Start a new booking/, 'labelled so';
+
+    is $db->query( q{SELECT count(*) FROM payments WHERE metadata->>'workflow_run_id' = ?}, $old )->array->[0], 0,
+        'the abandoned run started no payment';
+    is $db->query( q{SELECT count(*) FROM holds WHERE workflow_run_id = ? AND state = 'held'}, $old )->array->[0], 0,
+        'and holds nothing';
+    is $seats->free_units($db), 6, 'every seat is free';
+
+    $t->post_ok( '/in-studio-booking' => form => {} )->status_is(302);
+    like my $next = $t->tx->res->headers->location, qr{/in-studio-booking/([^/]+)/occurrence\z}, 'on to choosing a class';
+    my ($new) = $next =~ m{/in-studio-booking/([^/]+)/occurrence\z};
+    isnt $new, $old, 'in a new run';
+    $t->get_ok($next)->status_is(200)
+        ->element_exists( qq{#workflow-content input[name="occurrence_id"][value="${\ $seats->id }"]}, 'listing the class again' );
+};
+
+subtest 'a paid booker returning from Stripe sees the booking' => sub {
+    my ( $t, $seats, $at ) = at_payment('returning');
+    my ($run_id) = $at =~ m{/in-studio-booking/([^/]+)/payment\z} or return fail 'at payment';
+    my $run  = $dao->find( WorkflowRun => { id => $run_id } );
+    my $owed = $run->data->{owed_payment};
+    # The charge the payment step started, already completed by the Connect
+    # webhook (t/dao/in-studio-booking-payment.t) when the booker comes back.
+    my $payment = Registry::DAO::Payment->create( $db, {
+        user_id => $run->data->{user_id}, amount_cents => $owed->{amount_cents},
+        offer_version_id => $owed->{offer_version_id},
+        metadata => { workflow_run_id => $run_id, payment_plan_id => $owed->{payment_plan} } } );
+    $payment->_record_intent( $db, { id => "pi_returning_$$" } );
+    $payment->mark_completed( $db, "pi_returning_$$" ) or return fail 'payment not completed';
+    $run->update_data( $db, { owed_payment_id => $payment->id } );
+
+    $t->get_ok("$at?payment_intent=pi_returning_$$&redirect_status=succeeded")->status_is(302);
+    like my $done = $t->tx->res->headers->location, qr{/in-studio-booking/\Q$run_id\E/done\z}, 'on to the booking';
+    $t->get_ok($done)->status_is(200)
+        ->content_like( qr/You are booked/, 'the booking is shown' )
+        ->content_like( qr/One seat x 1: 1 seat/, 'with the offer and seats' )
+        ->content_like( qr/Sales are final\./, 'and the policies it was sold under' );
+    check_screen( $t, 'done' );
+    my $change = $t->tx->res->dom->at('#workflow-content form[action="/entitlement-change"]');
+    ok $change, 'with a form that starts a reschedule' or return;
+    like $change->all_text, qr/Reschedule/, 'labelled so';
+    is $seats->free_units($db), 5, 'the booker holds the seat';
+};
+
+done_testing;

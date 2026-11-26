@@ -55,7 +55,7 @@ sub a_child () {
         medical_info => {}, emergency_contact => { name => 'x', phone => '5' } });
 }
 
-my $loc = Registry::DAO::Location->create($tdb, {
+my $loc = Registry::DAO::Location->create($tdb, { time_zone => 'America/New_York',
     name => "CR Studio $$", slug => "cr_studio_$$", address_info => {}, metadata => {} });
 my $prog = Registry::DAO::Project->create($tdb, {
     name => "CR Camp $$", status => 'published',

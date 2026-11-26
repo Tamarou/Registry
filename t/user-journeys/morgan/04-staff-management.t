@@ -34,7 +34,7 @@ for my $file (@files) {
 }
 
 # Prerequisite session to assign staff to
-my $location = $dao->create( Location => { name => 'School Gym' } );
+my $location = $dao->create( Location => { time_zone => 'America/New_York', name => 'School Gym' } );
 my $project  = $dao->create( Project  => { name => 'Robotics Club' } );
 my $session  = $dao->create(
     Session => {

@@ -58,7 +58,7 @@ unless ($tenant) {
 # ---------------------------------------------------------------------------
 # Location
 # ---------------------------------------------------------------------------
-my $location = $dao->create( Location => {
+my $location = $dao->create( Location => { time_zone => 'America/New_York',
     name => "Super Awesome Cool Pottery Studio $ts",
     slug => "sacp-studio-$ts",
     address_info => {
@@ -111,9 +111,12 @@ my $teacher = $dao->create( User => {
 # Sessions and Events
 # ---------------------------------------------------------------------------
 my @session_configs = (
-    { key => 'week1', name => 'Week 1', start => days_from_now(14), end => days_from_now(18), capacity => 16 },
-    { key => 'week2', name => 'Week 2', start => days_from_now(21), end => days_from_now(25), capacity => 16 },
-    { key => 'week3_full', name => 'Week 3', start => days_from_now(28), end => days_from_now(32), capacity => 2 },
+    # Week 1 is free: the e2e run has no Stripe keys, and only a $0 cart
+    # completes without Stripe (a priced one is refused), so Nancy's journey
+    # can reach the confirmation page.
+    { key => 'week1', name => 'Week 1', start => days_from_now(14), end => days_from_now(18), capacity => 16, cents => 0 },
+    { key => 'week2', name => 'Week 2', start => days_from_now(21), end => days_from_now(25), capacity => 16, cents => 30000 },
+    { key => 'week3_full', name => 'Week 3', start => days_from_now(28), end => days_from_now(32), capacity => 2, cents => 30000 },
 );
 
 my %sessions;
@@ -160,7 +163,7 @@ for my $cfg (@session_configs) {
     Registry::DAO::PricingPlan->create($db, {
         session_id => $session->id,
         plan_name  => 'Standard',
-        amount_cents => 30000,
+        amount_cents => $cfg->{cents},
     });
 
     $sessions{$cfg->{key}} = {

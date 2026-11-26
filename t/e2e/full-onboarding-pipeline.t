@@ -118,7 +118,7 @@ subtest 'admin creates location, program, session, events, pricing' => sub {
     ok $admin, 'Admin user created in tenant schema';
 
     # Create location
-    my $location = Registry::DAO::Location->create($db, {
+    my $location = Registry::DAO::Location->create($db, { time_zone => 'America/New_York',
         name         => 'Super Awesome Cool Pottery Studio',
         slug         => 'sacp-studio',
         address_info => { street => '930 Hoffner Ave', city => 'Orlando', state => 'FL' },

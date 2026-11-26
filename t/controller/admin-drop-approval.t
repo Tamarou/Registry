@@ -45,7 +45,7 @@ $t->app->helper(dao => sub { $dao });
 
 # --- Test Data Setup ---
 
-my $location = $dao->create(Location => {
+my $location = $dao->create(Location => { time_zone => 'America/New_York',
     name => 'Admin Drop Studio', slug => 'admin-drop-studio',
     address_info => { street => '1 Main', city => 'Orlando', state => 'FL' },
     metadata => {},

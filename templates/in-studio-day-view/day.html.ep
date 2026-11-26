@@ -1,0 +1,87 @@
+%# ABOUTME: in-studio-day-view's one screen: a studio-local day's occurrences, capacity, seats held and bookings.
+%# ABOUTME: Each booking may be marked present (optional attendance) or rescheduled in a fresh change run; nothing else is editable.
+% extends 'layouts/workflow';
+% title 'Day view';
+% stash description => 'One day at the studio, in its local time.';
+% my $location    = stash('location');
+% my $locations   = stash('locations') // [];
+% my $occurrences = stash('occurrences') // [];
+
+% if (my @errors = @{ stash('errors') // [] }) {
+<div class="alert alert-error" role="alert">
+  <ul>
+  % for my $error (@errors) {
+    <li><%= ref $error ? $error->{message} : $error %></li>
+  % }
+  </ul>
+</div>
+% }
+
+<form method="GET" action="<%= url_for('workflow_index', workflow => 'in-studio-day-view') %>">
+  % if (@$locations > 1) {
+  <div class="form-group">
+    <label class="form-label" for="location_id">Location</label>
+    <select class="form-select" id="location_id" name="location_id" required>
+      <option value="">Choose a location</option>
+      % for my $l (@$locations) {
+      <option value="<%= $l->{id} %>"<%= $location && $location->{id} eq $l->{id} ? ' selected' : '' %>><%= $l->{name} %></option>
+      % }
+    </select>
+  </div>
+  % }
+  <div class="form-group">
+    <label class="form-label" for="day">Day</label>
+    <input class="form-input" type="date" id="day" name="day" value="<%= stash('day') // '' %>">
+  </div>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-secondary">Show</button>
+  </div>
+</form>
+
+% if ($location && stash('day')) {
+<h2><%= $location->{name} %>, <%= stash('day') %> (<%= $location->{time_zone} %>)</h2>
+  % unless (@$occurrences) {
+<p>No classes on this day.</p>
+  % }
+  % for my $o (@$occurrences) {
+<section class="card" data-occurrence="<%= $o->{id} %>">
+  <h3><%= $o->{start} %> <%= $o->{class} %></h3>
+  <p>Capacity <%= $o->{capacity} %> · Seats held <%= $o->{held} %></p>
+    % if (my @bookings = @{ $o->{bookings} }) {
+  <table>
+    <thead><tr><th>Booker</th><th>Booked</th><th>Seats</th><th>Present</th><th></th></tr></thead>
+    <tbody>
+      % for my $b (@bookings) {
+      <tr data-entitlement="<%= $b->{id} %>">
+        <td><%= $b->{booker} %></td>
+        <td><%= $b->{count} %> booked</td>
+        <td><%= $b->{seats} %> seats</td>
+        <td>
+        % if ($b->{present}) {
+          <span class="badge">Present</span>
+        % } else {
+          <form method="POST" action="<%= $action %>">
+            <input type="hidden" name="entitlement_id" value="<%= $b->{id} %>">
+            <input type="hidden" name="occurrence_id" value="<%= $o->{id} %>">
+            <input type="hidden" name="location_id" value="<%= $location->{id} %>">
+            <input type="hidden" name="day" value="<%= stash('day') %>">
+            <button type="submit" class="btn btn-sm btn-outline">Mark present</button>
+          </form>
+        % }
+        </td>
+        <td>
+          <form method="POST" action="<%= url_for('workflow_start', workflow => 'entitlement-change') %>">
+            <input type="hidden" name="entitlement_id" value="<%= $b->{id} %>">
+            <button type="submit" class="btn btn-sm btn-secondary">Reschedule</button>
+          </form>
+        </td>
+      </tr>
+      % }
+    </tbody>
+  </table>
+    % } else {
+  <p>No bookings.</p>
+    % }
+</section>
+  % }
+% }

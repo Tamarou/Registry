@@ -29,7 +29,7 @@ my $today     = DateTime->now;
 my $tomorrow  = $today->clone->add(days => 1);
 my $next_year = $today->clone->add(years => 1);
 
-my $location = Registry::DAO::Location->create($db, {
+my $location = Registry::DAO::Location->create($db, { time_zone => 'America/New_York',
     name => 'Session Test Location', address_info => {},
 });
 my $teacher = Registry::DAO::User->create($db, {

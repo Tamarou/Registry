@@ -57,7 +57,7 @@ my (undef, $token) = Registry::DAO::MagicLinkToken->generate($db, {
 });
 
 # Location, program, session, event
-my $loc = Registry::DAO::Location->create($db, {
+my $loc = Registry::DAO::Location->create($db, { time_zone => 'America/New_York',
     name         => "Admin Studio $ts",
     slug         => "admin-studio-$ts",
     address_info => { street => '1 Main', city => 'Orlando', state => 'FL' },

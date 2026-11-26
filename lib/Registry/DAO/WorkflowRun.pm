@@ -79,7 +79,7 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
     # run's JSONB data column to prevent transient metadata from polluting
     # the workflow state.
     my @TRANSIENT_KEYS = qw(
-        next_step errors data _validation_errors stay redirect
+        next_step errors data template_data _validation_errors stay redirect
         retry retry_count retry_delay retry_exceeded should_retry
     );
 
@@ -186,6 +186,18 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
                 depends_on  => $latest_step_id,
             }
         );
+    }
+
+    # One driver per run (Job::ContinueWorkflowRun): a session-level advisory
+    # lock keyed on the run id, waited for, and held until release_driver_lock.
+    my $DRIVER_LOCK = q{SELECT %s(hashtextextended('workflow_run:' || ?, 0))};
+
+    sub take_driver_lock ( $class, $db, $run_id ) {
+        $db->query( sprintf( $DRIVER_LOCK, 'pg_advisory_lock' ), $run_id );
+    }
+
+    sub release_driver_lock ( $class, $db, $run_id ) {
+        $db->query( sprintf( $DRIVER_LOCK, 'pg_advisory_unlock' ), $run_id );
     }
 
     method has_continuation { defined $continuation_id }

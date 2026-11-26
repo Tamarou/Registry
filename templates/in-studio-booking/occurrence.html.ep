@@ -1,0 +1,26 @@
+%# ABOUTME: in-studio-booking step: the visitor picks one occurrence on sale with free seats, in the studio's local time.
+%# ABOUTME: Lists what ChooseOccurrence offers; nothing is preselected.
+% extends 'layouts/workflow';
+% title 'Choose a class';
+% stash description => 'Pick a class time with free seats.';
+% my $occurrences = stash('occurrences') // [];
+%= include 'in-studio-booking/_errors'
+
+<form method="POST" action="<%= $action %>">
+  % if (@$occurrences) {
+  <fieldset>
+    <legend>Class times</legend>
+    % for my $o (@$occurrences) {
+    <div>
+      <input type="radio" id="occurrence-<%= $o->{id} %>" name="occurrence_id" value="<%= $o->{id} %>" required>
+      <label for="occurrence-<%= $o->{id} %>"><%= $o->{class} %>, <%= $o->{start}{start} %> (<%= $o->{start}{time_zone} %>), <%= $o->{free} %> seats free</label>
+    </div>
+    % }
+  </fieldset>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Continue</button>
+  </div>
+  % } else {
+  <p>There are no classes with free seats right now.</p>
+  % }
+</form>

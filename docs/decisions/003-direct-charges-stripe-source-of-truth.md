@@ -129,6 +129,13 @@ when it is missing.
   `refund:superseded:<intent>`. Like every refund it keeps the fee. The parent
   is told, and if the job gives up staff are told to refund by hand (ADR 005,
   ruling 7a). This is the one refund Registry starts on its own.
+
+  *Note (2026-11-25):* [ADR 005's in-studio money rulings](005-priceops-day-one-rulings.md#in-studio-money-step-7)
+  add two more refunds Registry starts on its own: ruling 7a (a booking paid
+  after its seat hold lapsed, when the seats cannot be taken again or the
+  class has started; `CompleteBooking`) and ruling 7b (a charge whose amount
+  differs from the quote; the Connect endpoint and `superseded_refund` with
+  kind `wrong_amount`). Every one of them keeps the platform fee.
 - **Instalment invoices** are matched by the schedule behind the invoice's
   subscription (read from Stripe with `expand[]=schedule`, because an invoice
   names only its subscription under API `2024-12-18.acacia`), and only for

@@ -41,7 +41,7 @@ my $db  = $dao->db;
 my $ts = time() . '_' . $$;
 
 # Location and program
-my $loc = Registry::DAO::Location->create($db, {
+my $loc = Registry::DAO::Location->create($db, { time_zone => 'America/New_York',
     name         => "Drop Test Studio $ts",
     slug         => "drop-studio-$ts",
     address_info => { street => '1 Main', city => 'Orlando', state => 'FL' },

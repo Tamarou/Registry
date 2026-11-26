@@ -45,7 +45,7 @@ sub occurrences ( $change, @hours ) {
     my $class = $studio->insert( 'projects', { name => 'Class ' . ++$made, slug => "class-$made" },
         { returning => 'id' } )->hash->{id};
     my @resources = map {
-        my $room = $studio->insert( 'locations', { name => 'Room ' . ++$made, slug => "room-$made" },
+        my $room = $studio->insert( 'locations', { time_zone => 'America/New_York', name => 'Room ' . ++$made, slug => "room-$made" },
             { returning => 'id' } )->hash->{id};
         my $event = $studio->insert( 'events', {
             project_id => $class, location_id => $room, teacher_id => person(),
@@ -273,7 +273,11 @@ subtest 'window closing between steps refused' => sub {
     my $e = booking( $version, $held );
     my ( $run, $chose ) = chosen($e);
     ok !$chose->{errors}, 'the change is allowed when chosen';
-    $studio->query( q{UPDATE events SET time = now() + interval '47 hours 59 minutes'
+    # 46 hours on the location's wall clock: 2 inside the window, so no DST
+    # change (an hour) moves the cutoff past the clock on any date.
+    $studio->query( q{UPDATE events
+                         SET time = ((now() AT TIME ZONE 'America/New_York') + interval '46 hours')
+                                    AT TIME ZONE 'America/New_York'
                        WHERE id = ?}, $held->event_id );
     like "@{ hold_target( $run, $target )->{errors} // [] }", qr/48 hours/,
         'once the window closes the hold step refuses';

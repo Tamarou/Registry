@@ -7,9 +7,16 @@ package Registry::WorkflowDivergence;
 
 use Digest::SHA qw( sha256_hex );
 use Encode      qw( encode_utf8 );
+use Mojo::File;
+use Registry::DAO::Tenant;
+use Registry::DAO::Workflow;
 
 # Provisioning never copies these to a tenant, so their absence is expected.
 my %NOT_COPIED = map { $_ => 1 } qw( tenant-signup registry-storefront );
+
+# Is workflow $slug the platform's alone, never copied to a tenant? The one
+# list provisioning and accepting the platform's offer both read.
+sub never_copied ($slug) { $NOT_COPIED{$slug} ? 1 : 0 }
 
 # Steps whose template provisioning unlinks in the tenant on purpose (refs #173
 # #229): registry's is the platform's marketing page, and the tenant must fall
@@ -21,16 +28,10 @@ my %UNLINKED = ( 'tenant-storefront' => { 'program-listing' => 1 } );
 # any step the chain does not reach, by slug.
 sub _workflows ( $db, $schema ) {
     my %by_id = map { $_->{id} => { %$_, steps => [] } }
-      $db->query("SELECT id, slug, first_step FROM $schema.workflows")->hashes->each;
+      Registry::DAO::Workflow->rows_in_schema( $db, $schema );
 
     my ( %steps, %children );
-    for my $s ( $db->query( qq{
-        SELECT s.id, s.workflow_id, s.slug, s.depends_on, s.class,
-               t.name AS template, t.content
-          FROM $schema.workflow_steps s
-          LEFT JOIN $schema.templates t ON t.id = s.template_id
-         ORDER BY s.slug
-    } )->hashes->each ) {
+    for my $s ( Registry::DAO::Workflow->step_rows_in_schema( $db, $schema ) ) {
         push $steps{ $s->{workflow_id} }->@*, $s;
         push $children{ $s->{depends_on} }->@*, $s if $s->{depends_on};
     }
@@ -62,6 +63,12 @@ sub _compare ( $slug, $platform, $copy ) {
     my @order = map { join ', ', map { $_->{slug} } $_->{steps}->@* } $platform, $copy;
     push @lines, "- `$slug`: steps: registry `$order[0]`; tenant `$order[1]`"
       if $order[0] ne $order[1];
+
+    # Who may run it is the gate's data, so part of what the workflow is.
+    my @roles = map { _name( $_->{roles} && join ', ', sort $_->{roles}->@* ) } $platform, $copy;
+    push @lines, "- `$slug`: roles: registry $roles[0]; tenant $roles[1]" if $roles[0] ne $roles[1];
+    my @public = map { $_->{public} ? 'true' : 'false' } $platform, $copy;
+    push @lines, "- `$slug`: public: registry `$public[0]`; tenant `$public[1]`" if $public[0] ne $public[1];
 
     my %mine = map { $_->{slug} => $_ } $copy->{steps}->@*;
     for my $p ( sort { $a->{slug} cmp $b->{slug} } $platform->{steps}->@* ) {
@@ -95,15 +102,26 @@ sub _differences ( $db, $platform, $tenant ) {
     return @lines;
 }
 
+# How $tenant's copy of workflow $slug differs from registry's, as the
+# report's lines for it: none when they are the same.
+sub differences_for ( $db, $tenant, $slug ) {
+    my ( $platform, $copy ) = map { _workflows( $db, $_ )->{$slug} } 'registry', $db->dbh->quote_identifier($tenant);
+    return _compare( $slug, $platform, $copy );
+}
+
+# perigrin's rulings, as { "<tenant>/<slug>" => 'replace' | 'merge' }, from the
+# `Ruling: replace <tenant>/<slug>` and `Ruling: merge <tenant>/<slug>` lines of
+# $text, by default the recorded report. Any other line rules nothing.
+sub rulings ( $text = Mojo::File::curfile->dirname->dirname->dirname
+                          ->child(qw( docs reviews tenant-workflow-divergence.md ))->slurp ) {
+    my %ruled;
+    $ruled{"$2/$3"} = $1 while $text =~ m{^Ruling: (replace|merge) ([^\s/]+)/(\S+)[ \t]*$}mg;
+    return \%ruled;
+}
+
 # The Markdown report: a section per tenant schema, registry excluded.
 sub report ($db) {
-    my @tenants = $db->query(q{
-        SELECT t.slug,
-               EXISTS ( SELECT 1 FROM pg_namespace n WHERE n.nspname = t.slug ) AS present
-          FROM registry.tenants t
-         WHERE t.slug <> 'registry'
-         ORDER BY t.slug
-    })->hashes->each;
+    my @tenants = Registry::DAO::Tenant->slugs_with_schema_presence($db);
 
     my $platform = _workflows( $db, 'registry' );
     my $md       = "# Tenant workflow divergence\n";

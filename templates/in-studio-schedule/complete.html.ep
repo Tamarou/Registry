@@ -1,0 +1,21 @@
+%# ABOUTME: in-studio-schedule's last screen: what the run created and skipped, and any start DST moved.
+%# ABOUTME: Links a new schedule run, which adds only occurrences that do not yet exist.
+% extends 'layouts/workflow';
+% title 'Occurrences scheduled';
+% my $report = stash('schedule_report') // {};
+
+<section class="card">
+  <h2>Occurrences scheduled</h2>
+  <p><%= $report->{created} // 0 %> created; <%= $report->{skipped} // 0 %> already existed and were left as they were.</p>
+  % if (my @shifted = @{ $report->{shifted} // [] }) {
+  <p>These start times do not exist on their day because the clocks go forward, so each starts at the shown local time instead:</p>
+  <ul>
+    % for my $s (@shifted) {
+    <li><%= $s->{asked} %> starts at <%= $s->{local_start} %></li>
+    % }
+  </ul>
+  % }
+  <div class="form-actions">
+    <a class="btn btn-primary" href="<%= url_for('workflow_index', workflow => 'in-studio-schedule') %>">Schedule more</a>
+  </div>
+</section>

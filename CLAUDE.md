@@ -92,6 +92,7 @@ class Foo :isa(Bar) {
     method update_name($new) { $name = $new }
 }
 ````
+- **No SQL outside the DAO**: SQL lives only under `lib/Registry/DAO/` (DAO classes, workflow step classes) and `lib/Registry/DAO.pm`. Controllers, jobs, commands, plugins, `lib/Registry/PriceOps/*` and `Registry.pm` call DAO methods and never call `->query/select/insert/update/delete` on a database handle; `t/unit/no-sql-outside-dao.t` enforces this, and its allowlist of older calls may only shrink.
 - **Database Migrations**: Managed via Sqitch (see `sql/` directory)
 - **Test Structure**:
   - Unit tests for DAOs in `t/dao/`

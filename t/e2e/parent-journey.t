@@ -19,7 +19,7 @@ my $dao = $test_db->db;
 
 {    # Step 1: Program Discovery
     # Create a location and program for discovery
-    my $location = $dao->create( Location => {
+    my $location = $dao->create( Location => { time_zone => 'America/New_York',
         name => 'Sunny Elementary',
         slug => 'sunny-elementary',
         address_info => { street => '123 School Street', city => 'Test City', state => 'TS', zip => '12345' }

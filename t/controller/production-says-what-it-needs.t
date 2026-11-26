@@ -106,8 +106,8 @@ subtest 'what is missing is named, with what it costs' => sub {
     my $all = join "\n", map { $_->{message} // '' } @errors;
 
     # Each consequence is one I verified in the code rather than guessed.
-    like $all, qr/STRIPE_SECRET_KEY.*charg/is,
-        'no Stripe key means paid enrolments complete without charging';
+    like $all, qr/STRIPE_SECRET_KEY.*priced payment is refused/is,
+        'no Stripe key means every priced payment is refused';
     like $all, qr/STRIPE_WEBHOOK_SECRET.*(settle|webhook)/is,
         'no webhook secret means settlements never complete';
     like $all, qr/POSTMARK_SERVER_TOKEN.*mail|POSTMARK_SERVER_TOKEN.*email/is,

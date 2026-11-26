@@ -1,0 +1,55 @@
+%# ABOUTME: in-studio-booking step: the visitor pays what the hold step owes while the seats are held.
+%# ABOUTME: Posting starts the one-time payment on the studio's own account; a refusal offers a new booking.
+% extends 'layouts/workflow';
+% title 'Pay for your booking';
+% my $owed = $run ? ( $run->data // {} )->{owed_payment} // {} : {};
+% my $step_data = stash('step_data') // {};
+% my $amount = sprintf '%.2f', ( $owed->{amount_cents} // 0 ) / 100;
+%= include 'in-studio-booking/_errors'
+
+% if (@{ stash('errors') // [] }) {
+%# Refused (a lapsed hold, nothing owed): a way out. A new run each time,
+%# so a POST: a GET of the workflow resumes this run, still at payment.
+<form method="POST" action="<%= url_for('workflow_start', workflow => 'in-studio-booking') %>">
+  <div class="form-actions">
+    <button type="submit" class="btn btn-secondary">Start a new booking</button>
+  </div>
+</form>
+% }
+
+<section class="card">
+  <p><%= $owed->{description} // '' %>: $<%= $amount %></p>
+  % if (my $message = $step_data->{message}) {
+  <p><%= $message %></p>
+  % }
+</section>
+
+% if ($step_data->{show_stripe_form}) {
+<form id="payment-form">
+  <div id="payment-element"></div>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Pay $<%= $amount %></button>
+  </div>
+</form>
+<script src="https://js.stripe.com/v3/"></script>
+<script>
+  // A direct charge's intent confirms only on the seller's account it was created on.
+  const stripe = Stripe(<%== Mojo::JSON::encode_json($ENV{STRIPE_PUBLISHABLE_KEY} // '') %>,
+    { stripeAccount: <%== Mojo::JSON::encode_json($step_data->{stripe_account} // '') %> });
+  const elements = stripe.elements({ clientSecret: <%== Mojo::JSON::encode_json($step_data->{client_secret} // '') %> });
+  elements.create('payment').mount('#payment-element');
+  document.getElementById('payment-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const { error } = await stripe.confirmPayment({ elements, confirmParams: {
+      return_url: <%== Mojo::JSON::encode_json(url_for('workflow_step', workflow => 'in-studio-booking', run => $run->id, step => 'payment')->to_abs->to_string) %>,
+    } });
+    if (error) alert(error.message);
+  });
+</script>
+% } else {
+<form method="POST" action="<%= $action %>">
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Pay $<%= $amount %></button>
+  </div>
+</form>
+% }

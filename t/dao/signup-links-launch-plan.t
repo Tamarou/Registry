@@ -29,8 +29,8 @@ ok $workflow, 'tenant-signup workflow imported';
 my $launch_fraction = platform_offered_fraction($db);
 cmp_ok $launch_fraction, '>', 0, 'the platform sells a non-zero revenue share';
 
-# The bootstrap seed's fixed id for Solo v1, the platform's offer to tenants.
-my $SOLO_V1 = '00000000-0000-0000-0003-000000000001';
+# Solo v2's fixed id (solo-grants-workflow-set), the platform's offer to tenants.
+my $SOLO_V2 = '9bc4069a-f0a7-0026-3a84-aeb0d0732995';    # solo-grants-workflow-set's
 
 # Walk the depends_on chain, which is what the controller follows when it
 # redirects to the next step -- not creation order, which only looks right.
@@ -76,13 +76,13 @@ subtest 'a signup on the preselected Solo is granted the published platform offe
     my ($review) = $workflow->get_step( $db, { slug => 'review' } );
     ok $review, 'found the review step';
 
-    $run->process( $db, $review, { offer_version => $SOLO_V1 } );
+    $run->process( $db, $review, { offer_version => $SOLO_V2 } );
 
     ok $db->query( 'SELECT 1 FROM registry.tenants WHERE slug = ?', $slug )->hash,
         'the review button provisioned the tenant';
 
     my $terms = platform_entitlement_terms( $db, $slug );
-    is $terms->{id}, $SOLO_V1, 'tenant holds an entitlement to the offer the platform sells';
+    is $terms->{id}, $SOLO_V2, 'tenant holds an entitlement to the offer the platform sells';
 
     # The assertion that actually costs money if it fails.
     cmp_ok $terms->{fraction}, '==', $launch_fraction,
@@ -117,7 +117,7 @@ subtest 'the subdomain the applicant is shown is the one they get' => sub {
     my $shown = $review->prepare_template_data( $db, $run )->{profile}{subdomain};
     is $shown, $previewed, 'the review page shows that same slug';
 
-    $run->process( $db, $review, { offer_version => $SOLO_V1 } );
+    $run->process( $db, $review, { offer_version => $SOLO_V2 } );
     is $run->data->{subdomain}, $previewed,
         'and provisioning uses it rather than deriving a different one';
 };

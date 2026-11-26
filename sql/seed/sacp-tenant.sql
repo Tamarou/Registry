@@ -72,7 +72,7 @@ ON CONFLICT (slug) DO NOTHING;
 -- Locations.
 -- -------------------------------------------------------------------------
 
-INSERT INTO locations (slug, name, address_info, capacity)
+INSERT INTO locations (slug, name, address_info, capacity, time_zone)
 VALUES (
     'sacp_studio',
     'Super Awesome Cool Pottery Studio',
@@ -82,7 +82,8 @@ VALUES (
       "postal_code": "32809",
       "phone": "(407) 720-3699",
       "email": "studio@superawesomecool.com"}'::jsonb,
-    24  -- studio camp capacity
+    24,  -- studio camp capacity
+    'America/New_York'  -- both seeded locations are in Orlando
 )
 ON CONFLICT (slug) DO UPDATE
 SET name         = EXCLUDED.name,
@@ -90,7 +91,7 @@ SET name         = EXCLUDED.name,
     capacity     = EXCLUDED.capacity,
     updated_at   = now();
 
-INSERT INTO locations (slug, name, address_info, capacity)
+INSERT INTO locations (slug, name, address_info, capacity, time_zone)
 VALUES (
     'dr_phillips_elementary',
     'Dr Phillips Elementary',
@@ -99,7 +100,8 @@ VALUES (
       "state": "FL",
       "postal_code": "32819",
       "district": "Orange County Public Schools"}'::jsonb,
-    20  -- typical afterschool class size
+    20,  -- typical afterschool class size
+    'America/New_York'  -- both seeded locations are in Orlando
 )
 ON CONFLICT (slug) DO UPDATE
 SET name         = EXCLUDED.name,

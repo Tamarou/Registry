@@ -107,7 +107,7 @@ subtest 'StripeWebhook: post_succeeded finalizes payment and deduplicates' => su
     $t->app->helper(dao => sub { $dao });
 
     # Seed minimal data -- mirrors payment-intent-webhook.t
-    my $loc = $dao->create(Location => {
+    my $loc = $dao->create(Location => { time_zone => 'America/New_York',
         name => 'Helper Studio', slug => 'helper-studio',
         address_info => {}, metadata => {},
     });

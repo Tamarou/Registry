@@ -31,7 +31,7 @@ $t->app->helper( dao => sub { $dao } );
 
 # --- Test data: a teacher, an event, and two enrolled children ---
 
-my $location = $dao->create( Location => {
+my $location = $dao->create( Location => { time_zone => 'America/New_York',
     name => 'Register Studio', slug => 'register-studio',
     address_info => { street => '1 Main', city => 'Orlando', state => 'FL' },
     metadata => {},

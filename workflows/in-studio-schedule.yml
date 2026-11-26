@@ -1,0 +1,20 @@
+# ABOUTME: Product design for in-studio bookings: an admin generates a class's occurrences from a weekly pattern.
+# ABOUTME: Local times are the location's zone; re-running over an overlapping range adds only what is missing.
+
+name: In-studio Schedule
+description: Generate a class's occurrences from a weekly pattern
+slug: in-studio-schedule
+roles: [admin]
+
+steps:
+  - slug: schedule
+    label: Schedule
+    description: Choose the class, teacher, weekdays, local start time, length and dates
+    template: in-studio-schedule/schedule
+    class: Registry::DAO::WorkflowSteps::GenerateOccurrences
+
+  - slug: complete
+    label: Done
+    description: What the run created, skipped and shifted
+    template: in-studio-schedule/complete
+    class: Registry::DAO::WorkflowStep

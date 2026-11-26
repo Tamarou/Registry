@@ -7,16 +7,13 @@ use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::PayChangeFee :isa(Registry::DAO::WorkflowSteps::OneTimePayment) {
     use Registry::DAO::Entitlement;
+    use Registry::Terms ();
     use Registry::DAO::WorkflowSteps::ChooseChangeTarget;
 
     method process ( $db, $form_data, $run = undef ) {
         $db = $db->db if $db isa Registry::DAO;
-        # The person's return from Stripe can land after the driver moved the
-        # run on; processing this step again would wind it back, so they are
-        # sent to where the run is.
-        my $at = $run->next_step($db) // $run->latest_step($db);
-        return { redirect => join '/', '', $self->workflow($db)->slug, $run->id, $at->slug }
-            if $at->id ne $self->id;
+        # Before the checks below, so a return after the driver moved on is sent on.
+        if ( my $moved = $self->moved_on( $db, $run ) ) { return $moved }
         my $change = $run->data->{change_hold};
         my $entitlement = ref $change eq 'HASH' && !ref $change->{entitlement_id}
             && Registry::DAO::Entitlement->find( $db, { id => $change->{entitlement_id} } );
@@ -26,7 +23,16 @@ class Registry::DAO::WorkflowSteps::PayChangeFee :isa(Registry::DAO::WorkflowSte
             return { stay => 1, errors => [$refusal] };
         }
         return {} unless $change->{fee_cents};
-        # Whoever pays the fee is the one paying now: the holder, or an admin for them.
+        # The booker-only fee rule (shortcut in ChooseChangeTarget::fee_refusal),
+        # again here as a backstop to the hold step's check.
+        if ( my $refusal = Registry::DAO::WorkflowSteps::ChooseChangeTarget->fee_refusal(
+                $entitlement, $user, $change->{fee_cents} ) ) {
+            return { stay => 1, errors => [$refusal] };
+        }
+        if ( my $refusal = Registry::Terms::checkout_refusal() ) {
+            return $self->_stay( errors => [$refusal] );
+        }
+        # Whoever pays the fee is the one paying now: the booker (see fee_refusal).
         $run->update_data( $db, { user_id => $user->{id} } );
         return $self->SUPER::process( $db, $form_data, $run );
     }
@@ -36,10 +42,6 @@ class Registry::DAO::WorkflowSteps::PayChangeFee :isa(Registry::DAO::WorkflowSte
         my $change = $run->data->{change_hold};
         return ref $change eq 'HASH' && !$change->{fee_cents};
     }
-
-    # Stripe's return leg arrives as a GET carrying payment_intent; the
-    # controller hands it to process only for a step that has this.
-    method handle_payment_callback ( $db, $run, $form_data ) { $self->process( $db, $form_data, $run ) }
 }
 
 1;

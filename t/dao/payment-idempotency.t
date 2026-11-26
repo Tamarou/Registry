@@ -238,7 +238,7 @@ state_platform_terms( $db, $b3_slug, { rate => 0 } );
 my $b3dao = Registry::DAO->new(url => $test_db->uri, schema => $b3_slug);
 my $b3db  = $b3dao->db;
 
-my $b3_location = Registry::DAO::Location->create($b3db, {
+my $b3_location = Registry::DAO::Location->create($b3db, { time_zone => 'America/New_York',
     name         => 'B3 Studio',
     address_info => { street_address => '1 B3 St', city => 'Testville', state => 'TX', postal_code => '78701' },
     metadata     => { tenant_slug => $platform },

@@ -55,7 +55,7 @@ sub occurrences ( $fee, $capacity, @hours ) {
     my $class = $db->insert( 'projects', { name => 'Class ' . ++$made, slug => "ec-class-$made" },
         { returning => 'id' } )->hash->{id};
     my @resources = map {
-        my $room = $db->insert( 'locations', { name => 'Room ' . ++$made, slug => "ec-room-$made" },
+        my $room = $db->insert( 'locations', { time_zone => 'America/New_York', name => 'Room ' . ++$made, slug => "ec-room-$made" },
             { returning => 'id' } )->hash->{id};
         my $event = $db->insert( 'events', {
             project_id => $class, location_id => $room, teacher_id => $teacher->id,
@@ -178,6 +178,34 @@ subtest 'an admin changes a customer\'s entitlement for them' => sub {
     is_deeply $e->units( $db, $to->id ), [1], 'the customer holds the target occurrence';
 };
 
+subtest 'staff started change with a fee is refused until the payer is decided' => sub {
+    my ( $version, $from, $to ) = occurrences( 1000, 4, 72, 96 );
+    my $e = booking( $version, $from, member('parent') );
+    my $t = client( member('staff') );
+    $t->get_ok( '/entitlement-change?entitlement_id=' . $e->id )->status_is(200);
+    my $form = form_of($t) or return fail 'the target page has a form';
+    my $run  = run_of( $form->attr('action') );
+    $t->post_ok( $form->attr('action') => form => { target_occurrence_id => $to->id } )->status_is(302);
+    $t->get_ok( $t->tx->res->headers->location )
+        ->content_like( qr/This change has a fee, so the booker must start it from their booking\./, 'refused with why' );
+    is holds_on($to), 0, 'no seat is held in the target';
+    ok !run_of( $form->attr('action') )->data->{change_hold}, 'the run holds no change';
+    is payments_of($run), 0, 'no payment row is written';
+    is_deeply $e->units( $db, $from->id ), [1], 'the booking stays where it was';
+    is_deeply $e->units( $db, $to->id ), [], 'and does not move';
+
+    # The pay step asks again: staff posting a booker's paid change are refused there too.
+    my $holder = member('parent');
+    my $mine   = booking( $version, $from, $holder );
+    my ( $own, $paid ) = to_payment( $holder, $mine, $to );
+    my $staff = client( member('staff') );
+    $staff->post_ok( form_of($own)->attr('action') => form => {} )->status_is(302);
+    $staff->get_ok( $staff->tx->res->headers->location )
+        ->content_like( qr/This change has a fee, so the booker must start it from their booking\./,
+            'the pay step refuses staff as well' );
+    is payments_of($paid), 0, 'and writes no payment row';
+};
+
 subtest 'stranger cannot change entitlement' => sub {
     my ( $version, $from, $to ) = occurrences( 1000, 4, 72, 96 );
     my $holder = member('parent');
@@ -230,7 +258,7 @@ subtest 'other tenant entitlement not found' => sub {
     my $owner = member('admin');
     Registry::DAO::Tenant->provision( $db, { name => "EC Other $$", slug => $slug, users => [$owner] } );
     my $other = $dao->connect_schema($slug)->db;
-    my $room  = $other->insert( 'locations', { name => 'Far room', slug => 'far-room' }, { returning => 'id' } )->hash->{id};
+    my $room  = $other->insert( 'locations', { time_zone => 'America/New_York', name => 'Far room', slug => 'far-room' }, { returning => 'id' } )->hash->{id};
     my $class = $other->insert( 'projects', { name => 'Far class', slug => 'far-class' }, { returning => 'id' } )->hash->{id};
     my $teach = $other->insert( 'users', { username => "ec-far-$$" }, { returning => 'id' } )->hash->{id};
     my @res = map {
@@ -304,6 +332,8 @@ sub booking_room ( $version, $like ) {
 }
 
 subtest 'resubmitted payment page creates no second payment' => sub {
+    # A priced payment is refused outright without a key; no call is made with this one.
+    local $ENV{STRIPE_SECRET_KEY} = 'sk_test_placeholder';
     my ( $version, $from, $to ) = occurrences( 1000, 4, 72, 96 );
     my $holder = member('parent');
     my ( $t, $run ) = to_payment( $holder, booking( $version, $from, $holder ), $to );
@@ -315,20 +345,24 @@ subtest 'resubmitted payment page creates no second payment' => sub {
     my $first = $pay_step->owed_payment( $db, $run )->{payment} or return fail 'the first submit started a payment';
     $first->_record_intent( $db, { id => 'pi_ec_' . $first->id, client_secret => 'x_secret' } );
 
-    local $ENV{STRIPE_SECRET_KEY};    # no Stripe here: the resubmit's intent call fails after the payment is chosen
-    $t->post_ok( form_of($t)->attr('action') => form => {} );
-    is payments_of($run), 1, 'the resubmit reuses the payment the first submit started';
+    # The resubmit chooses its payment the same way; no Stripe call is needed to see which.
+    my $again = $pay_step->owed_payment( $db, $run )->{payment};
+    is $again && $again->id, $first->id, 'the resubmit reuses the payment the first submit started';
+    is payments_of($run), 1, 'and writes no second one';
 };
 
 subtest 'paid change with no seat left shows a friendly page' => sub {
+    # A priced payment is refused outright without a key; no call is made with this one.
+    local $ENV{STRIPE_SECRET_KEY} = 'sk_test_placeholder';
     my ( $version, $from, $to ) = occurrences( 1000, 1, 72, 96 );
     my $holder = member('parent');
     my $e      = booking( $version, $from, $holder );
     my ( $t, $run ) = to_payment( $holder, $e, $to );
-    {
-        local $ENV{STRIPE_SECRET_KEY};
-        $t->post_ok( form_of($t)->attr('action') => form => {} );
-    }
+    # The fee payment the payment page starts, without a Stripe call.
+    $run->update_data( $db, { user_id => $holder->id } );
+    Registry::DAO::Workflow->find( $db, { slug => 'entitlement-change' } )
+        ->get_step( $db, { slug => 'pay' } )->owed_payment( $db, $run )->{payment}
+        or return fail 'the payment page started a payment';
     my $payment = Registry::DAO::Payment->find( $db,
         { id => Registry::DAO::WorkflowRun->find( $db, { id => $run->id } )->data->{owed_payment_id} } );
     $payment->_record_intent( $db, { id => 'pi_ec_' . $payment->id, client_secret => 'x_secret' } );

@@ -36,7 +36,7 @@ for my $file (@files) {
             teacher_id =>
               $dao->create( User => { username => 'JohnnyTest' } )->id,
             location_id =>
-              $dao->create( Location => { name => 'Event Venue' } )->id,
+              $dao->create( Location => { time_zone => 'America/New_York', name => 'Event Venue' } )->id,
             project_id =>
               $dao->create( Project => { name => 'Event Curriculum' } )->id,
         }

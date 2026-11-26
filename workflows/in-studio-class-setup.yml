@@ -1,0 +1,68 @@
+# ABOUTME: Product design for in-studio bookings: an admin defines a class and publishes one of its offers.
+# ABOUTME: A class step, then step 4's offer-publishing steps in class mode; no policy is pre-filled.
+
+name: In-studio Class Setup
+description: Define a class and publish an offer covering its occurrences
+slug: in-studio-class-setup
+roles: [admin]
+
+steps:
+  - slug: class
+    label: Class
+    description: Choose one of your classes, or create one with its location and seats per occurrence
+    template: in-studio-class-setup/class
+    class: Registry::DAO::WorkflowSteps::ClassBasics
+
+  - slug: offer-basics
+    label: Offer
+    description: Name the offer, or choose one of the class's offers to publish a new version of
+    template: in-studio-class-setup/offer-basics
+    class: Registry::DAO::WorkflowSteps::OfferBasics
+
+  - slug: offer-price
+    label: Price
+    description: The price, the seats one unit uses, and how many one booking may take
+    template: in-studio-class-setup/offer-price
+    class: Registry::DAO::WorkflowSteps::OfferPrice
+
+  - slug: one-time-payment
+    label: Payment
+    description: Offer a one-time payment plan
+    template: in-studio-class-setup/one-time-payment
+    class: Registry::DAO::WorkflowSteps::OneTimePaymentPlan
+
+  - slug: refund-policy
+    label: Refund
+    description: Choose whether money comes back on a refund
+    template: in-studio-class-setup/refund-policy
+    class: Registry::DAO::WorkflowSteps::RefundPolicy
+
+  - slug: change-policy
+    label: Change
+    description: Choose whether and how a booking may move to another occurrence
+    template: in-studio-class-setup/change-policy
+    class: Registry::DAO::WorkflowSteps::ChangePolicy
+
+  - slug: use-policy
+    label: Use
+    description: Choose what counts as using the offer
+    template: in-studio-class-setup/use-policy
+    class: Registry::DAO::WorkflowSteps::UsePolicy
+
+  - slug: expiry-policy
+    label: Expiry
+    description: Choose when a booking expires
+    template: in-studio-class-setup/expiry-policy
+    class: Registry::DAO::WorkflowSteps::ExpiryPolicy
+
+  - slug: publish
+    label: Publish
+    description: Review and publish an immutable offer version
+    template: in-studio-class-setup/publish
+    class: Registry::DAO::WorkflowSteps::PublishOfferVersion
+
+  - slug: complete
+    label: Done
+    description: The offer is published; add another or schedule occurrences
+    template: in-studio-class-setup/complete
+    class: Registry::DAO::WorkflowStep

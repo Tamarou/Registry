@@ -25,7 +25,7 @@ my $db      = $dao->db;
 my $platform = Test::Registry::Fixtures::platform_seller($db);
 state_platform_terms( $db, $platform, { rate => 0 } );
 
-my $loc = $dao->create(Location => {
+my $loc = $dao->create(Location => { time_zone => 'America/New_York',
     name => 'DBT Studio', slug => 'dbt-studio', address_info => {}, metadata => {} });
 my $prog = $dao->create(Project => {
     status => 'published', name => 'DBT Camp',

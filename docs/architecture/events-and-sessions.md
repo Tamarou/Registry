@@ -68,7 +68,7 @@ Summer camps are implemented using this architecture as follows:
 ```
 events
 ├── id (uuid, PK)
-├── time (timestamp)
+├── time (timestamptz: an instant, no zone recorded)
 ├── duration (integer, minutes)
 ├── location_id (uuid, FK)
 ├── project_id (uuid, FK, optional)
@@ -163,12 +163,44 @@ When managing capacity:
 - Enrollment should check capacity for each Event before confirming
 - System may need to handle waitlists if some Event have different capacities
 
+An in-studio occurrence's capacity counts seats held, not family members.
+A booking of N units of an offer takes N × the offer version's
+`units_per_acceptance` seats (`OfferVersion->seats_for`), refused unless N is a
+whole number from 1 to its `per_booking_cap`. The seats are then claimed by the
+occurrence resource's one check (`Resource->claim`, under `Resource->locked`'s
+row lock): capacity less units held by entitlements in effect and by unexpired
+holds. Ended entitlements free their seats; partly refunded ones keep them.
+After-school enrollment still counts one `enrollments` row per family member
+(`Enrollment.pm`) until step 8 replaces it.
+
 ### Date Handling
 
 For date-based operations:
 - Session date range is derived from the earliest and latest Event dates
 - System should provide helper methods to calculate these derived properties
 - When displaying Sessions, date ranges should be calculated dynamically or cached
+
+### Local Time
+
+An event's `time` is an instant (`timestamptz`); it records no zone. The
+studio's IANA time zone (e.g. `America/New_York`) lives on its location, as
+`locations.time_zone`: NOT NULL, checked against Postgres's
+`pg_timezone_names` (sqitch `location-time-zone`). Changing a location's zone
+moves no stored instant, only how it reads locally.
+
+Read an occurrence's local start through the DAO:
+
+```perl
+my $local = $event->local_start($db);
+# { start => '2027-03-14 01:30', date => '2027-03-14',
+#   utc_offset => '-05:00', time_zone => 'America/New_York' }
+```
+
+From `t/dao/studio-time-zone.t`, at a New York location: `2027-03-14T06:30:00Z`
+reads `2027-03-14 01:30` (`-05:00`, EST) and `2027-03-14T07:30:00Z` reads
+`2027-03-14 03:30` (`-04:00`, EDT, after the spring change), both on local date
+`2027-03-14`. In the fall-back hour `2027-11-07T05:30:00Z` and
+`2027-11-07T06:30:00Z` both read `01:30`; `utc_offset` tells them apart.
 
 ### Status Workflow
 

@@ -1,0 +1,46 @@
+%# ABOUTME: in-studio-booking step: each current offer for the occurrence with its price, seats and policies in plain words.
+%# ABOUTME: The visitor chooses one (none is preselected) and how many, from 1 to its per-booking cap; links /terms.
+% extends 'layouts/workflow';
+% title 'Choose an offer';
+% stash description => 'Choose how you would like to book, and how many.';
+% my $offers = stash('offers') // [];
+% my $occurrence = stash('occurrence');
+%= include 'in-studio-booking/_errors'
+
+% if ($occurrence) {
+<p><%= $occurrence->{class} %>, <%= $occurrence->{start}{start} %> (<%= $occurrence->{start}{time_zone} %>), <%= $occurrence->{free} %> seats free</p>
+% }
+
+<form method="POST" action="<%= $action %>">
+  % if (@$offers) {
+  <fieldset>
+    <legend>Offers</legend>
+    % for my $offer (@$offers) {
+    <div class="card">
+      <input type="radio" id="offer-<%= $offer->{id} %>" name="offer_version_id" value="<%= $offer->{id} %>" required>
+      <label for="offer-<%= $offer->{id} %>"><%= $offer->{name} %>: $<%= $offer->{price} %> for <%= $offer->{seats} %> <%= $offer->{seats} == 1 ? 'seat' : 'seats' %></label>
+      <p>Up to <%= $offer->{cap} %> per booking.</p>
+      <ul>
+        % for my $words (@{ $offer->{policy} }) {
+        <li><%= $words %></li>
+        % }
+      </ul>
+    </div>
+    % }
+  </fieldset>
+  <div class="form-group">
+    <label class="form-label" for="count">How many</label>
+    <input class="form-input" type="number" id="count" name="count" value="1" min="1" step="1" required>
+  </div>
+  <div>
+    <input type="checkbox" id="agree_to_terms" name="agree_to_terms" value="1" required>
+    <label for="agree_to_terms">I agree to the <a href="/terms">terms of service</a> and the offer's policies above.</label>
+    <input type="hidden" name="terms_version_shown" value="<%= Registry::Terms::VERSION %>">
+  </div>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Continue</button>
+  </div>
+  % } else {
+  <p>This class has no offers on sale.</p>
+  % }
+</form>

@@ -49,7 +49,7 @@ ok $workflow, 'summer-camp-registration workflow exists';
 
 # --- Shared test data ---
 
-my $location = $dao->create(Location => {
+my $location = $dao->create(Location => { time_zone => 'America/New_York',
     name         => 'Test Studio',
     address_info => { street => '123 Main', city => 'Orlando', state => 'FL' },
     metadata     => {},

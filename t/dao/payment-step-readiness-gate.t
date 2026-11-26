@@ -52,7 +52,7 @@ my $tenant_db  = $tenant_dao->db;
 
 # ---- build shared fixtures in the tenant schema ----------------------------
 
-my $location = Registry::DAO::Location->create($tenant_db, {
+my $location = Registry::DAO::Location->create($tenant_db, { time_zone => 'America/New_York',
     name         => 'Gate Test Location',
     address_info => { street_address => '1 Gate St', city => 'T', state => 'TS', postal_code => '12345' },
     metadata     => {},
@@ -254,7 +254,7 @@ subtest 'free ($0) + tenant not ready: no gate error, enrollment completes' => s
     );
 
     # Free enrollment: STRIPE_SECRET_KEY present, but total is $0 so process()
-    # routes to create_demo_enrollments BEFORE reaching create_payment.  The
+    # routes to create_free_enrollments BEFORE reaching create_payment.  The
     # gate only lives in create_payment, so free totals are naturally exempt.
     # We prove this by asserting the free path completes ungated even when the
     # tenant has no Stripe Connect account at all.
@@ -278,7 +278,7 @@ subtest 'free ($0) + tenant not ready: no gate error, enrollment completes' => s
     my $step   = get_payment_step();
     my $result = settle($step->process($tenant_db, { agreeTerms => 1 }, $run));
 
-    # Free path routes via create_demo_enrollments which returns next_step => 'complete'
+    # Free path routes via create_free_enrollments which returns next_step => 'complete'
     # before the gate is ever evaluated.
     is $result->{next_step}, 'complete',
         'free enrollment advances to complete without hitting the gate';

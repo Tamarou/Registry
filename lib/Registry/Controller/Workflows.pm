@@ -108,9 +108,13 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # a halted run or fake one. stripe_event_id names the stored Connect
         # event an entitlement-stripe-move run applies; only the endpoint sets it.
         # retry is a step's signal to fail a driver attempt; planted, it halts the run.
+        # booking_hold names the hold a booking's completion converts; only HoldSeats writes it.
+        # agreed_terms_version is the /terms version a booking is stamped with;
+        # only Registry::Terms::record_agreement writes it.
+        # booking_refund names the payment CompleteBooking refunds; only it writes it.
         for my $key ( keys %$data ) {
             delete $data->{$key}
-                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_offer_version|__remote_address|stripe_account_id|tenant|change_hold|change_entitlement_id|change_targets|change_needs_admin|owed_payment|owed_payment_id|__driver|retry|stripe_event_id|refund_entitlement_id)(?:\[|\z)/;
+                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_offer_version|__remote_address|stripe_account_id|tenant|change_hold|change_entitlement_id|change_targets|change_needs_admin|owed_payment|owed_payment_id|__driver|retry|stripe_event_id|refund_entitlement_id|booking_hold|agreed_terms_version|booking_refund)(?:\[|\z)/;
         }
 
         # Mojolicious fills remote_address from X-Forwarded-For only in
@@ -413,9 +417,10 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # "already logged in" branch.
         #
         # This mutates run data on a GET. It is safe: idempotent (guarded by
-        # !$run->data->{user_id}), scoped to the account-check step, and merely
-        # records the already-authenticated session user — no external effect.
-        if ($step && $step->slug eq 'account-check') {
+        # !$run->data->{user_id}), scoped to an AccountCheck step (by class, not
+        # slug: in-studio-booking's is `account`), and merely records the
+        # already-authenticated session user — no external effect.
+        if ($step && $step isa Registry::DAO::WorkflowSteps::AccountCheck) {
             my $current_user = $self->stash('current_user');
             if ($current_user && !$run->data->{user_id}) {
                 my $uid  = ref $current_user ? $current_user->{id} : undef;

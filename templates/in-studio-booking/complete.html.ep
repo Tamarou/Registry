@@ -1,0 +1,23 @@
+%# ABOUTME: in-studio-booking step: shown only when CompleteBooking cannot make the booking yet, or at all.
+%# ABOUTME: Payment still settling, or a paid booking refunded; a paid booking it makes goes straight on to done.
+% extends 'layouts/workflow';
+% title 'Your booking';
+%= include 'in-studio-booking/_errors'
+
+% unless (@{ stash('errors') // [] }) {
+<section class="card">
+  <p>We are confirming your payment. This page will show your booking once it is made.</p>
+</section>
+
+<form method="POST" action="<%= $action %>">
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Check again</button>
+  </div>
+</form>
+% }
+
+<form method="POST" action="<%= url_for('workflow_start', workflow => 'in-studio-booking') %>">
+  <div class="form-actions">
+    <button type="submit" class="btn btn-secondary">Start a new booking</button>
+  </div>
+</form>

@@ -10,6 +10,7 @@ use Registry::DAO::Payment;
 use Registry::DAO::Tenant;
 use Registry::DAO::User;
 use Registry::PriceOps::Hold;
+use Registry::Terms ();
 
 my $UUID = qr/\A[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\z/i;
 
@@ -25,6 +26,7 @@ my $UNAVAILABLE = 'This payment cannot be taken right now. Nothing has been char
 method process ( $db, $form_data, $run = undef ) {
     $run //= $self->workflow($db)->latest_run($db);
     $db = $db->db if $db isa Registry::DAO;
+    if ( my $moved = $self->moved_on( $db, $run ) ) { return $moved }
 
     # Paid, whether the webhook settled it with nobody present or the person
     # came back first: hand the run on. Both arriving is harmless.
@@ -34,6 +36,11 @@ method process ( $db, $form_data, $run = undef ) {
         return $self->_returned( $db, $run, $intent_id );
     }
 
+    # Before the hold is extended or a payment row written (ADR 005, ruling
+    # 12). Below the paid and return legs, so money already taken still settles.
+    if ( my $refusal = Registry::Terms::checkout_refusal() ) {
+        return $self->_stay( errors => [$refusal] );
+    }
     if ( my $refusal = $self->hold_for_charge( $db, $run ) ) {
         return $self->_stay( errors => [$refusal] );
     }
@@ -56,6 +63,19 @@ method process ( $db, $form_data, $run = undef ) {
         sub ($error) { $self->_stay( errors => ["Payment processing error: $error"] ) },
     );
 }
+
+# The person's return from Stripe can land after the driver moved the run on;
+# processing this step again would wind it back, so they are sent to where
+# the run is: a redirect, or undef while the run is at this step.
+method moved_on ( $db, $run ) {
+    my $at = $run->next_step($db) // $run->latest_step($db);
+    return undef if $at->id eq $self->id;
+    return { redirect => join '/', '', $self->workflow($db)->slug, $run->id, $at->slug };
+}
+
+# Stripe's return leg arrives as a GET carrying payment_intent; the
+# controller hands it to process only for a step that has this.
+method handle_payment_callback ( $db, $run, $form_data ) { $self->process( $db, $form_data, $run ) }
 
 # owed_payment($db, $run) -> { payment => Payment } | { errors => [...] }
 #
@@ -83,7 +103,12 @@ method owed_payment ( $db, $run ) {
         unless defined $user_id && !ref $user_id && $user_id =~ $UUID;
 
     # The seller is the tenant the run is in, and the charge is made on its own
-    # account; there is no fallback to the platform's.
+    # account; there is no fallback to the platform's. Without the platform's
+    # key (unset or empty) nothing can be charged, so no row is written either.
+    unless ( $ENV{STRIPE_SECRET_KEY} ) {
+        warn "one-time payment refused: STRIPE_SECRET_KEY is not set\n";
+        return refuse($UNAVAILABLE);
+    }
     my $slug = $run->data->{__tenant_slug};
     my $row  = defined $slug && !ref $slug
         ? $db->query( 'SELECT * FROM registry.tenants WHERE slug = ?', $slug )->hash

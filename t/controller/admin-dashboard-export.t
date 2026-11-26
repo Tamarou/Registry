@@ -126,7 +126,7 @@ subtest "Export data types" => sub {
 subtest "an export carries the rows it is an export of" => sub {
     my $db = $dao->db;
 
-    my $loc = $dao->create(Location => {
+    my $loc = $dao->create(Location => { time_zone => 'America/New_York',
         name => 'Export Studio', slug => 'export-studio',
         address_info => {}, metadata => {},
     });

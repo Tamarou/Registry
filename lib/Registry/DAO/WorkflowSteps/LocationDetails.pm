@@ -23,6 +23,9 @@ method process ($db, $form_data, $run = undef) {
         }
     }
 
+    push @errors, 'Choose the time zone this location is in'
+        unless grep { $_ eq ( $form_data->{time_zone} // '' ) } Registry::DAO::Location->time_zones($db)->@*;
+
     return { errors => \@errors } if @errors;
 
     my %address_info;
@@ -34,6 +37,7 @@ method process ($db, $form_data, $run = undef) {
     my %pending = (
         name         => $form_data->{name},
         address_info => \%address_info,
+        time_zone    => $form_data->{time_zone},
     );
     $pending{capacity} = $form_data->{capacity} + 0
         if defined $form_data->{capacity} && length $form_data->{capacity};
@@ -57,6 +61,8 @@ method prepare_template_data ($db, $run, $params = {}) {
                 state          => $addr->{state}          // '',
                 postal_code    => $addr->{postal_code}    // '',
                 capacity       => $loc->capacity,
+                time_zone      => $loc->time_zone,
+                time_zones     => Registry::DAO::Location->time_zones($db),
             };
         }
     }
@@ -69,6 +75,8 @@ method prepare_template_data ($db, $run, $params = {}) {
         state          => '',
         postal_code    => '',
         capacity       => '',
+        time_zone      => '',
+        time_zones     => Registry::DAO::Location->time_zones($db),
     };
 }
 

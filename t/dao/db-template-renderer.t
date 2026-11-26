@@ -36,7 +36,7 @@ for my $file (@tmpl_files) {
 }
 
 # Create test data so the storefront has something to render
-my $location = $dao->create(Location => {
+my $location = $dao->create(Location => { time_zone => 'America/New_York',
     name => 'Online DBR Test', slug => 'online-dbr-test',
     address_info => { type => 'virtual' }, metadata => {},
 });

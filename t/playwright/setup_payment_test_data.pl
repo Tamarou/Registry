@@ -23,10 +23,10 @@ use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;
 use Registry::DAO::WorkflowRun;
 use Test::Registry::StripeConnect;
-use Test::Registry::PricingProbe qw( give_tenant_terms );
+use Test::Registry::SoloVersion qw( accept_solo );
 use JSON::PP qw(encode_json);
 
-# PricingProbe loads Test::More, whose notes go to STDOUT; keep STDOUT for the JSON.
+# The test helpers load Test::More, whose notes go to STDOUT; keep STDOUT for the JSON.
 Test::Builder->new->output( \*STDERR );
 
 # Session dates are derived from the day the suite runs, never written down.
@@ -68,8 +68,9 @@ my $admin = Registry::DAO::User->create($db, {
 
 # ---------------------------------------------------------------------------
 # Provision a full tenant with its own schema.
-# provision() clones the schema, copies program_types, workflows (including
-# summer-camp-registration), outcome definitions, and the admin user.
+# provision() clones the schema and copies program_types and the admin user.
+# The tenant's workflows (summer-camp-registration among them) and their
+# outcome definitions arrive when it accepts Solo, below.
 # ---------------------------------------------------------------------------
 my $slug = "pay_smoke_$ts";
 my $tenant = Registry::DAO::Tenant->provision($db, {
@@ -90,9 +91,11 @@ $db->query(
     $connect_account_id, $slug,
 );
 
-# State the tenant's platform terms. A freshly provisioned tenant holds none,
-# which resolves to the free 0% plan -- that would skip the Stripe charge entirely.
-give_tenant_terms( $db, $slug, { rate => '0.025' } );
+# The tenant accepts Solo, as signup would. A freshly provisioned tenant holds
+# no platform terms and no run rights: the fee resolver would refuse and the
+# run gate would answer 403. Solo states the 2.5% terms and grants the run
+# right to summer-camp-registration, which the smoke test walks.
+accept_solo( $db, $tenant );
 
 # ---------------------------------------------------------------------------
 # Tenant-scoped DAO for all data that lives in the tenant schema
@@ -103,7 +106,7 @@ my $tdb  = $tdao->db;
 # ---------------------------------------------------------------------------
 # Location (tenant schema)
 # ---------------------------------------------------------------------------
-my $location = Registry::DAO::Location->create($tdb, {
+my $location = Registry::DAO::Location->create($tdb, { time_zone => 'America/New_York',
     name         => "Payment Smoke Studio $ts",
     address_info => {
         street_address => '100 Payment Ave',

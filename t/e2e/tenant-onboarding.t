@@ -28,7 +28,7 @@ use Mojo::Home;
 use YAML::XS qw(Load);
 use DateTime;
 
-# Ensure demo payment mode
+# No Stripe key: the $0 cart completes without it
 delete $ENV{STRIPE_SECRET_KEY};
 
 my $test_db = Test::Registry::DB->new;
@@ -59,7 +59,7 @@ $t->app->helper(dao => sub { $dao });
 # ============================================================
 
 subtest 'tenant has programs and sessions' => sub {
-    my $location = $dao->create(Location => {
+    my $location = $dao->create(Location => { time_zone => 'America/New_York',
         name         => 'Super Awesome Cool Pottery Studio',
         slug         => 'sacp-studio',
         address_info => { street => '930 Hoffner Ave', city => 'Orlando', state => 'FL' },
@@ -102,11 +102,13 @@ subtest 'tenant has programs and sessions' => sub {
     });
     $session->add_events($dao->db, $event->id);
 
-    $dao->create(PricingPlan => {
+    # Free: only a $0 cart completes without Stripe. Assigned, because
+    # Registry::DAO::create does nothing in void context.
+    my $plan = $dao->create(PricingPlan => {
         session_id => $session->id,
-        plan_name  => 'Standard',
+        plan_name  => 'Free',
         plan_type  => 'standard',
-        amount_cents => 30000,
+        amount_cents => 0,
     });
 
     ok $session, 'Session created with events and pricing';
@@ -195,7 +197,7 @@ subtest 'parent completes full registration' => sub {
         "session_for_${\$child->id}"  => $session->id,
     })->status_is(302);
 
-    # Payment (demo mode)
+    # Payment ($0 cart, no Stripe)
     ($run) = $dao->find(WorkflowRun => { id => $run->id });
     $step = $run->next_step($dao->db);
     $t->post_ok(workflow_process_step_url($reg_wf, $run, $step) => form => {

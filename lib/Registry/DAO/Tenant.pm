@@ -10,6 +10,7 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
     use Registry::DAO::Payment;
     use Registry::DAO::Entitlement;
     use Registry::PriceOps::PlatformTerms ();
+    use Registry::WorkflowDivergence ();
     field $id :param :reader = undef;
     field $name :param :reader;
     field $slug :param :reader //= __PACKAGE__->slug_for_name($name);
@@ -404,6 +405,26 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
                                   WHERE s.offer_version_id = v.id)
                  WHERE e.holder_tenant_id = ? AND r.name = ? AND $in_effect)
         }, $tenant_id, $resource )->array->[0] ? 1 : 0;
+    }
+
+    # Does tenant $slug hold, in effect now, the unbounded resource named
+    # $resource? Read from registry by name, as holds is: a tenant's cloned
+    # entitlements are its own to write.
+    sub holds_unbounded_by_slug ( $class, $db, $slug, $resource ) {
+        my $in_effect = Registry::DAO::Entitlement->in_effect_sql( 'e', q{tstzrange(now(), now(), '[]')} );
+        return $db->query( <<~"SQL", $slug, $resource )->array->[0];
+            SELECT EXISTS (
+                SELECT 1
+                  FROM registry.entitlements e
+                  JOIN registry.tenants t        ON t.id = e.holder_tenant_id
+                  JOIN registry.offer_versions v ON v.id = e.offer_version_id
+                  JOIN registry.resources r      ON r.id = v.resource_id
+                      OR r.id IN (SELECT s.resource_id FROM registry.offer_version_resources s
+                                  WHERE s.offer_version_id = v.id)
+                 WHERE t.slug = ? AND r.name = ? AND r.kind = 'unbounded'
+                   AND $in_effect
+            )
+            SQL
     }
 
     # Is $user_id an admin of some tenant that holds $resource?
@@ -996,14 +1017,184 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         };
     }
 
+    # Every tenant but registry, by slug, as rows of slug and whether its
+    # schema exists (present).
+    sub slugs_with_schema_presence ( $class, $db ) {
+        return $db->query(q{
+            SELECT t.slug,
+                   EXISTS ( SELECT 1 FROM pg_namespace n WHERE n.nspname = t.slug ) AS present
+              FROM registry.tenants t
+             WHERE t.slug <> 'registry'
+             ORDER BY t.slug
+        })->hashes->each;
+    }
+
+    # { id, slug } of the tenant whose Stripe Connect account is $account
+    # (an exact, bound match), or undef.
+    sub by_connect_account ( $class, $db, $account ) {
+        return $db->select( 'registry.tenants', [ 'id', 'slug' ],
+            { stripe_connect_account_id => $account } )->hash;
+    }
+
+    # Every tenant with a Stripe Connect account, as rows of slug and account.
+    sub with_connect_account ( $class, $db ) {
+        return $db->query( q{
+            SELECT slug, stripe_connect_account_id AS account FROM registry.tenants
+             WHERE stripe_connect_account_id IS NOT NULL
+        } )->hashes;
+    }
+
+    # Mirrors Stripe's charges_enabled and details_submitted for $account
+    # onto its tenant; an undef flag stays as it was. The number of rows changed.
+    sub mirror_connect_readiness ( $class, $db, $account, $charges_enabled, $details_submitted ) {
+        return $db->query(
+            q{UPDATE registry.tenants
+              SET stripe_charges_enabled   = COALESCE(?, stripe_charges_enabled),
+                  stripe_details_submitted = COALESCE(?, stripe_details_submitted)
+              WHERE stripe_connect_account_id = ?},
+            $charges_enabled, $details_submitted, $account,
+        )->rows;
+    }
+
+    # Points the search_path of $db's open transaction at schema $slug.
+    # Transaction-local, so it reverts at COMMIT and cannot ride back into the
+    # connection pool; bound, so Postgres validates the GUC rather than
+    # splicing it into SQL text.
+    sub use_schema_for_transaction ( $class, $db, $slug ) {
+        $db->query( q{SELECT set_config('search_path', ?, true)}, "$slug, public" );
+    }
+
     # Get all tenant schemas for background jobs
     sub get_all_tenant_schemas($class, $db) {
         return $db->select('registry.tenants', ['slug'])->hashes->to_array;
     }
 
+    # Accepts the platform's offer $grant ({ offer_version_id, payment_plan_id })
+    # for $tenant, and copies into $tenant's schema each registry workflow
+    # whose run right (resource run:<slug>) the version grants: accepting is
+    # what brings the copy. Only those two keys of $grant are read, so the
+    # holder and the copy's target are $tenant whatever else it names. Throws
+    # Registry::DAO::Entitlement::Refused, creating and copying nothing, as
+    # Entitlement->accept does, or when the version is not one of registry's.
+    #
+    # A copy the tenant already holds is kept when it is the same as the
+    # platform's (Registry::WorkflowDivergence). One that differs is replaced
+    # only by a `replace` ruling for this tenant and slug in $rulings
+    # (default: the recorded divergence report's); under a `merge` ruling or
+    # none it is kept, and the result says why.
+    #
+    # All or nothing; joins the caller's transaction. Returns { entitlement,
+    # workflows => { <slug> => copied | identical | replaced | kept: <why> } }.
+    # Expects $db on the registry search path: on a tenant's, the accept finds no such version and refuses.
+    sub accept_platform_offer ( $class, $db, $tenant, $grant, $rulings = undef ) {
+        $db = $db->db if $db isa Registry::DAO;
+        my $tx = $db->dbh->{AutoCommit} ? $db->begin : undef;
+        my ( $version_id, $plan_id ) = @{$grant}{qw( offer_version_id payment_plan_id )};
+
+        Registry::DAO::Entitlement::Refused->throw("Offer version @{[ $version_id // '' ]} is not the platform's offer.\n")
+            unless $db->query( 'SELECT 1 FROM registry.offer_versions WHERE id::text = ?', $version_id // '' )->rows;
+        my $entitlement = Registry::DAO::Entitlement->accept( $db,
+            { offer_version_id => $version_id, payment_plan_id => $plan_id, holder_tenant_id => $tenant->id } );
+
+        my %workflows;
+        for my $wf ( $db->query( q{
+            SELECT w.id, w.slug FROM registry.workflows w
+             WHERE 'run:' || w.slug IN (
+                   SELECT r.name FROM registry.offer_versions v
+                     JOIN registry.resources r ON r.id = v.resource_id
+                         OR r.id IN (SELECT s.resource_id FROM registry.offer_version_resources s
+                                      WHERE s.offer_version_id = v.id)
+                    WHERE v.id = ?)
+             ORDER BY w.slug
+        }, $version_id )->hashes->each ) {
+            next if Registry::WorkflowDivergence::never_copied( $wf->{slug} );    # the platform's alone, granted or not
+            my $schema = $db->dbh->quote_identifier( $tenant->slug );
+            my $held   = $db->query( "SELECT id FROM $schema.workflows WHERE slug = ?", $wf->{slug} )->array;
+            if ($held) {
+                my @differs = Registry::WorkflowDivergence::differences_for( $db, $tenant->slug, $wf->{slug} );
+                if ( !@differs ) { $workflows{ $wf->{slug} } = 'identical'; next }
+                $rulings //= Registry::WorkflowDivergence::rulings();
+                my $ruling = $rulings->{ $tenant->slug . "/$wf->{slug}" } // '';
+                if ( $ruling ne 'replace' ) {
+                    $workflows{ $wf->{slug} } = join "\n", ( $ruling eq 'merge'
+                        ? 'kept: merge ruling, needs a hand merge' : 'kept: diverged, no ruling' ), @differs;
+                    next;
+                }
+                $class->_drop_workflow_copy( $db, $schema, $held->[0] );
+            }
+            $class->_copy_platform_workflow( $db, $tenant->slug, $wf );
+            $workflows{ $wf->{slug} } = $held ? 'replaced' : 'copied';
+        }
+
+        $tx->commit if $tx;
+        return { entitlement => $entitlement, workflows => \%workflows };
+    }
+
+    # Deletes workflow $workflow_id from $schema (quoted): its steps, the
+    # templates only they used, and its row.
+    # shortcut: a copy with runs is refused by their foreign keys, rolling the
+    # accept back; keep or move the runs once a replaced copy can have some.
+    sub _drop_workflow_copy ( $class, $db, $schema, $workflow_id ) {
+        my $templates = $db->query( "SELECT array_agg(DISTINCT template_id) FROM $schema.workflow_steps
+                                      WHERE workflow_id = ?", $workflow_id )->array->[0] // [];
+        $db->query( "DELETE FROM $schema.workflow_steps WHERE workflow_id = ?", $workflow_id );
+        $db->query( "DELETE FROM $schema.templates t WHERE t.id = ANY(?::uuid[])
+                        AND NOT EXISTS (SELECT 1 FROM $schema.workflow_steps s WHERE s.template_id = t.id)",
+            [ grep { defined } @$templates ] );
+        $db->query( "DELETE FROM $schema.workflows WHERE id = ?", $workflow_id );
+    }
+
+    # Copies registry's outcome definitions into tenant $slug's schema, those
+    # workflow $workflow_id's steps use or, without one, all; any it already
+    # holds is kept.
+    sub _copy_outcome_definitions ( $class, $db, $slug, $workflow_id = undef ) {
+        my $schema = $db->dbh->quote_identifier($slug);
+        $db->query( qq{
+            INSERT INTO ${schema}.outcome_definitions (id, name, description, schema)
+            SELECT id, name, description, schema FROM registry.outcome_definitions
+             WHERE ?::uuid IS NULL
+                OR id IN (SELECT outcome_definition_id FROM registry.workflow_steps WHERE workflow_id = ?)
+            ON CONFLICT DO NOTHING
+        }, $workflow_id, $workflow_id );
+    }
+
+    # Copies registry workflow $wf ({ id, slug }) into tenant $slug's schema,
+    # with its steps, templates, role data and the outcome definitions its
+    # steps use.
+    sub _copy_platform_workflow ( $class, $db, $slug, $wf ) {
+        my $schema = $db->dbh->quote_identifier($slug);
+        $class->_copy_outcome_definitions( $db, $slug, $wf->{id} );
+        $db->query( 'SELECT copy_workflow(dest_schema => ?, workflow_id => ?)', $slug, $wf->{id} );
+        return unless $wf->{slug} eq 'tenant-storefront';
+
+        # The registry schema holds a DB template named 'tenant-storefront/program-listing'
+        # containing the REGISTRY marketing page ("Your art deserves a real business").
+        # copy_workflow copied it into the tenant schema because the program-listing
+        # workflow step's template_id pointed to it.  DBTemplates resolves DB templates
+        # before the filesystem, so tenants would serve the marketing page instead of
+        # the program catalog (templates/tenant-storefront/program-listing.html.ep).
+        # Fix: NULL the step's template_id and delete the template from the tenant
+        # schema so DBTemplates falls back to the correct filesystem catalog.
+        # (refs #173 #229)
+        $db->query(qq{
+            UPDATE ${schema}.workflow_steps ws
+               SET template_id = NULL
+              FROM ${schema}.workflows wf, ${schema}.templates tpl
+             WHERE wf.slug = 'tenant-storefront'
+               AND ws.workflow_id = wf.id
+               AND ws.slug = 'program-listing'
+               AND ws.template_id = tpl.id
+               AND tpl.name = 'tenant-storefront/program-listing'
+        });
+        $db->query(qq{
+            DELETE FROM ${schema}.templates
+             WHERE name = 'tenant-storefront/program-listing'
+        });
+    }
+
     # provision: single canonical path for creating a fully-provisioned tenant.
     # Creates the tenant row, clones the schema, copies seed data, copies all
-    # workflows from registry (except tenant-signup), copies users, and copies
+    # workflows from registry (except those never_copied), copies users, and copies
     # OutcomeDefinitions.  The entire operation runs inside a single transaction
     # so a failure partway through does not leave orphaned rows or a half-cloned
     # schema.  Returns the created Tenant object.
@@ -1048,14 +1239,6 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         my $tx = $db->dbh->{AutoCommit} ? $db->begin : undef;
 
         my $tenant = $class->create($db, \%tenant_data);
-
-        # $data->{platform_entitlement} names { offer_version_id,
-        # payment_plan_id }: the tenant accepts it in registry from now on, or
-        # the tenant is not created (a refusal throws, rolling it all back).
-        if ( my $grant = $data->{platform_entitlement} ) {
-            require Registry::DAO::Entitlement;
-            Registry::DAO::Entitlement->accept( $db, { %$grant, holder_tenant_id => $tenant->id } );
-        }
 
         $db->query('SELECT clone_schema(?)', $tenant->slug);
 
@@ -1111,65 +1294,31 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
                 SQL
         }
 
-        # Copy OutcomeDefinitions into the tenant schema BEFORE copying workflows.
-        # copy_workflow inserts workflow_steps with outcome_definition_id FK values;
-        # the tenant schema's workflow_steps FK references the tenant's own
-        # outcome_definitions table (clone_schema strips the schema qualifier).
-        # Copying outcome definitions here ensures the FK is satisfiable when
-        # copy_workflow runs below.  We temporarily switch the search_path on $db
-        # so unqualified 'outcome_definitions' resolves to the tenant schema.
-        # After the inserts we reset to registry so later queries remain correct.
-        my @outcome_defs = Registry::DAO::OutcomeDefinition->find($db);
-        if (@outcome_defs) {
-            $db->query("SET search_path = ${schema}, public");
-            for my $def (@outcome_defs) {
-                Registry::DAO::OutcomeDefinition->create(
-                    $db,
-                    {
-                        id     => $def->id,
-                        name   => $def->name,
-                        schema => $def->schema,
-                    }
-                );
-            }
-            $db->query('SET search_path = registry, public');
+        # Outcome definitions before workflows: a copied step's
+        # outcome_definition_id references the tenant's own table.
+        $class->_copy_outcome_definitions( $db, $tenant->slug );
+
+        # $data->{platform_entitlement} names { offer_version_id,
+        # payment_plan_id }: the tenant accepts it in registry from now on,
+        # which copies the workflows it grants, or the tenant is not created
+        # (a refusal throws, rolling it all back).
+        if ( my $grant = $data->{platform_entitlement} ) {
+            $class->accept_platform_offer( $db, $tenant, $grant );
         }
 
-        # Copy every workflow in registry except tenant-signup
-        my @workflows = $db->select('registry.workflows', ['id', 'slug'])->hashes->each;
+        # Copy every other workflow in registry except tenant-signup; one the
+        # accept above copied is not copied twice.
+        my @workflows = $db->query( qq{
+            SELECT id, slug FROM registry.workflows
+             WHERE slug NOT IN (SELECT slug FROM ${schema}.workflows)
+        } )->hashes->each;
         for my $wf (@workflows) {
             # tenant-signup onboards tenants; registry-storefront is the
             # platform's own shop window. Handing either to a tenant is the
             # mirror of the bug that made the apex serve a tenant's storefront.
-            next if $wf->{slug} eq 'tenant-signup';
-            next if $wf->{slug} eq 'registry-storefront';
-            $db->query('SELECT copy_workflow(dest_schema => ?, workflow_id => ?)',
-                $tenant->slug, $wf->{id});
+            next if Registry::WorkflowDivergence::never_copied( $wf->{slug} );
+            $class->_copy_platform_workflow( $db, $tenant->slug, $wf );
         }
-
-        # The registry schema holds a DB template named 'tenant-storefront/program-listing'
-        # containing the REGISTRY marketing page ("Your art deserves a real business").
-        # copy_workflow copied it into the tenant schema because the program-listing
-        # workflow step's template_id pointed to it.  DBTemplates resolves DB templates
-        # before the filesystem, so tenants would serve the marketing page instead of
-        # the program catalog (templates/tenant-storefront/program-listing.html.ep).
-        # Fix: NULL the step's template_id and delete the template from the tenant
-        # schema so DBTemplates falls back to the correct filesystem catalog.
-        # (refs #173 #229)
-        $db->query(qq{
-            UPDATE ${schema}.workflow_steps ws
-               SET template_id = NULL
-              FROM ${schema}.workflows wf, ${schema}.templates tpl
-             WHERE wf.slug = 'tenant-storefront'
-               AND ws.workflow_id = wf.id
-               AND ws.slug = 'program-listing'
-               AND ws.template_id = tpl.id
-               AND tpl.name = 'tenant-storefront/program-listing'
-        });
-        $db->query(qq{
-            DELETE FROM ${schema}.templates
-             WHERE name = 'tenant-storefront/program-listing'
-        });
 
         $tx->commit if $tx;
 

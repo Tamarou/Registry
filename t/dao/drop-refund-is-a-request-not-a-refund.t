@@ -22,7 +22,7 @@ sub days_from_now ($n) {
     return sprintf '%04d-%02d-%02d', $t[5] + 1900, $t[4] + 1, $t[3];
 }
 
-my $loc = $dao->create(Location => {
+my $loc = $dao->create(Location => { time_zone => 'America/New_York',
     name => 'Drop Studio', slug => 'drop-studio', address_info => {}, metadata => {},
 });
 my $prog = $dao->create(Project => {

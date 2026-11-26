@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
-# ABOUTME: Alex (platform owner) journey: a registry admin publishes a later Solo version through offer-publishing over HTTP.
-# ABOUTME: The bootstrap version is superseded, its holders keep 0.025, and non-admins of registry are refused.
+# ABOUTME: Alex (platform owner) journey: a later Solo version supersedes the current one; offer-publishing over HTTP cannot version Solo's set.
+# ABOUTME: Earlier holders keep 0.025, signup lists only the new version, and non-admins of registry are refused at offer-publishing.
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
 use 5.42.0;
@@ -15,6 +15,7 @@ use Test::Registry::PricingProbe qw( solo_linked_tenant );
 use Registry;
 use Registry::DAO;
 use Registry::DAO::Payment;
+use Test::Registry::SoloVersion qw( publish_solo_version );
 use Registry::PriceOps::PlatformTerms ();
 use Registry::PriceOps::RevenueShare qw( revenue_share_fraction_for_tenant );
 
@@ -28,6 +29,7 @@ import_all_workflows($dao);
 my $PAYMENT_PROCESSING = '00000000-0000-0000-0001-000000000001';
 my $SOLO               = '00000000-0000-0000-0002-000000000001';
 my $SOLO_V1            = '00000000-0000-0000-0003-000000000001';
+my $SOLO_V2            = '9bc4069a-f0a7-0026-3a84-aeb0d0732995';    # solo-grants-workflow-set's
 
 my $alex = Test::Registry::Fixtures::create_user( $dao,
     { username => 'alex', name => 'Alex', email => 'alex@registry.test', user_type => 'admin' } );
@@ -87,31 +89,26 @@ subtest 'other tenant admin refused on the registry host' => sub {
 };
 
 subtest 'alex publishes a later solo version' => sub {
-    is_deeply [ map { $_->{id} } solo_current()->@* ], [$SOLO_V1], 'Solo starts at its bootstrap version';
+    is_deeply [ map { $_->{id} } solo_current()->@* ], [$SOLO_V2], 'Solo starts at its workflow-set version';
 
+    # Solo's current version buys a set (payment processing and the workflow
+    # run rights); offer-basics versions an offer only to sell the one
+    # resource it already sells, so offer-publishing does not offer Solo.
     my $t = client($alex);
     $t->get_ok('/offer-publishing')->status_is(200);
     submit_step( $t, 'resource', resource_mode => 'existing' );
-    my $offer = $t->tx->res->dom->at(qq{#workflow-content input[name="offer_id"][value="$SOLO"]});
-    ok $offer, 'offer-basics offers a new version of Solo';
-    like submit_step( $t, 'offer-basics', resource_id => $PAYMENT_PROCESSING, offer_id => $SOLO ),
-        qr{/offer-price\z}, 'on to the price';
-    is $t->tx->res->dom->at('input[name="price_cents"]')->attr('value'), '0', "the price is pre-filled with Solo's 0";
-    submit_step( $t, 'offer-price', price_cents => 0, currency => 'USD', units_per_acceptance => 1, per_booking_cap => 1 );
-    submit_step( $t, 'one-time-payment', one_time => 'declined' );
-    submit_step( $t, 'percentage-of-sales-payment', percentage_of_sales => 'offered', rate_percent => '2.4' );
-    submit_step( $t, 'refund-policy', refund => 'keep_fee_with_admin_exception' );
-    submit_step( $t, 'change-policy', change => 'none' );
-    submit_step( $t, 'use-policy', use => 'none' );
-    submit_step( $t, 'expiry-policy', expiry => 'never' );
-    like submit_step( $t, 'publish', action => 'publish' ), qr{/complete\z}, 'publishing lands on the complete page';
+    ok !$t->tx->res->dom->at(qq{#workflow-content input[name="offer_id"][value="$SOLO"]}),
+        'offer-basics does not offer a new version of Solo, whose version buys a set';
+
+    # A later Solo version lists its set, as solo-grants-workflow-set did.
+    publish_solo_version( $db, 0.024 );
 
     my $current = solo_current();
     is scalar @$current, 1, 'Solo has exactly one current version';
-    is $current->[0]{version}, 2, 'the new one, version 2';
-    is $current->[0]{fraction}, '0.0240', 'at 2.4%';
-    ok defined $db->query( 'SELECT superseded_at FROM registry.offer_versions WHERE id = ?', $SOLO_V1 )
-        ->hash->{superseded_at}, 'the bootstrap version is superseded';
+    is $current->[0]{version}, 3, 'the new one, version 3';
+    cmp_ok $current->[0]{fraction}, '==', 0.024, 'at 2.4%';
+    ok defined $db->query( 'SELECT superseded_at FROM registry.offer_versions WHERE id = ?', $SOLO_V2 )
+        ->hash->{superseded_at}, 'the workflow-set version is superseded';
 };
 
 subtest 'signup resolves one platform offer after alex publishes' => sub {

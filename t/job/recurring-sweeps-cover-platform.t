@@ -57,7 +57,7 @@ sub session_with ( %args ) {
         name => "Sweep Session $n", slug => "sweep-session-$n-$$", %args } );
 }
 
-my $location = Registry::DAO::Location->create( $db, {
+my $location = Registry::DAO::Location->create( $db, { time_zone => 'America/New_York',
     name => "Sweep Location $$", slug => "sweep-location-$$", address_info => { street => '1 Sweep St' } } );
 my $project = Registry::DAO::Project->create( $db, {
     name => "Sweep Project $$", slug => "sweep-project-$$" } );

@@ -29,7 +29,7 @@ my $teacher = Registry::DAO::User->create( $db, {
     username => 'cap_teacher', name => 'Cap Teacher',
     email => 'cap@test.local', user_type => 'staff',
 } );
-my $location = Registry::DAO::Location->create( $db, {
+my $location = Registry::DAO::Location->create( $db, { time_zone => 'America/New_York',
     name => 'Cap Room', slug => 'cap-room',
     address_info => { street_address => '1 Cap St', city => 'Orlando', state => 'FL', postal_code => '32801' },
     metadata => {},

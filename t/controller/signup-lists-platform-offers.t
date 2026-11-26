@@ -39,6 +39,7 @@ $dao->current_tenant('registry');
 # The bootstrap seed's fixed ids.
 my $SOLO               = '00000000-0000-0000-0002-000000000001';
 my $SOLO_V1            = '00000000-0000-0000-0003-000000000001';
+my $SOLO_V2            = '9bc4069a-f0a7-0026-3a84-aeb0d0732995';    # solo-grants-workflow-set's
 my $SELF_OFFER         = '00000000-0000-0000-0003-000000000002';
 my $PAYMENT_PROCESSING = '00000000-0000-0000-0001-000000000001';
 
@@ -110,8 +111,8 @@ sub page_text () {
 
 subtest 'review page lists published offers with solo preselected' => sub {
     to_review();
-    is_deeply_list( choices(), [$SOLO_V1], 'Solo v1 is the one choice' );
-    is checked(), $SOLO_V1, 'and it is preselected';
+    is_deeply_list( choices(), [$SOLO_V2], 'Solo v2 is the one choice' );
+    is checked(), $SOLO_V2, 'and it is preselected';
     my $text = page_text();
     like $text, qr/Solo/, 'named from the offer';
     like $text, qr/\$0 a month, 2\.5% of each payment you take/, 'with its terms from the version';
@@ -129,7 +130,7 @@ subtest 'new solo version replaces old and drafts are hidden' => sub {
     ) );
 
     to_review();
-    is_deeply_list( choices(), [ $v2->id ], 'v2 is listed, v1 and the draft are not' );
+    is_deeply_list( choices(), [ $v2->id ], 'the new version is listed; earlier ones and the draft are not' );
     is checked(), $v2->id, 'v2 is preselected';
     like page_text(), qr/3% of each payment you take/, 'quoting v2';
     unlike page_text(), qr/4%/, 'not the draft';

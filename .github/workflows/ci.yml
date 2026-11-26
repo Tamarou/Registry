@@ -595,8 +595,8 @@ jobs:
         # shellcheck disable=SC2016 # the single quotes are Perl source, not shell
         carton exec perl -MTest::PostgreSQL -e 'my $pg = Test::PostgreSQL->new; print "Test::PostgreSQL OK: ", $pg->uri, "\n"'
 
-    # No STRIPE_SECRET_KEY: registration's free path stays in demo/decision-step
-    # mode and no Stripe calls are made.
+    # No STRIPE_SECRET_KEY: no Stripe calls are made. Only $0 carts complete;
+    # a priced cart is refused, so the registration journeys buy free sessions.
     - name: Run Playwright tests
       env:
         EMAIL_SENDER_TRANSPORT: Test

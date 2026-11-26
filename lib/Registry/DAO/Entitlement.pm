@@ -24,6 +24,7 @@ class Registry::DAO::Entitlement :isa(Registry::DAO::Object) {
     field $ended_reason :param :reader = undef;  # the Stripe refund or dispute id where there is one
     field $payment_id :param :reader = undef;           # the payment that created it, set at insert
     field $payment_share_cents :param :reader = undef;  # its share of that payment
+    field $terms_version :param :reader = undef;        # the /terms version its booker agreed to, set at insert
 
     sub table { 'entitlements' }
 
@@ -157,6 +158,41 @@ active and the period covers T (in_effect_sql).
             { entitlement_id => $id, resource_id => $resource_id }, 'unit' )->arrays->flatten->to_array;
     }
 
+    # Entitlement $id, its row locked until the caller's transaction ends:
+    # whether it is in effect now or later.
+    sub lock_current ( $class, $db, $id ) {
+        my $current = $class->in_effect_sql( 'e', 'tstzrange(now(), NULL)' );
+        return $db->query( "SELECT $current FROM entitlements e WHERE e.id = ? FOR UPDATE", $id )->array->[0];
+    }
+
+    # How many units it holds, of every resource.
+    method unit_count ($db) {
+        return $db->select( 'entitlement_units', 'count(*)', { entitlement_id => $id } )->array->[0];
+    }
+
+    # The resources it holds units of, as a list of ids.
+    method unit_resource_ids ($db) {
+        return $db->select( 'entitlement_units', 'DISTINCT resource_id', { entitlement_id => $id } )
+            ->arrays->flatten->each;
+    }
+
+    # Gives up every unit it holds.
+    method release_units ($db) {
+        $db->delete( 'entitlement_units', { entitlement_id => $id } );
+    }
+
+    # Takes units @units of $resource_id.
+    method take_units ( $db, $resource_id, @units ) {
+        $db->insert( 'entitlement_units', { entitlement_id => $id, resource_id => $resource_id, unit => $_ } )
+            for @units;
+    }
+
+    # Moves the end of its period to $ends, keeping its start.
+    method end_period_at ( $db, $ends ) {
+        $db->query( q{UPDATE entitlements SET in_effect = tstzrange(lower(in_effect), ?, '[)') WHERE id = ?},
+            $ends, $id );
+    }
+
     # Pillar 4: does $holder_id hold a unit of $resource_id in effect now?
     sub holds_unit_of ( $class, $db, $holder_id, $resource_id ) {
         $db = $db->db if $db isa Registry::DAO;
@@ -178,6 +214,24 @@ active and the period covers T (in_effect_sql).
         return 0 unless defined $slug && !ref $slug && length $slug;
         require Registry::DAO::Tenant;
         return Registry::DAO::Tenant->holds( $db, $tenant_id, "run:$slug" );
+    }
+
+    # The workflow gate's question: may the tenant whose schema is
+    # $tenant_slug run $slug? may_run, or, for a slug registry does not have
+    # (the platform offers no right to it, so the tenant wrote it), the right
+    # to create workflows: ADR 004 (b). False for a slug that names no tenant.
+    sub tenant_may_run ( $class, $db, $tenant_slug, $slug ) {
+        $db = $db->db if $db isa Registry::DAO;
+        require Registry::DAO::Tenant;
+        my $tenant = Registry::DAO::Tenant->find( $db, { slug => $tenant_slug } ) or return 0;
+        return 1 if $class->may_run( $db, $tenant->id, $slug );
+        # Trimmed and case-folded, so `Program-Creation` is registry's
+        # program-creation, never the tenant's own.
+        return 0 if $db->query( q{
+            SELECT 1 FROM registry.workflows
+             WHERE lower(regexp_replace(slug, '^\s+|\s+$', '', 'g')) = lower(regexp_replace(?, '^\s+|\s+$', '', 'g'))
+        }, $slug // '' )->rows;
+        return $class->may_run( $db, $tenant->id, 'workflow-creation' );
     }
 
     # The one in-effect rule, as SQL over entitlement row $e (an alias or table

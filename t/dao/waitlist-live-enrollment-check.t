@@ -23,7 +23,7 @@ $dao->db->query( 'SELECT clone_schema(dest_schema => ?)', 'test_waitlist_live' )
 $dao = Registry::DAO->new( url => $t->uri, schema => 'test_waitlist_live' );
 my $db = $dao->db;
 
-my $location = Registry::DAO::Location->create( $db, {
+my $location = Registry::DAO::Location->create( $db, { time_zone => 'America/New_York',
     name => 'Loc', address_info => {}, metadata => {},
 } );
 my $parent = Registry::DAO::User->create( $db, {

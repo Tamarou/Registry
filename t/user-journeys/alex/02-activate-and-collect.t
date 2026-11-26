@@ -28,7 +28,7 @@ use Test::Mojo;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
 use Test::Registry::StripeWebhook;
-use Test::Registry::PricingProbe qw( give_tenant_terms );
+use Test::Registry::SoloVersion qw( accept_solo_at );
 use Test::Registry::Helpers qw(
     workflow_url
     workflow_process_step_url
@@ -104,10 +104,11 @@ ok $tenant, 'tenant provisioned (not yet Stripe Connect ready)';
 ok !$tenant->stripe_connect_ready, 'precondition: tenant not Stripe Connect ready';
 
 # State the platform terms the tenant charges under, so the charge-time
-# resolver has a rate to apply. A tenant provisioned directly like this holds
-# none, which would otherwise resolve to the Free 0% plan.
+# resolver has a rate to apply: it accepts a Solo version at that rate, as
+# signup accepts Solo, which also gives it the run rights its workflows need.
+# A tenant provisioned directly like this holds neither.
 my $STATED_RATE = '0.0137';
-give_tenant_terms( $db, $slug, { rate => $STATED_RATE } );
+accept_solo_at( $db, $slug, $STATED_RATE );
 
 # Tenant-schema DAO
 my $tenant_dao = Registry::DAO->new(url => $test_db->uri, schema => $slug);
@@ -118,7 +119,7 @@ my ($reg_wf) = $tenant_dao->find(Workflow => { slug => 'summer-camp-registration
 ok $reg_wf, 'summer-camp-registration workflow present in tenant schema';
 
 # Build location / program / event / session / pricing fixtures.
-my $location = Registry::DAO::Location->create($tenant_db, {
+my $location = Registry::DAO::Location->create($tenant_db, { time_zone => 'America/New_York',
     name         => 'AC Studio',
     address_info => { street_address => '1 AC Blvd', city => 'T', state => 'TX', postal_code => '78701' },
     metadata     => {},

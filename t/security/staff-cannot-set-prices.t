@@ -169,7 +169,7 @@ my $pla = Registry::DAO::Workflow->from_yaml( $dao,
 
 sub assign_with_override ( $user, $role, $forged = {}, $finisher = undef ) {
     $n++;
-    my $loc = Registry::DAO::Location->create( $db, {
+    my $loc = Registry::DAO::Location->create( $db, { time_zone => 'America/New_York',
         name => "PLA Loc $n", slug => "pla_loc_$n", address_info => {}, metadata => {} } );
     my $proj = Registry::DAO::Project->create( $db, {
         name => "PLA Proj $n", status => 'published', metadata => {} } );

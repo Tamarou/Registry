@@ -17,6 +17,7 @@ use Registry::DAO::Location;
 use Registry::DAO::Payment;
 use Registry::DAO::WorkflowSteps::Payment;
 use Mojo::JSON qw(encode_json);
+use Test::Registry::Async qw( settle );
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -33,7 +34,7 @@ $dao = Registry::DAO->new(url => $test_db->uri, schema => 'test_payment');
 my $db = $dao->db;
 
 # Create test data
-my $location = Registry::DAO::Location->create($db, {
+my $location = Registry::DAO::Location->create($db, { time_zone => 'America/New_York',
     name => 'Test Location',
     address_info => {
         street_address => '123 Main St',
@@ -265,7 +266,7 @@ subtest 'Calculate enrollment totals' => sub {
 # step passes gate and creates payment' (one row, for the parent, in the tenant
 # schema).
 
-subtest 'Demo mode: agreeTerms without Stripe creates enrollments' => sub {
+subtest 'priced cart without Stripe is refused, nothing enrolled' => sub {
     local $ENV{STRIPE_SECRET_KEY} = undef;
 
     my $run = $workflow->new_run($db);
@@ -274,6 +275,7 @@ subtest 'Demo mode: agreeTerms without Stripe creates enrollments' => sub {
     $run->update_data($db, {
         user_id => $parent->id,
         selected_child_ids => [$child1->id],
+        children => [ { id => $child1->id, first_name => 'Alice', last_name => 'Smith' } ],
         enrollment_items => [
             { child_id => $child1->id, session_id => $session->id },
         ],
@@ -285,27 +287,29 @@ subtest 'Demo mode: agreeTerms without Stripe creates enrollments' => sub {
     # Get the actual payment step from database
     my $payment_step = $workflow->get_step($db, { slug => 'payment' });
 
-    # Process with agreeTerms in demo mode (no Stripe key)
-    my $result = $payment_step->process($db, { agreeTerms => 1 });
+    my @warnings;
+    my $result = do {
+        local $SIG{__WARN__} = sub { push @warnings, @_ };
+        settle( $payment_step->process($db, { agreeTerms => 1 }) );
+    };
+    like "@warnings", qr/STRIPE_SECRET_KEY is not set/, 'the refusal is logged';
 
-    # Should advance to complete step, not return errors
-    is $result->{next_step}, 'complete', 'Demo mode advances to complete step';
-    ok !$result->{errors}, 'No errors in demo mode' or diag explain $result->{errors};
+    is_deeply $result->{errors},
+        [ Registry::DAO::WorkflowSteps::Payment->payment_unavailable_message ],
+        'refused: a priced cart is never enrolled for free';
+    isnt $result->{next_step}, 'complete', 'stays on the payment step';
 
-    # Verify enrollment was created
     my $enrollment = $db->select('enrollments', '*', {
         family_member_id => $child1->id,
         session_id       => $session->id,
     })->hash;
-
-    ok $enrollment, 'Enrollment created in demo mode';
-    is $enrollment->{status}, 'active', 'Enrollment status is active';
+    ok !$enrollment, 'nothing enrolled';
 };
 
 # A free registration where one sibling takes a seat and the other waits for a
 # session that had none. The waiting child is joined at completion, not when the
 # session was picked -- an abandoned form must not leave anyone in a queue.
-subtest 'Demo mode: a child who chose to wait is put on the waitlist' => sub {
+subtest '$0 cart: a child who chose to wait is put on the waitlist' => sub {
     local $ENV{STRIPE_SECRET_KEY} = undef;
 
     my $full_event = Registry::DAO::Event->create($db, {
@@ -327,14 +331,25 @@ subtest 'Demo mode: a child who chose to wait is put on the waitlist' => sub {
     });
     $full_session->add_events($db, $full_event->id);
 
+    # The seated child's session is free: only a $0 cart completes without Stripe.
+    my $free_session = Registry::DAO::Session->create($db, {
+        name => 'Free Session', start_date => '2024-07-02', end_date => '2024-07-09',
+        status => 'published', metadata => {},
+    });
+    $free_session->add_events($db, $event->id);
+    Registry::DAO::PricingPlan->create($db, {
+        session_id => $free_session->id, plan_name => 'Free', plan_type => 'standard', amount_cents => 0,
+    });
+
     my $run = $workflow->new_run($db);
     $run->update_data($db, {
         user_id => $parent->id,
         selected_child_ids => [ $child1->id, $child2->id ],
+        children => [ { id => $child2->id, first_name => 'Bob', last_name => 'Smith' } ],
         enrollment_items => [
-            { child_id => $child2->id, session_id => $session->id },
+            { child_id => $child2->id, session_id => $free_session->id },
         ],
-        session_selections => { $child2->id => $session->id },
+        session_selections => { $child2->id => $free_session->id },
         waitlist_items => [
             { child_id => $child1->id, session_id => $full_session->id,
               location_id => $location->id },

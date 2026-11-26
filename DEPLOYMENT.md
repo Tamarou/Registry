@@ -83,7 +83,8 @@ For quick demos and evaluations, deploy Registry to Render.com:
 
 1. GitHub repository with Registry codebase
 2. Render.com account
-3. Stripe account for payment processing (optional for demo)
+3. Stripe account for payment processing: required to take any priced payment.
+   Without it only $0 registrations complete; every priced one is refused.
 
 ### Quick Deploy
 
@@ -102,11 +103,18 @@ Set these environment variables in your Render dashboard:
 **Required:**
 - `DB_URL` - Automatically set from database
 - `REGISTRY_SECRET` - Auto-generated secure secret
-- `MOJO_MODE` - Set to `production`
+- `MOJO_MODE` - Set to `production`. In every mode except `development` and
+  `test` the session cookie (and the `as-tenant` cookie, should the app ever set
+  one) is `Secure`, `HttpOnly` and `SameSite=Lax`. This keys on the mode, not the
+  request scheme, so a production deploy must be served over HTTPS, and a local
+  run over plain HTTP must set `MOJO_MODE=development` or login will not stick
 
-**Optional (for Stripe integration):**
+**Stripe:**
 - `STRIPE_PUBLIC_KEY` - Your Stripe publishable key
-- `STRIPE_SECRET_KEY` - Your Stripe secret key  
+- `STRIPE_SECRET_KEY` - Your Stripe secret key. Required to take any priced
+  payment, not optional for a demo: without it, or when the selling tenant's
+  Stripe account is not ready, a priced cart is refused with a message to the
+  user and nothing is enrolled. Only a $0 cart completes without Stripe.
 - `STRIPE_WEBHOOK_SECRET` - Your Stripe webhook endpoint secret
 - `STRIPE_CONNECT_WEBHOOK_SECRET` - The signing secret of the Connect webhook
   endpoint (`/webhooks/stripe/connect`), which receives events on sellers'
@@ -202,9 +210,25 @@ Check the `DB_URL` environment variable and database status in Render dashboard.
 3. Check database migration status
 
 #### Stripe Integration Issues  
-1. Verify Stripe keys are correctly set
+1. Verify Stripe keys are correctly set. A priced checkout that says the
+   organization "is not set up to take payments yet" (or "This payment cannot
+   be taken right now") means `STRIPE_SECRET_KEY` is unset or empty, or the
+   selling tenant's Stripe account is not ready; the log line starting
+   `checkout refused:` or `one-time payment refused:` says which. Nothing was
+   enrolled or charged.
 2. Check webhook endpoint configuration
 3. Review Stripe dashboard for failed payments
+4. While `/terms` is the DRAFT placeholder (`Registry::Terms::VERSION` is
+   `draft`), every checkout is refused in any `MOJO_MODE` but `development` and
+   `test`, so `staging` refuses it too: nothing is written, no payment intent is
+   created and the payer is told the terms are not final (ADR 005, ruling 12). This lifts when perigrin's own terms replace the
+   placeholder in `templates/terms.html.ep` together with that version.
+
+#### Terms of service
+`/terms` is served anonymously on the apex and every tenant host from
+`templates/terms.html.ep`. It states the platform's terms only; each studio's
+booking terms are shown with its offers. It is a marked DRAFT placeholder until
+perigrin supplies the text, and changing it needs his written OK.
 
 ### Performance Considerations
 
@@ -224,7 +248,11 @@ Check the `DB_URL` environment variable and database status in Render dashboard.
 - CSRF protection on all forms
 - SQL injection prevention
 - XSS protection
-- Secure session management
+- Secure session management: the session cookie and the `as-tenant` cookie are
+  `Secure`, `HttpOnly` and `SameSite=Lax` in every `MOJO_MODE` except
+  `development` and `test`, keyed on the mode and not the request scheme.
+  `Lax` keeps the session on the Stripe 3-D Secure return and on magic-link
+  login, both top-level GET navigations
 - Environment-based configuration
 
 ### Monitoring & Logs

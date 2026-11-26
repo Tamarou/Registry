@@ -8,6 +8,7 @@ class Registry::DAO::Payment :isa(Registry::DAO::Object) {
 use Registry::Service::Stripe;
 use Registry::PriceOps::RevenueShare;
 use Registry::PriceOps::PlatformTerms ();
+use Registry::Terms ();
 use Mojo::JSON qw(encode_json from_json);
 use Mojo::Promise ();
 use experimental 'keyword_any';
@@ -375,6 +376,146 @@ field $_stripe_client = undef;
         }, $limit )->hashes->to_array;
     }
 
+    # --- Settling Stripe's reports (Controller::Webhooks) ------------------
+    # Each status write carries its legality in the WHERE, as the writers
+    # below do: a completed or refunded row is history to every invoice.
+
+    # The instalment set billed by $schedule, locked in seq order until the
+    # caller's transaction ends: one invoice at a time per schedule.
+    sub lock_instalment_set ( $class, $db, $schedule ) {
+        $db->query( q{
+            SELECT 1 FROM payments WHERE stripe_schedule_id = ?
+             ORDER BY instalment_seq FOR UPDATE
+        }, $schedule );
+    }
+
+    # { id, status } of the instalment of $schedule that invoice $invoice_id
+    # already bound, locked; else undef.
+    sub instalment_for_invoice ( $class, $db, $schedule, $invoice_id ) {
+        return $db->query( q{
+            SELECT id, status FROM payments
+             WHERE stripe_schedule_id = ?
+               AND metadata->>'stripe_invoice_id' = ?
+             FOR UPDATE
+        }, $schedule, $invoice_id )->hash;
+    }
+
+    # { id, status } of the earliest pending instalment of $schedule no
+    # invoice has bound, locked; else undef.
+    sub next_unbound_instalment ( $class, $db, $schedule ) {
+        return $db->query( q{
+            SELECT id, status FROM payments
+             WHERE stripe_schedule_id = ?
+               AND status = 'pending'
+               AND metadata->>'stripe_invoice_id' IS NULL
+             ORDER BY instalment_seq
+             LIMIT 1
+             FOR UPDATE
+        }, $schedule )->hash;
+    }
+
+    # Instalment $id failed for $why, where that move is legal: its invoice
+    # was closed, so Stripe will not charge it.
+    sub close_instalment ( $class, $db, $id, $why ) {
+        $db->query( q{UPDATE payments SET status = 'failed', error_message = ? WHERE id = ? AND status = ANY(?)},
+            $why, $id, $class->_legal_predecessors('failed') );
+    }
+
+    # Instalment $id completed by $intent on invoice $invoice_id, where that
+    # move is legal. The number of rows changed, 0 or 1.
+    sub complete_instalment ( $class, $db, $id, $intent, $invoice_id ) {
+        return $db->query( q{
+            UPDATE payments
+               SET status = 'completed', completed_at = now(),
+                   stripe_payment_intent_id = ?, error_message = NULL,
+                   metadata = COALESCE(metadata, '{}')
+                       || jsonb_build_object('stripe_invoice_id', ?::text)
+             WHERE id = ? AND status = ANY(?)
+        }, $intent, $invoice_id, $id, $class->_legal_predecessors('completed') )->rows;
+    }
+
+    # Binds instalment $id to invoice $invoice_id, its status untouched.
+    sub bind_instalment_invoice ( $class, $db, $id, $invoice_id ) {
+        $db->query( q{
+            UPDATE payments
+               SET metadata = COALESCE(metadata, '{}')
+                   || jsonb_build_object('stripe_invoice_id', ?::text)
+             WHERE id = ?
+        }, $invoice_id, $id );
+    }
+
+    # Instalment $id failed for $why on invoice $invoice_id, charged as
+    # $intent when given, where that move is legal.
+    sub fail_instalment ( $class, $db, $id, $why, $intent, $invoice_id ) {
+        $db->query( q{
+            UPDATE payments
+               SET status = 'failed', error_message = ?,
+                   stripe_payment_intent_id = COALESCE(?, stripe_payment_intent_id),
+                   metadata = COALESCE(metadata, '{}')
+                       || jsonb_build_object('stripe_invoice_id', ?::text)
+             WHERE id = ? AND status = ANY(?)
+        }, $why, $intent, $invoice_id, $id, $class->_legal_predecessors('failed') );
+    }
+
+    # Is $payment_id (compared as text: it need not be a uuid) a paid first
+    # instalment still awaiting its schedule?
+    sub instalment_awaiting_schedule ( $class, $db, $payment_id ) {
+        return $db->query( q{
+            SELECT 1 FROM payments
+             WHERE id::text = ? AND instalment_seq = 1 AND status = 'completed'
+               AND stripe_schedule_id IS NULL
+        }, $payment_id )->rows;
+    }
+
+    # The schedules whose instalment set still has a row owed.
+    sub schedules_with_owed_instalments ( $class, $db ) {
+        return $db->query( q{
+            SELECT p.stripe_schedule_id FROM payments p
+             WHERE p.instalment_seq = 1 AND p.stripe_schedule_id IS NOT NULL
+               AND EXISTS ( SELECT 1 FROM payments o
+                             WHERE o.stripe_schedule_id = p.stripe_schedule_id
+                               AND o.status IN ('pending', 'failed') )
+        } )->arrays->flatten;
+    }
+
+    # How many instalments of $schedule invoice $invoice_id has bound.
+    sub instalment_invoice_bound ( $class, $db, $schedule, $invoice_id ) {
+        return $db->query( q{
+            SELECT 1 FROM payments
+             WHERE stripe_schedule_id = ? AND metadata->>'stripe_invoice_id' = ?
+        }, $schedule, $invoice_id )->rows;
+    }
+
+    # How many payments were made by one of the intents in @$intents.
+    sub count_with_intents ( $class, $db, $intents ) {
+        return $db->select( 'payments', 'id', { stripe_payment_intent_id => { -in => $intents } } )->rows;
+    }
+
+    # How many payments in schema $slug hold refund $refund_id as pending.
+    sub count_holding_pending_refund_in ( $class, $db, $slug, $refund_id ) {
+        return $db->query(
+            sprintf( q{SELECT 1 FROM %s.payments WHERE metadata->'pending_refunds'->?::text IS NOT NULL},
+                $db->dbh->quote_identifier($slug) ), $refund_id )->rows;
+    }
+
+    # { id } of the payment holding refund $refund_id as pending, or undef.
+    sub holding_pending_refund ( $class, $db, $refund_id ) {
+        return $db->query(
+            q{SELECT id FROM payments WHERE metadata->'pending_refunds'->?::text IS NOT NULL},
+            $refund_id )->hash;
+    }
+
+    # Records that $amount of the platform fee on intent $intent has gone
+    # back; the highest amount reported wins. The number of rows changed.
+    sub record_platform_fee_refunded ( $class, $db, $intent, $amount ) {
+        return $db->query(
+            q{UPDATE payments
+                 SET platform_fee_refunded_cents =
+                     GREATEST(COALESCE(platform_fee_refunded_cents, 0), ?)
+               WHERE stripe_payment_intent_id = ?},
+            $amount, $intent )->rows;
+    }
+
     # Flatten canonical + caller metadata into Stripe bracket-notation pairs.
     # Stripe metadata values must be plain strings, so refs are dropped; the DB
     # metadata column keeps the full structure. Sorted for deterministic param
@@ -634,6 +775,8 @@ field $_stripe_client = undef;
     }
 
     method create_payment_intent ($db, $args = {}) {
+        # Refused before Stripe, leaving the row as it was (ADR 005, ruling 12).
+        if ( my $refusal = Registry::Terms::checkout_refusal() ) { die "$refusal\n" }
         my $intent;
         try {
             # Blocking resolver here on purpose: this wrapper only runs where
@@ -2239,6 +2382,9 @@ SQL
     # blocking Stripe call inside the running IOLoop can never settle, because
     # Mojo::Promise::wait is a no-op once its loop is already running.
     method create_payment_intent_async ($db, $args = {}) {
+        if ( my $refusal = Registry::Terms::checkout_refusal() ) {
+            return Mojo::Promise->reject($refusal);
+        }
         # The customer is resolved INSIDE the chain. _intent_params is called
         # synchronously, so anything it needed from the network would be a
         # blocking call in the live IOLoop -- which is what #284 was: a parent

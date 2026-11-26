@@ -62,7 +62,7 @@ sub occurrences ( $change, @hours ) {
     my $class = $studio->insert( 'projects', { name => 'Class ' . ++$made, slug => "class-$made" },
         { returning => 'id' } )->hash->{id};
     my @resources = map {
-        my $room = $studio->insert( 'locations', { name => 'Room ' . ++$made, slug => "room-$made" },
+        my $room = $studio->insert( 'locations', { time_zone => 'America/New_York', name => 'Room ' . ++$made, slug => "room-$made" },
             { returning => 'id' } )->hash->{id};
         my $event = $studio->insert( 'events', {
             project_id => $class, location_id => $room, teacher_id => person(),
@@ -123,7 +123,8 @@ sub fee_payment ( $run, $amount = $run->data->{change_hold}{fee_cents} ) {
         amount_cents     => $amount,
         offer_version_id => $run->data->{change_hold}{offer_version_id},
         metadata         => { workflow_id => $workflow->id, workflow_run_id => $run->id,
-                              tenant_slug => $SLUG, payment_plan_id => 'pay', description => 'Change fee' },
+                              tenant_slug => $SLUG, payment_plan_id => 'pay', description => 'Change fee',
+                              purpose => 'change_fee' },
     } );
     $payment->_record_intent( $studio, { id => 'pi_ccm_' . $payment->id, client_secret => 'x_secret' } );
     $run->update_data( $studio, { owed_payment_id => $payment->id } );
@@ -488,6 +489,27 @@ subtest 'no path refunds change fee' => sub {
         'the paid fee with no seat left stays completed';
     my $refunds = $minion->jobs( { tasks => [ grep { /refund/ } keys $minion->tasks->%* ] } )->total;
     is $refunds, 0, 'and no refund job is queued';
+};
+
+subtest 'wrong amount change fee is refunded as a fee, not a booking' => sub {
+    my ( $version, $from, $to ) = occurrences( \%WINDOW, 72, 96 );
+    my $e       = booking( $version, $from );
+    my $run     = held_run( $e, $to );
+    my $payment = fee_payment($run);
+    Test::Registry::StripeWebhook::post_connect( $t, {
+        type    => 'payment_intent.succeeded',
+        account => $ACCOUNT,
+        data    => { object => { id => $payment->stripe_payment_intent_id, amount => 500,
+                                 metadata => { payment_id => $payment->id, tenant_slug => $SLUG } } },
+    } )->status_is(200);
+    drive();
+    is_deeply $e->units( $studio, $from->id ), [1], 'the booking does not move';
+    my $told = $studio->query( q{SELECT message FROM notifications WHERE user_id = ? AND metadata->>'payment_id' = ?},
+        $e->holder_user_id, $payment->id )->arrays->flatten->to_array;
+    is scalar @$told, 1, 'the payer is told once';
+    like $told->[0], qr/reschedule did not happen/i, 'that the reschedule did not happen';
+    like $told->[0], qr/change fee .*refunded/i, 'and that the change fee is being refunded';
+    unlike $told->[0], qr/nothing was booked|book again/i, 'not that a booking failed';
 };
 
 done_testing;

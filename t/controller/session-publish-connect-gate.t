@@ -31,7 +31,7 @@ my $program = $dao->create( Project => {
     program_type_slug => 'summer-camp', metadata => {},
 } );
 
-my $location = $dao->create( Location => {
+my $location = $dao->create( Location => { time_zone => 'America/New_York',
     name => 'Connect Gate Studio', slug => 'connect-gate-studio',
     address_info => { street => '1 Main', city => 'Orlando', state => 'FL' },
     metadata => {},

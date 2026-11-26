@@ -8,7 +8,9 @@ class Registry::DAO::WorkflowSteps::CreateLocation :isa(Registry::DAO::WorkflowS
 
     method process ( $db, $, $run = undef ) {
         $run //= do { my ($w) = $self->workflow($db); $w->latest_run($db) };
-        my %data       = $run->data->%{ 'name', 'metadata', 'notes' };
+        my %data       = $run->data->%{ 'name', 'metadata', 'notes', 'time_zone' };
+        return { errors => ['Choose the time zone this location is in'] }
+            unless grep { $_ eq ( $data{time_zone} // '' ) } Registry::DAO::Location->time_zones($db)->@*;
         my $location   = Registry::DAO::Location->create( $db, \%data );
         $run->update_data( $db, { locations => [ $location->id ] } );
 

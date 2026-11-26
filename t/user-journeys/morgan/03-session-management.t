@@ -35,7 +35,7 @@ for my $file (@files) {
 
 # Prerequisite data shared across journey blocks
 my $location = $dao->create(
-    Location => {
+    Location => { time_zone => 'America/New_York',
         name => 'Riverside Elementary',
     }
 );
@@ -130,7 +130,7 @@ my $acting_user = $dao->create(
 
 {    # Journey: Assign a location-appropriate event to the session
     my $location2 = $dao->create(
-        Location => {
+        Location => { time_zone => 'America/New_York',
             name => 'Valley Middle School Computer Lab',
         }
     );

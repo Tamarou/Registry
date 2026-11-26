@@ -30,7 +30,7 @@ my $db = Registry::DAO->new( url => $test_db->uri, schema => 'date_range' )->db;
 my $project = Registry::DAO::Project->create( $db, {
     name => 'Clay Club', status => 'published', metadata => {},
 } );
-my $location = Registry::DAO::Location->create( $db, {
+my $location = Registry::DAO::Location->create( $db, { time_zone => 'America/New_York',
     name => 'The Annex', slug => 'the-annex',
     address_info => { street_address => '1 Kiln Row', city => 'Orlando', state => 'FL', postal_code => '32801' },
     metadata => {},

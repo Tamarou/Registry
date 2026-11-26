@@ -16,7 +16,7 @@ my $dao = $test_db->db;
 {
     # Test basic location creation
     my $location = $dao->create(
-        'Location' => {
+        'Location' => { time_zone => 'America/New_York',
             name => 'Test Location',
             slug => 'test-location'
         }
@@ -32,7 +32,7 @@ my $dao = $test_db->db;
 {
     # Test full address data
     my $full_location = $dao->create(
-        'Location' => {
+        'Location' => { time_zone => 'America/New_York',
             name         => 'Full Address Location',
             slug         => 'full-address',
             address_info => {
@@ -68,7 +68,7 @@ __END__
 {
     # Test coordinate validation
     throws_ok {
-        $dao->create('Location' => {
+        $dao->create('Location' => { time_zone => 'America/New_York',
             name => 'Bad Coords',
             slug => 'bad-coords',
             address_info => {
@@ -81,7 +81,7 @@ __END__
     } qr/Invalid latitude/, 'Catches invalid latitude';
 
     throws_ok {
-        $dao->create('Location' => {
+        $dao->create('Location' => { time_zone => 'America/New_York',
             name => 'Bad Coords 2',
             slug => 'bad-coords-2',
             address_info => {
@@ -97,7 +97,7 @@ __END__
 {
     # Test address_info validation
     throws_ok {
-        $dao->create('Location' => {
+        $dao->create('Location' => { time_zone => 'America/New_York',
             name => 'Bad Address',
             slug => 'bad-address',
             address_info => []  # Invalid - not a hashref
@@ -107,7 +107,7 @@ __END__
 
 {
     # Test serialization
-    my $location = $dao->create('Location' => {
+    my $location = $dao->create('Location' => { time_zone => 'America/New_York',
         name => 'JSON Test',
         slug => 'json-test',
         address_info => {

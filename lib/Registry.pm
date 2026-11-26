@@ -5,6 +5,7 @@ use Object::Pad;
 use Registry::DAO;
 use Registry::Utility::BaseDomain ();
 use Registry::Middleware::RateLimit;
+use Registry::Terms;
 use Registry::Job::AttendanceCheck;
 use Registry::Job::ContinueWorkflowRun;
 use Registry::Job::DomainVerification;
@@ -26,6 +27,7 @@ class Registry :isa(Mojolicious) {
     use Mojo::Util               qw( steady_time );
     use YAML::XS                 qw(Load);
     use Registry::Utility::Logger;
+    use Registry::DAO::Entitlement;
 
     # What production depends on, what happens without it, and whether the value
     # is safe to print. Every consequence here was read out of the code rather
@@ -36,8 +38,8 @@ class Registry :isa(Mojolicious) {
     #                          database, silently.
     #   BASE_URL               AccountCheck builds magic-link URLs with '' as
     #                          the base.
-    #   STRIPE_SECRET_KEY      WorkflowSteps::Payment routes every priced cart
-    #                          to create_demo_enrollments: enrolled, not charged.
+    #   STRIPE_SECRET_KEY      every priced payment (Payment, OneTimePayment)
+    #                          is refused; only a $0 cart completes.
     #   STRIPE_WEBHOOK_SECRET  Webhooks refuses every delivery with a 500, so no
     #                          payment ever settles.
     #   STRIPE_CONNECT_WEBHOOK_SECRET  the Connect endpoint refuses every
@@ -53,7 +55,7 @@ class Registry :isa(Mojolicious) {
         { key => 'BASE_URL',
           cost => 'magic-link URLs are built with an empty base' },
         { key => 'STRIPE_SECRET_KEY', secret => 1,
-          cost => 'priced enrolments complete WITHOUT charging' },
+          cost => 'every priced payment is refused' },
         { key => 'STRIPE_WEBHOOK_SECRET', secret => 1,
           cost => 'webhooks are refused, so no payment settles' },
         { key => 'STRIPE_CONNECT_WEBHOOK_SECRET', secret => 1,
@@ -126,6 +128,12 @@ class Registry :isa(Mojolicious) {
         } else {
             die "MOJO_SECRET environment variable is required in production";
         }
+
+        # Keyed on the mode, not the request scheme, so a proxied or misspelt
+        # mode fails closed. Lax keeps the session on the Stripe 3-D Secure
+        # return and magic-link login, both top-level GETs. HttpOnly is Mojo's.
+        $self->sessions->samesite('Lax');
+        $self->sessions->secure(1) unless $self->mode =~ /\A(?:development|test)\z/;
 
         # Static asset URL prefix. When STATIC_URL is set, CSS/JS/images are
         # served from an external static site (e.g. Render static service or CDN).
@@ -804,9 +812,17 @@ class Registry :isa(Mojolicious) {
         # YAML carries the public mark (summer-camp-registration does; it
         # creates the visitor's account partway through, so even a login
         # would be wrong). Returns true when the request may proceed.
+        # Before any of that, the request's tenant must hold the run right
+        # (Entitlement->tenant_may_run, registry's live rows), whoever is
+        # asking: a copy without one is refused, and so is any lookup that errors.
         $self->helper(
             require_workflow_role => sub ( $c, $slug ) {
-                my $workflow = $slug && $c->dao->find( 'Registry::DAO::Workflow', { slug => $slug } );
+                my $entitled = eval {
+                    Registry::DAO::Entitlement->tenant_may_run( $c->dao('registry'), $c->tenant, $slug );
+                };
+                $c->app->log->error("run entitlement lookup for '@{[ $slug // '' ]}' failed: $@") if $@;
+
+                my $workflow = $entitled && $c->dao->find( 'Registry::DAO::Workflow', { slug => $slug } );
                 return 1 if $workflow && $workflow->public;
 
                 my $roles = $workflow && $workflow->roles;
@@ -1021,6 +1037,11 @@ class Registry :isa(Mojolicious) {
             }
             $c->render(json => { status => 'ok', db => 'ok', timestamp => $ts });
         })->name('health_check');
+
+        # The platform's terms, anonymous on the apex and every tenant host.
+        $self->routes->get('/terms')->to( cb => sub ($c) {
+            $c->render( 'terms', terms_version => Registry::Terms::VERSION );
+        } )->name('terms');
 
         # Webhook routes (no auth required)
         $self->routes->post('/webhooks/stripe')->to('webhooks#stripe')

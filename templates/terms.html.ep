@@ -1,0 +1,15 @@
+%# ABOUTME: /terms: the platform's terms of service, the same on the apex and every tenant host.
+%# ABOUTME: A marked DRAFT placeholder until perigrin supplies the text (ADR 005, ruling 12).
+% layout 'default';
+% title 'Terms of Service';
+
+<article class="card" data-terms-version="<%= $terms_version %>">
+    <div class="card-body">
+        <div class="notification warning" role="note">
+            <strong>DRAFT</strong>: these are not the platform's terms of service yet.
+            The final text has not been published, and until it is, no payment is taken.
+        </div>
+        <p>A studio's own booking terms (refunds, changes, expiry) are shown with
+        each offer when you book.</p>
+    </div>
+</article>

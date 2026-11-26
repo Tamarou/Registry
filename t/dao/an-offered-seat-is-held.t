@@ -22,7 +22,7 @@ my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 my $db      = $dao->db;
 
-my $loc = $dao->create(Location => {
+my $loc = $dao->create(Location => { time_zone => 'America/New_York',
     name => 'Hold Studio', slug => 'hold-studio', address_info => {}, metadata => {} });
 my $prog = $dao->create(Project => {
     status => 'published', name => 'Hold Camp',

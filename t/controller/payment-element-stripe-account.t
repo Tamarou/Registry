@@ -10,7 +10,7 @@ use Test::More;
 use Test::Registry::Mojo;
 use Registry;
 use Test::Registry::DB;
-use Test::Registry::PricingProbe qw( state_platform_terms );
+use Test::Registry::SoloVersion qw( accept_solo_at );
 use Test::Registry::Fixtures;
 use Registry::DAO qw(Workflow);
 use Registry::DAO::Payment;
@@ -39,7 +39,8 @@ for my $tenant ([ ta => 'acct_x' ], [ tb => 'acct_tb' ]) {
     my $tenant_dao = $dao->connect_schema($slug);
     Workflow->from_yaml($tenant_dao, $_->slurp) for @files;
 }
-state_platform_terms( $dao->db, [qw( ta tb )], { rate => 0 } );
+# Each accepts Solo, as signup does, at a stated 0%: its terms and its run rights.
+accept_solo_at( $dao->db, [qw( ta tb )], 0 );
 
 my $t = Test::Registry::Mojo->new('Registry');
 $t->ua->max_redirects(5);

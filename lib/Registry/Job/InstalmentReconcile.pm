@@ -7,6 +7,8 @@ class Registry::Job::InstalmentReconcile {
     use Registry::Job::Recurring;
     use Registry::Controller::Webhooks;
     use Registry::Service::Stripe;
+    use Registry::DAO::Payment;
+    use Registry::DAO::Tenant;
 
     sub register ($class, $app) {
         Registry::Job::Recurring->add_task( $app, instalment_reconcile => sub ($job, @args) {
@@ -20,10 +22,7 @@ class Registry::Job::InstalmentReconcile {
     # a schedule with an owed row is settled here, on its bound row or the next owed one.
     method run ($job) {
         my $app = $job->app;
-        my $tenants = $app->dao('registry')->db->query( q{
-            SELECT slug, stripe_connect_account_id AS account FROM registry.tenants
-             WHERE stripe_connect_account_id IS NOT NULL
-        } )->hashes;
+        my $tenants = Registry::DAO::Tenant->with_connect_account( $app->dao('registry')->db );
         # One broken tenant must not hold up the rest; it is reported by slug, as the other sweeps do.
         my ( @covered, @skipped );
         for my $tenant (@$tenants) {
@@ -44,13 +43,7 @@ class Registry::Job::InstalmentReconcile {
         my $db = $app->dao( $tenant->{slug} )->db;
         # shortcut: a fully paid set is not checked for a surplus paid invoice;
         # drop the EXISTS if Stripe is ever seen billing past a set's rows.
-        my $schedules = $db->query( q{
-            SELECT p.stripe_schedule_id FROM payments p
-             WHERE p.instalment_seq = 1 AND p.stripe_schedule_id IS NOT NULL
-               AND EXISTS ( SELECT 1 FROM payments o
-                             WHERE o.stripe_schedule_id = p.stripe_schedule_id
-                               AND o.status IN ('pending', 'failed') )
-        } )->arrays->flatten;
+        my $schedules = Registry::DAO::Payment->schedules_with_owed_instalments($db);
 
         my $stripe = Registry::Service::Stripe->from_env->for_account( $tenant->{account} );
         for my $schedule (@$schedules) {
@@ -89,18 +82,11 @@ class Registry::Job::InstalmentReconcile {
                 $db, { type => 'invoice.paid', data => { object => $invoice } }, $schedule );
             $tx->commit;
 
-            next if $self->_bound( $db, $schedule, $invoice_id );
+            next if Registry::DAO::Payment->instalment_invoice_bound( $db, $schedule, $invoice_id );
             $app->log->error( "instalment_reconcile: tenant $tenant->{slug} schedule "
                   . _printable($schedule) . ': paid invoice ' . _printable($invoice_id)
                   . ' matches no owed row; Stripe collected it but no payment records it' );
         }
-    }
-
-    method _bound ($db, $schedule, $invoice_id) {
-        return $db->query( q{
-            SELECT 1 FROM payments
-             WHERE stripe_schedule_id = ? AND metadata->>'stripe_invoice_id' = ?
-        }, $schedule, $invoice_id )->rows;
     }
 
     sub _printable ($v) { Registry::Controller::Webhooks::_printable($v) }

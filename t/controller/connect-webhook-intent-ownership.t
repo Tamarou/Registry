@@ -44,7 +44,7 @@ Registry::DAO::Tenant->provision($db, {
 my $tdb = Registry::DAO->new(url => $test_db->uri, schema => $slug)->db;
 state_platform_terms( $db, $slug, { rate => 0 } );
 
-my $loc = Registry::DAO::Location->create($tdb, { name => 'Own Studio',
+my $loc = Registry::DAO::Location->create($tdb, { time_zone => 'America/New_York', name => 'Own Studio',
     slug => 'own-studio', address_info => {}, metadata => {} });
 my $prog = Registry::DAO::Project->create($tdb, { name => 'Own Camp',
     status => 'published', program_type_slug => 'summer-camp', metadata => {} });

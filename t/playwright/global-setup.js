@@ -90,13 +90,14 @@ module.exports = async () => {
         // across tests; disable it for the E2E server.
         REGISTRY_RATE_LIMIT_DISABLED: '1',
       };
-      // Payment steps branch on STRIPE_SECRET_KEY: without it they take the
-      // demo path and enroll without a gateway. That is what the general e2e
-      // run wants -- it has no keys and must not reach Stripe.
+      // Payment steps refuse every priced cart without STRIPE_SECRET_KEY; only
+      // a $0 cart completes without a gateway. The general e2e run has no keys
+      // and must not reach Stripe, so its registration journeys buy free
+      // sessions.
       //
-      // payment-smoke.spec.js wants the opposite, and stripping the keys made
-      // it unpassable: the server enrolled straight through to the completion
-      // page, so the Stripe Payment Element it waits for was never rendered.
+      // payment-smoke.spec.js needs a priced cart charged through Stripe, so
+      // it needs the keys: without them its checkout is refused and the Stripe
+      // Payment Element it waits for is never rendered.
       //
       // Test-mode keys are therefore passed through, and anything else is
       // stripped. A live key must never reach a browser the suite drives, and

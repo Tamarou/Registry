@@ -46,7 +46,7 @@ for my $file (@tmpl_files) {
 # All four singletons use find-or-create so re-running is safe.
 
 my $location = Registry::DAO::Location->find($dao->db, { slug => 'online-jordan-test' });
-$location //= $dao->create(Location => {
+$location //= $dao->create(Location => { time_zone => 'America/New_York',
     name         => 'Online Platform',
     slug         => 'online-jordan-test',
     address_info => { type => 'virtual' },

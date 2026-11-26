@@ -1,0 +1,55 @@
+# ABOUTME: Public in-studio booking: a visitor picks an occurrence, an offer and how many, signs in, and holds the seats.
+# ABOUTME: The hold is time-limited; payment charges what the hold step owes, and complete turns the hold into the booking.
+
+name: In-studio Booking
+description: Book seats in a class occurrence
+slug: in-studio-booking
+# Anyone may walk into this workflow, deliberately: the gate admits anyone to a
+# workflow with the public mark. t/security/workflow-roles-cover-every-workflow.t
+# enforces that every workflow declares roles or this mark.
+public: true
+
+steps:
+  - slug: occurrence
+    label: Class
+    description: Choose a class occurrence with free seats
+    class: Registry::DAO::WorkflowSteps::ChooseOccurrence
+
+  - slug: offer
+    label: Offer
+    description: Choose an offer and how many
+    class: Registry::DAO::WorkflowSteps::ChooseOfferAndUnits
+    # The terms agreement (01a213a6-045a) is taken here, on the page that links
+    # /terms: ChooseOfferAndUnits->process records it, and HoldSeats refuses a
+    # run that has not agreed before it holds anything.
+
+  - slug: account
+    label: Your account
+    description: Sign in or create an account
+    class: Registry::DAO::WorkflowSteps::AccountCheck
+
+  - slug: hold
+    label: Hold
+    description: Hold the seats while you pay
+    class: Registry::DAO::WorkflowSteps::HoldSeats
+
+  # Charges owed_payment, as HoldSeats wrote it, against booking_hold's hold:
+  # a direct charge on the studio's account with Solo's fee.
+  - slug: payment
+    label: Payment
+    description: Pay for the booking
+    class: Registry::DAO::WorkflowSteps::OneTimePayment
+
+  # Once paid (the person's return or the Connect webhook's driver), converts
+  # booking_hold's hold into the booker's entitlement, linked to the payment.
+  - slug: complete
+    label: Booking
+    description: Make the booking
+    class: Registry::DAO::WorkflowSteps::CompleteBooking
+
+  # The booking and a link to reschedule it. CompleteBooking again, for the
+  # booking it shows; processing it once converted changes nothing.
+  - slug: done
+    label: Booked
+    description: Your booking
+    class: Registry::DAO::WorkflowSteps::CompleteBooking

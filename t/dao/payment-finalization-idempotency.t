@@ -15,7 +15,7 @@ my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 my $db      = $dao->db;
 
-my $loc = $dao->create(Location => {
+my $loc = $dao->create(Location => { time_zone => 'America/New_York',
     name => 'Idem Studio', slug => 'idem-studio', address_info => {}, metadata => {},
 });
 my $prog = $dao->create(Project => {

@@ -1,0 +1,28 @@
+%# ABOUTME: in-studio-booking's last screen: the booking, the policies it was sold under, and a way to reschedule it.
+%# ABOUTME: Rescheduling starts entitlement-change, which lists this booking among the booker's own.
+% extends 'layouts/workflow';
+% title 'You are booked';
+% my $booking = stash('booking');
+
+% if ($booking) {
+<section class="card">
+  <h2>You are booked</h2>
+  <p><%= $booking->{offer} %> x <%= $booking->{count} %>: <%= $booking->{seats} %> <%= $booking->{seats} == 1 ? 'seat' : 'seats' %></p>
+  <p><%= $booking->{start}{start} %> (<%= $booking->{start}{time_zone} %>)</p>
+  <ul>
+    % for my $words (@{ $booking->{policy} }) {
+    <li><%= $words %></li>
+    % }
+  </ul>
+</section>
+
+<form method="POST" action="<%= url_for('workflow_start', workflow => 'entitlement-change') %>">
+  <div class="form-actions">
+    <button type="submit" class="btn btn-secondary">Reschedule this booking</button>
+  </div>
+</form>
+% } else {
+<section class="card">
+  <p>Your booking is being confirmed.</p>
+</section>
+% }

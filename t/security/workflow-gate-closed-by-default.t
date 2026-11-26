@@ -9,6 +9,7 @@ use experimental 'signatures';
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::Mojo;
+use Test::Registry::SoloVersion qw(accept_solo);
 use Test::Registry::DB;
 use Test::Registry::Helpers qw(authenticate_as import_all_workflows);
 use Registry::DAO::Tenant;
@@ -24,7 +25,8 @@ $ENV{DB_URL} = $test_db->uri;
 import_all_workflows($dao);
 
 for my $slug (qw( gate_here gate_there )) {
-    Registry::DAO::Tenant->provision( $db, { name => "Gate \u$slug", slug => $slug, users => [] } );
+    # Accepting Solo, as signup does, gives it the run rights: the role gate is what these subtests probe.
+    accept_solo( $db, Registry::DAO::Tenant->provision( $db, { name => "Gate \u$slug", slug => $slug, users => [] } ) );
 }
 my $here      = Registry::DAO::Tenant->find( $db, { slug => 'gate_here' } );
 my $HOST      = { Host => 'gate_here.localhost' };

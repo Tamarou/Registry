@@ -17,12 +17,13 @@ class Registry::DAO::Resource :isa(Registry::DAO::Object) {
 
     sub table { 'resources' }
 
-    # The finite resource that is occurrence $event_id, with the event's seats.
+    # The finite resource that is occurrence $event_id, with the event's seats,
+    # or its class's default seats when the event states none.
     sub for_occurrence ( $class, $db, $event_id ) {
         $db = $db->db if $db isa Registry::DAO;
         my $row = $db->query( q{
             INSERT INTO resources (name, kind, capacity, event_id)
-            SELECT p.name || ' ' || e.time, 'finite', e.capacity, e.id
+            SELECT p.name || ' ' || e.time, 'finite', COALESCE(e.capacity, p.seats_per_occurrence), e.id
               FROM events e JOIN projects p ON p.id = e.project_id
              WHERE e.id = ?
             RETURNING *
@@ -39,6 +40,17 @@ class Registry::DAO::Resource :isa(Registry::DAO::Object) {
         return $db->query( q{
             SELECT time, time + duration * interval '1 minute' FROM events WHERE id = ?
         }, $event_id )->array->@*;
+    }
+
+    # Whether a booking may take seats in this occurrence now: its event is
+    # published and still to start. Coverage (OfferVersion->covered_resources)
+    # ignores both, so the booking steps ask this as well.
+    method on_sale ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        return 0 unless $event_id;
+        return !!$db->query( q{
+            SELECT 1 FROM events WHERE id = ? AND status = 'published' AND clock_timestamp() < time
+        }, $event_id )->rows;
     }
 
     # The resource, its row locked until the caller's transaction ends: every

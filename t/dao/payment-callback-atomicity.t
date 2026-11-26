@@ -30,7 +30,7 @@ state_platform_terms( $db, $platform, { rate => 0 } );
 my $uri     = $test_db->uri;
 
 # --- fixtures: a real payment row, because _apply_intent genuinely writes to it
-my $loc = $dao->create(Location => {
+my $loc = $dao->create(Location => { time_zone => 'America/New_York',
     name => 'CB Studio', slug => 'cb-studio', address_info => {}, metadata => {},
 });
 my $prog = $dao->create(Project => {

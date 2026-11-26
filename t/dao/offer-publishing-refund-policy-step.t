@@ -34,7 +34,7 @@ my $seats = Test::Registry::Fixtures::create_resource( $tdb,
 my $class = $tdb->insert( 'projects', { name => 'Wheel class', slug => 'wheel-class' }, { returning => 'id' } )
     ->hash->{id};
 my $teacher = $tdb->insert( 'users', { username => 'wheel-teacher' }, { returning => 'id' } )->hash->{id};
-my $room    = $tdb->insert( 'locations', { name => 'Wheel room', slug => 'wheel-room' }, { returning => 'id' } )
+my $room    = $tdb->insert( 'locations', { time_zone => 'America/New_York', name => 'Wheel room', slug => 'wheel-room' }, { returning => 'id' } )
     ->hash->{id};
 my $event = $tdb->insert( 'events', {
     project_id => $class, location_id => $room, teacher_id => $teacher,

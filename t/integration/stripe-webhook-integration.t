@@ -74,7 +74,7 @@ subtest 'stripe webhook integration settles through connect endpoint' => sub {
 
     my $tdb = Registry::DAO->new(url => $test_db->uri, schema => $slug)->db;
 
-    my $loc = Registry::DAO::Location->create($tdb, { name => 'Int Studio',
+    my $loc = Registry::DAO::Location->create($tdb, { time_zone => 'America/New_York', name => 'Int Studio',
         slug => 'int-studio', address_info => {}, metadata => {} });
     my $prog = Registry::DAO::Project->create($tdb, { name => 'Int Camp',
         status => 'published', program_type_slug => 'summer-camp', metadata => {} });
