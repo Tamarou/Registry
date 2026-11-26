@@ -10,13 +10,16 @@ use utf8;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
-use Test::Registry::PricingProbe qw( state_platform_terms );
+use Test::Registry::SoloVersion qw( publish_solo_version accept_solo );
+use Registry::PriceOps::PlatformTerms ();
 use Test::Registry::Fixtures;
 use Test::Registry::Mojo;
 use Test::Registry::Helpers qw( authenticate_as );
 
 use Registry::DAO qw(Workflow);
 use Registry::DAO::Workflow;
+use Registry::DAO::Tenant;
+use Registry::DAO::Resource;
 use Registry::DAO::WorkflowStep;
 use Registry::DAO::WorkflowRun;
 use Registry::DAO::User;
@@ -40,7 +43,6 @@ Test::Registry::Fixtures::create_tenant($dao->db, {
     slug => 'hosttenant',
 });
 $dao->db->query('SELECT clone_schema(?)', 'hosttenant');
-state_platform_terms( $dao->db, 'hosttenant', { rate => 0 } );
 
 # Two passthrough steps: no outcome definition, so validate() is a no-op and
 # whatever the client posts is merged into the run's data.
@@ -64,6 +66,16 @@ Registry::DAO::WorkflowStep->create($dao->db, {
     depends_on  => $landing->id,
 });
 $workflow->update($dao->db, { first_step => 'landing' }, { id => $workflow->id });
+
+# hosttenant runs run-data-test, which only this test's registry has: it
+# accepts a Solo version whose set also lists that workflow's run right, at 0%.
+my $solo_now = publish_solo_version( $dao->db, 0,
+    Registry::DAO::Resource->find( $dao->db, { name => 'run:run-data-test' } )->id );
+accept_solo( $dao->db, Registry::DAO::Tenant->find( $dao->db, { slug => 'hosttenant' } ) );
+subtest 'platform terms are stated' => sub {
+    cmp_ok Registry::PriceOps::PlatformTerms::platform_terms_for_tenant( $dao->db, 'hosttenant' )->{fraction},
+        '==', 0, 'hosttenant is charged at the stated rate';
+};
 
 my $session_user = Registry::DAO::User->create($dao->db, {
     name      => 'Logged In Parent',
@@ -395,7 +407,7 @@ subtest 'a posted tenant id is ignored and signup provisions a new tenant' => su
     $url = $t->tx->res->headers->location;
     $t->post_ok( $url => form => {
         terms_accepted => 1, tenant => $existing,
-        offer_version  => '9bc4069a-f0a7-0026-3a84-aeb0d0732995',    # Solo v2
+        offer_version  => $solo_now->id,    # Solo's current version, published above
     } )->status_is(302);
 
     my ($run_id) = $url =~ m{/tenant-signup/([^/]+)/};

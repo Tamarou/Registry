@@ -9,6 +9,7 @@ use experimental 'signatures';
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::Mojo;
+use Test::Registry::SoloVersion qw(accept_solo);
 use Test::Registry::DB;
 use Test::Registry::Helpers qw(authenticate_as import_all_workflows);
 use Registry::DAO::Tenant;
@@ -24,9 +25,10 @@ $ENV{DB_URL} = $test_db->uri;
 import_all_workflows($dao);
 
 for my $slug (qw( price_here price_there )) {
-    Registry::DAO::Tenant->provision( $db, {
+    # Accepting Solo, as signup does, gives it the run rights the gate asks for.
+    accept_solo( $db, Registry::DAO::Tenant->provision( $db, {
         name => "Price \u$slug", slug => $slug, users => [],
-    } );
+    } ) );
 }
 my $here  = Registry::DAO::Tenant->find( $db, { slug => 'price_here' } );
 my $there = Registry::DAO::Tenant->find( $db, { slug => 'price_there' } );

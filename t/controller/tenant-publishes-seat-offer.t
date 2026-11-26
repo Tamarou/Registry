@@ -8,6 +8,7 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::Mojo;
+use Test::Registry::SoloVersion qw(accept_solo);
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Test::Registry::Helpers qw( authenticate_as import_all_workflows join_tenant );
@@ -22,8 +23,9 @@ $ENV{DB_URL} = $test_db->uri;
 # Imported first, then provisioned as a new tenant is, so the tenant's schema
 # gets offer-publishing the way a new tenant gets it.
 import_all_workflows($dao);
-Registry::DAO::Tenant->provision( $dao->db, { name => 'Wheel Studio', slug => 'wheel_studio' } );
-Registry::DAO::Tenant->provision( $dao->db, { name => 'Other Studio', slug => 'other_studio' } );
+# Each accepts Solo, as signup does, so it holds the run rights its workflows need.
+accept_solo( $dao->db, Registry::DAO::Tenant->provision( $dao->db, { name => 'Wheel Studio', slug => 'wheel_studio' } ) );
+accept_solo( $dao->db, Registry::DAO::Tenant->provision( $dao->db, { name => 'Other Studio', slug => 'other_studio' } ) );
 my $db    = $dao->connect_schema('wheel_studio')->db;
 my $other = $dao->connect_schema('other_studio')->db;
 my %HOST  = ( Host => 'wheel_studio.localhost' );

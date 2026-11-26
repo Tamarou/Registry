@@ -11,6 +11,7 @@ use utf8;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::Mojo;
+use Test::Registry::SoloVersion qw(accept_solo);
 use Test::Registry::DB;
 
 use Registry::DAO qw(Workflow);
@@ -88,6 +89,7 @@ subtest 'a tenant is not given the platform storefront' => sub {
     my $tenant = Registry::DAO::Tenant->provision( $dao->db,
         { name => 'Big Cups', slug => 'big_cups', users => [] } );
     ok $tenant, 'tenant provisioned' or return;
+    accept_solo( $dao->db, $tenant );    # as signup does: its storefront's run right
 
     my $tenant_dao = $dao->schema('big_cups');
     ok !$tenant_dao->find( Workflow => { slug => 'registry-storefront' } ),

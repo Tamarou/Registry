@@ -7,9 +7,9 @@ use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
 use Test::More;
-use Mojo::File ();
 use Mojo::JSON qw( decode_json );
 use Test::Registry::Mojo;
+use Test::Registry::SoloVersion qw(accept_solo);
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Test::Registry::Helpers qw( authenticate_as import_all_workflows join_tenant );
@@ -17,6 +17,7 @@ use Registry;
 use Registry::DAO;
 use Registry::DAO::Payment;
 use Registry::DAO::User;
+use Registry::DAO::Tenant;
 use Registry::DAO::Workflow;
 use Registry::DAO::WorkflowStep;
 
@@ -41,9 +42,9 @@ my $platform_staff = a_user( 'fee_platform_staff', 'staff' );
 
 my $studio = 'fee_studio';
 Test::Registry::Fixtures::create_tenant( $db, { name => 'Fee Studio', slug => $studio } );
-# As provisioning gives a tenant every workflow, so its admins reach the route.
-Registry::DAO::Workflow->from_yaml( $dao->connect_schema($studio),
-    Mojo::File::path('workflows/platform-fee-refund-exception.yml')->slurp );
+# It accepts Solo, as signup does: that copies the workflow and gives the run
+# right, so its admins reach the route.
+accept_solo( $db, Registry::DAO::Tenant->find( $db, { slug => $studio } ) );
 
 # A refunded direct charge in $slug's schema that took a 250-cent fee under
 # Solo v1; %over changes its columns.
