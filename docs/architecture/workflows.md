@@ -109,7 +109,11 @@ when the run belongs to the URL's workflow in this tenant's schema; any other
 run id is a 404, so a run of an admin-only workflow cannot be continued
 through a public slug, nor its existence confirmed. Runs the
 `ContinueWorkflowRun` job or the Stripe Connect webhook create never pass
-through these routes. The hard-coded `%ROLES` map that
+through these routes. A workflow a step starts internally through
+`Registry::Utility::WorkflowProcessor` (the transfer and drop processing that
+`ProcessAdminTransferDecision` and `ProcessAdminDropDecision` start) is not
+gated itself: it is gated by the entry to the outer workflow whose step
+starts it. The hard-coded `%ROLES` map that
 `lib/Registry.pm` once held is gone; the rows are the only source.
 
 A tenant-chosen registration workflow (a project's `registration_workflow`
