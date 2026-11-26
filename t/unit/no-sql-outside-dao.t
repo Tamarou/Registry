@@ -23,10 +23,16 @@ my %ALLOWED = (
     'lib/Registry/Job/SendNotifications.pm'     => 3,
 );
 
-# A database handle ($db, $tdb, ...->db, a Registry::DAO in $dao) receiving one
-# of Mojo::Pg::Database's SQL methods. A DAO object's own ->update($db, ...)
-# and Mojo::URL's ->query are not database handles, so they do not match.
-my $SQL_CALL = qr/(?:\$\w*db|->db|\$dao)\s*->\s*(?:query|select|insert|update|delete)\s*\(/;
+# A database handle receiving an SQL method. A handle is a variable named for
+# one ($db, $tdb, $dbh, $database, $conn..., or a Registry::DAO in $dao,
+# $tenant_dao...) or a chain ending in ->db, ->dbh or ->dao, with or without
+# an argument list (->db(), ->dao('registry')). The methods are Mojo::Pg's
+# query/select/insert/update/delete, their _p forms, and raw DBI's do,
+# prepare, selectall_* and selectrow_*. A DAO object's own ->update($db, ...)
+# and Mojo::URL's ->query have no handle as receiver, so they do not match.
+my $HANDLE   = qr/(?:\$\w*(?:db|dbh|dao|database|conn\w*)\b|->(?:db|dbh|dao)\b(?:\s*\([^()]*\))?)/;
+my $METHOD   = qr/(?:(?:query|select|insert|update|delete)(?:_p)?|do|prepare|selectall_\w+|selectrow_\w+)/;
+my $SQL_CALL = qr/$HANDLE\s*->\s*$METHOD\s*\(/;
 
 my %found;
 for my $file ( path('lib')->list_tree->grep(qr/\.pm\z/)->each ) {

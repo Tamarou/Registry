@@ -694,8 +694,10 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
 
         my $row = Registry::DAO::Payment->instalment_for_invoice( $db, $schedule, $invoice_id );
 
-        # Each status write carries its legality in the WHERE, as Payment's own
-        # writers do: a completed or refunded row is history to every invoice.
+        # The status writes below (Payment->close_instalment, complete_instalment
+        # and fail_instalment) each carry their legality in the WHERE, from
+        # Payment->_legal_predecessors: a completed or refunded row is history
+        # to every invoice.
 
         # Stripe will not charge a voided or uncollectible invoice, so its
         # month stays owed: flagged, where a quiet pending row would hide it.
