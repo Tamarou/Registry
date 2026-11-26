@@ -13,6 +13,8 @@
   </header>
 
   <ul class="setup-checklist">
+    %# The viewer's role in this tenant now, never one recorded on the run.
+    % my $viewer_role = tenant_role() // '';
     % for my $item (@$checklist) {
       <li data-key="<%= $item->{key} %>" data-status="<%= $item->{status} %>">
         <h3>
@@ -31,13 +33,13 @@
         %# Most items continue the workflow via callcc. Payments is a plain
         %# screen outside it -- the tenant leaves for Stripe and comes back --
         %# so it links rather than submitting a continuation. An item whose
-        %# workflow refuses this user's role keeps its count but gets no button.
+        %# workflow refuses the viewer's role keeps its count but gets no button.
         % if ($item->{href}) {
           <a href="<%= $item->{href} %>" class="btn btn-primary">
             <%= $item->{status} eq 'done' ? "Manage $item->{label}" : "Set up $item->{label}" %>
           </a>
         % } elsif (do { my $wf = dao->find('Registry::DAO::Workflow', { slug => $item->{callcc_target} });
-        %               $wf && ( $wf->public || grep { $_ eq $user_role } ( $wf->roles // [] )->@* ) }) {
+        %               $wf && ( $wf->public || grep { $_ eq $viewer_role } ( $wf->roles // [] )->@* ) }) {
           <form method="POST"
                 action="<%= url_for('workflow_callcc', workflow => 'program-setup', run => $run->id, target => $item->{callcc_target}) %>">
             <button type="submit">

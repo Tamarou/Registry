@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 # ABOUTME: A workflow run answers only to whoever started it: its user once it has one, else the browser session.
-# ABOUTME: Another user or session is refused and writes nothing to the run.
+# ABOUTME: Another user or session is refused and writes nothing; the overview's buttons follow the viewer's role.
 use 5.42.0;
 use warnings;
 use utf8;
@@ -120,6 +120,26 @@ subtest 'server-owned run keys are written only after authorization passes' => s
 
     my $data = snapshot($run_id)->{data};
     unlike $data, qr/\Q${\ $bob->id }\E/, "Bob's id is nowhere in Alice's run";
+};
+
+subtest 'the overview\'s buttons reflect the viewer\'s role, not the run creator\'s' => sub {
+    my $t = app_as($carol);
+    $t->get_ok( '/program-setup' => $HOST )->status_is(200)
+      ->element_exists( 'form[action*="/callcc/pricing-plan-creation"]',
+        'as an admin Carol is offered pricing' );
+    my ($run_id) = $t->tx->res->body =~ m{/program-setup/([0-9a-f-]{36})/callcc/};
+    ok $run_id, 'the overview has a live run';
+
+    # Demoted to staff after the run recorded her as admin.
+    my ($local) = Registry::DAO::User->find( $here_db, { id => $carol->id } );
+    $local->change_role( $here_db, 'staff', $alice );
+    is Registry::DAO::Tenant->role_in( $db, 'run_owner', $carol->id ), 'staff', 'Carol is now staff';
+
+    $t->get_ok( "/program-setup/$run_id/overview" => $HOST )->status_is(200)
+      ->element_exists_not( 'form[action*="/callcc/pricing-plan-creation"]',
+        'the admin-only pricing button is gone for the staff viewer' )
+      ->element_exists( 'form[action*="/callcc/location-management"]',
+        'while the staff ones remain' );
 };
 
 sub snapshot_registry ($run_id) {

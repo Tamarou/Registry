@@ -107,14 +107,7 @@ method prepare_template_data ($db, $run, $params = {}) {
     my $done  = scalar grep { $_->{status} eq 'done' } @checklist;
     my $total = scalar @checklist;
 
-    # The acting user's tenant role, read only off the run: the controller
-    # seeds `user` there from the session on every request and strips any
-    # client-sent user key, so a posted role= or user[role]= cannot reach it.
-    # The template offers a callcc only where the target's row admits this role.
-    my $user = $run ? $run->data->{user} : undef;
-
     return {
-        user_role      => ref $user eq 'HASH' ? $user->{role} // '' : '',
         checklist      => \@checklist,
         total_done     => $done,
         total_items    => $total,
