@@ -178,6 +178,19 @@ subtest 'an admin changes a customer\'s entitlement for them' => sub {
     is_deeply $e->units( $db, $to->id ), [1], 'the customer holds the target occurrence';
 };
 
+subtest 'staff started change with a fee is refused until the payer is decided' => sub {
+    my ( $version, $from, $to ) = occurrences( 1000, 4, 72, 96 );
+    my $e = booking( $version, $from, member('parent') );
+    my ( $t, $run ) = to_payment( member('staff'), $e, $to );
+    my $form = form_of($t) or return fail 'the payment page has a form';
+    $t->post_ok( $form->attr('action') => form => {} )->status_is(302);
+    $t->get_ok( $t->tx->res->headers->location )
+        ->content_like( qr/This change has a fee, so the booker must start it from their booking\./, 'refused with why' );
+    is payments_of($run), 0, 'no payment row is written';
+    is_deeply $e->units( $db, $from->id ), [1], 'the booking stays where it was';
+    is_deeply $e->units( $db, $to->id ), [], 'and does not move';
+};
+
 subtest 'stranger cannot change entitlement' => sub {
     my ( $version, $from, $to ) = occurrences( 1000, 4, 72, 96 );
     my $holder = member('parent');
