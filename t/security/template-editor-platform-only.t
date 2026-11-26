@@ -115,4 +115,13 @@ subtest 'the platform operator admin may save and revert' => sub {
     is $result->{template_data}{flash}, 'reverted', 'and reports the revert';
 };
 
+subtest 'the editor offers save and revert only to whoever may use them' => sub {
+    ok !edit_as( studio_admin => $SLUG => { action => 'edit' } )->{template_data}{may_change},
+        'a studio admin is not offered save or revert';
+    ok !edit_as( operator => $SLUG => { action => 'edit' } )->{template_data}{may_change},
+        "nor is the operator in a studio's schema";
+    ok edit_as( operator => registry => { action => 'edit' } )->{template_data}{may_change},
+        "the operator admin in registry's schema is";
+};
+
 done_testing;
