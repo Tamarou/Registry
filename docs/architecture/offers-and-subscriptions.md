@@ -29,7 +29,8 @@ Alex publishes the platform's offer to tenants as an offer version in
 payment plan, whose resource set grants payment processing and the run right to
 every shipped workflow. Jordan subscribes by completing tenant signup, which gives his
 tenant an entitlement to that version in `registry.entitlements`. That
-entitlement is the source of his rate. See
+entitlement is the source of his rate, and of his workflows: signup copies
+into his tenant exactly the workflows its run rights grant, and nothing else. See
 [The platform is just a tenant](priceops-model.md#the-platform-is-just-a-tenant).
 
 ### At the tenant scale
