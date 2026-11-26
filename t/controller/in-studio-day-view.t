@@ -149,4 +149,51 @@ subtest 'staff see a local day\'s occurrences with seats held and bookings' => s
         ->element_exists_not( '[data-occurrence]', 'and lists nothing yet' );
 };
 
+sub uses ($e) {
+    return $db->select( 'entitlement_uses', '*', { entitlement_id => $e->id } )->hashes->to_array;
+}
+
+subtest 'an occurrence at 23:30 local, the next day in UTC, is on its local day' => sub {
+    my $late = occurrence('2027-05-10 23:30');
+    my $t    = client( $user{staff} );
+    $t->get_ok( day_url('2027-05-10') )->status_is(200);
+    is_deeply listed($t), [ $late->id ], 'listed on its local day';
+    like section( $t, $late )->all_text, qr/23:30/, 'at its local start';
+    $t->get_ok( day_url('2027-05-11') )->status_is(200);
+    is_deeply listed($t), [], 'not on the UTC day it falls in';
+};
+
+subtest 'marking attendance records it' => sub {
+    my $o = occurrence('2027-05-20 10:00');
+    my $e = booking( $o, member('parent') );
+    my $t = client( $user{staff} );
+    $t->get_ok( day_url('2027-05-20') )->status_is(200);
+    my $form = section( $t, $o )->at(qq{[data-entitlement="${\ $e->id }"] form}) or return fail 'a present mark';
+    my %fields = map { $_->attr('name') => $_->attr('value') } $form->find('input[type="hidden"]')->each;
+    $t->post_ok( $form->attr('action') => form => \%fields )->status_is(302);
+    my $back = Mojo::URL->new( $t->tx->res->headers->location );
+    is $back->path, '/in-studio-day-view', 'back to the day view';
+    is $back->query->param('day'), '2027-05-20', 'on the same day';
+    my $uses = uses($e);
+    is scalar @$uses, 1, 'one use is recorded';
+    is $uses->[0]{occurrence_id}, $o->id, 'for that occurrence';
+    is $uses->[0]{recorded_by}, $user{staff}->id, 'by the staff member who marked it';
+    $t->get_ok($back)->status_is(200);
+    like section( $t, $o )->at(qq{[data-entitlement="${\ $e->id }"]})->all_text, qr/Present/, 'the booking shows present';
+    is section( $t, $o )->at(qq{[data-entitlement="${\ $e->id }"] form}), undef, 'with no mark left to make';
+};
+
+subtest 'a customer is refused' => sub {
+    my $o = occurrence('2027-05-21 10:00');
+    my $e = booking( $o, $user{parent} );
+    my $t = client( $user{parent} );
+    $t->get_ok( day_url('2027-05-21') )->status_is(403)->content_unlike(qr/DV Parent/, 'and sees no booking');
+    my $staff = client( $user{staff} );
+    $staff->get_ok( day_url('2027-05-21') )->status_is(200);
+    my $action = section( $staff, $o )->at('form')->attr('action');
+    $t->post_ok( $action => form => { entitlement_id => $e->id, occurrence_id => $o->id } )
+        ->status_is( 403, 'nor may they mark themselves present' );
+    is_deeply uses($e), [], 'and nothing is recorded';
+};
+
 done_testing;
