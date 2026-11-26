@@ -1029,6 +1029,41 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         })->hashes->each;
     }
 
+    # { id, slug } of the tenant whose Stripe Connect account is $account
+    # (an exact, bound match), or undef.
+    sub by_connect_account ( $class, $db, $account ) {
+        return $db->select( 'registry.tenants', [ 'id', 'slug' ],
+            { stripe_connect_account_id => $account } )->hash;
+    }
+
+    # Every tenant with a Stripe Connect account, as rows of slug and account.
+    sub with_connect_account ( $class, $db ) {
+        return $db->query( q{
+            SELECT slug, stripe_connect_account_id AS account FROM registry.tenants
+             WHERE stripe_connect_account_id IS NOT NULL
+        } )->hashes;
+    }
+
+    # Mirrors Stripe's charges_enabled and details_submitted for $account
+    # onto its tenant; an undef flag stays as it was. The number of rows changed.
+    sub mirror_connect_readiness ( $class, $db, $account, $charges_enabled, $details_submitted ) {
+        return $db->query(
+            q{UPDATE registry.tenants
+              SET stripe_charges_enabled   = COALESCE(?, stripe_charges_enabled),
+                  stripe_details_submitted = COALESCE(?, stripe_details_submitted)
+              WHERE stripe_connect_account_id = ?},
+            $charges_enabled, $details_submitted, $account,
+        )->rows;
+    }
+
+    # Points the search_path of $db's open transaction at schema $slug.
+    # Transaction-local, so it reverts at COMMIT and cannot ride back into the
+    # connection pool; bound, so Postgres validates the GUC rather than
+    # splicing it into SQL text.
+    sub use_schema_for_transaction ( $class, $db, $slug ) {
+        $db->query( q{SELECT set_config('search_path', ?, true)}, "$slug, public" );
+    }
+
     # Get all tenant schemas for background jobs
     sub get_all_tenant_schemas($class, $db) {
         return $db->select('registry.tenants', ['slug'])->hashes->to_array;

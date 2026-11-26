@@ -16,12 +16,11 @@ my %ALLOWED = (
     'lib/Registry/Controller/AdminDashboard.pm' => 1,
     'lib/Registry/Controller/Messages.pm'       => 5,
     'lib/Registry/Controller/Waitlist.pm'       => 1,
-    'lib/Registry/Controller/Webhooks.pm'       => 26,
+    'lib/Registry/Controller/Webhooks.pm'       => 4,
     'lib/Registry/Controller/Workflows.pm'      => 7,
     'lib/Registry/Job/DomainVerification.pm'    => 2,
     'lib/Registry/Job/ProcessWaitlist.pm'       => 3,
     'lib/Registry/Job/SendNotifications.pm'     => 3,
-    'lib/Registry/Job/InstalmentReconcile.pm'   => 3,
 );
 
 # A database handle ($db, $tdb, ...->db, a Registry::DAO in $dao) receiving one
