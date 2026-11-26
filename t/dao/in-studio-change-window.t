@@ -159,4 +159,161 @@ subtest 'target of a different offer refused' => sub {
     is $elsewhere->free_units($db), 4, 'the other offer keeps every seat';
 };
 
+# Negative scenarios. The issue's `change at exactly the window refused` is
+# `... allowed` per the approved design's G7 (ADR 005 8b: inclusive).
+subtest 'change at exactly the window allowed' => sub {
+    # 10:00 EDT on Thursday 2027-06-10; 48 wall hours earlier is 10:00 EDT, 14:00Z, on the 8th.
+    my ( $version, $held ) = occurrences( \%WINDOW, "2027-06-10 10:00 $ZONE" );
+    my $e = booking( $version, $held );
+    is $refusal->( $e, '2027-06-08T14:00:00Z' ), undef, 'exactly 48 hours before, the change is allowed';
+    ok $refusal->( $e, '2027-06-08T14:00:00.000001Z' ), 'any later, it is refused';
+};
+
+subtest 'later offer version does not change stamped window' => sub {
+    my ( $version, $held, $target ) = occurrences( \%WINDOW, 30, 96 );
+    my $e   = booking( $version, $held );
+    my $now = Registry::DAO::OfferVersion->draft( $db, $version->offer_id, offer_terms( undef,
+        class_project_id => $db->select( 'offer_versions', 'class_project_id', { id => $version->id } )->array->[0],
+        policies         => { refund => { kind => 'none' }, change => { %WINDOW, window_hours => 24 },
+                              expiry => { kind => 'end_of_occurrence' } } ) )->publish($db);
+    is $now->policies->{change}{window_hours}, 24, 'the current version has a 24-hour window';
+    my ( $run, $chose ) = chosen($e);
+    is_deeply $chose->{errors}, ['Changes close 48 hours before the class starts'],
+        '30 hours before, a booking sold under the 48-hour version is still refused';
+    $run->update_data( $db, { change_entitlement_id => $e->id } );
+    ok hold_target( $run, $target )->{errors}, 'and refused a hold';
+    is_deeply live_holds($run), [], 'no hold is placed';
+    is $refusal->( booking( $now, $held ), undef ), undef, 'while one sold under the 24-hour version may change';
+};
+
+subtest 'full target refused without fee' => sub {
+    my ( $version, $held, $target ) = occurrences( \%WINDOW, 72, 96, { capacity => 1 } );
+    my $e = booking( $version, $held );
+    booking( $version, $target );
+    my ( $run, $chose ) = chosen($e);
+    is_deeply $chose->{change_targets}, [], 'a full occurrence is not listed';
+    ok hold_target( $run, $target )->{errors}, 'and holding it is refused';
+    is_deeply live_holds($run), [], 'no hold is placed';
+    my $data = reload($run)->data;
+    ok !$data->{owed_payment} && !$data->{change_hold}, 'the run owes no fee';
+    like $run->process( $db, step('pay'), {} )->{redirect}, qr{/entitlement-change/[^/]+/hold-target\z},
+        'so the pay step charges nothing: it sends the person back to choose a target';
+    is_deeply payments_of($run), [], 'and no payment is started';
+    is_deeply $e->units( $db, $held->id ), [1], 'the entitlement stays where it was';
+};
+
+subtest 'failed change fee releases target and keeps original' => sub {
+    my ( $version, $held, $target ) = occurrences( \%WINDOW, 72, 96 );
+    my $e   = booking( $version, $held );
+    my ($run) = chosen($e);
+    ok !hold_target( $run, $target )->{errors}, 'the target is held first';
+    $run = reload($run);
+
+    # The fee payment the pay step starts, declined as a decline records it.
+    my $payment = Registry::DAO::Payment->create( $db, {
+        user_id          => $e->holder_user_id,
+        amount_cents     => 1000,
+        offer_version_id => $version->id,
+        metadata         => { workflow_id => $workflow->id, workflow_run_id => $run->id, tenant_slug => 'registry',
+                              payment_plan_id => 'pay', description => 'Change fee', purpose => 'change_fee' },
+    } );
+    $payment->_record_intent( $db, { id => 'pi_icw_' . $payment->id, client_secret => 'x_secret' } );
+    $run->update_data( $db, { owed_payment_id => $payment->id } );
+    $payment->_record_intent_failure_write( $db, 'Your card was declined.' );
+
+    ok $run->process( $db, step('complete-change'), {} )->{errors}, 'a declined fee does not complete the change';
+    # The hold's lifetime runs out, as the clock would make it, and it is let go.
+    $db->query( q{UPDATE holds SET expires_at = clock_timestamp() - interval '1 second' WHERE workflow_run_id = ?},
+        $run->id );
+    is_deeply live_holds($run), [], 'the target hold is released';
+    is $target->free_units($db), 4, 'so the target has every seat';
+    ok $run->process( $db, step('complete-change'), {} )->{errors}, 'and the change still does not complete';
+    is_deeply $e->units( $db, $held->id ), [1], 'the entitlement keeps its seat';
+    ok Registry::DAO::Entitlement->in_effect_at( $db, $db->query('SELECT now()')->array->[0], { id => $e->id } ), 'and stays in effect';
+};
+
+subtest 'past or same target refused' => sub {
+    my ( $version, $held, $started ) = occurrences( \%WINDOW, 72, -1 );
+    my $e = booking( $version, $held );
+    my ( $run, $chose ) = chosen($e);
+    is_deeply $chose->{change_targets}, [], 'neither its own occurrence nor one under way is listed';
+    ok hold_target( $run, $started )->{errors}, 'a target that has started is refused';
+    ok hold_target( $run, $held )->{errors}, 'and so is its own occurrence';
+    is_deeply live_holds($run), [], 'no hold is placed';
+};
+
+subtest 'another customers booking cannot be changed' => sub {
+    my ( $version, $held, $target ) = occurrences( \%WINDOW, 72, 96 );
+    my $e = booking( $version, $held );
+    my ( $run, $chose ) = chosen( $e, person() );
+    like "@{ $chose->{errors} // [] }", qr/not yours to change/, 'another customer is refused the change';
+    $run->update_data( $db, { change_entitlement_id => $e->id } );    # as if posted to the run's URL
+    like "@{ hold_target( $run, $target )->{errors} // [] }", qr/not yours/, 'and refused a hold';
+    is_deeply live_holds($run), [], 'no hold is placed';
+};
+
+subtest 'ended entitlement cannot be changed' => sub {
+    my ( $version, $held, $target ) = occurrences( \%WINDOW, 72, 96 );
+    for my $state (qw( refunded expired )) {
+        my $e = booking( $version, $held )->end( $db, $state, "test: $state" );
+        my ( $run, $chose ) = chosen($e);
+        like "@{ $chose->{errors} // [] }", qr/ended/, "a $state booking is refused a change";
+        $run->update_data( $db, { change_entitlement_id => $e->id } );
+        ok hold_target( $run, $target )->{errors}, 'and refused a hold';
+        is_deeply live_holds($run), [], 'no hold is placed';
+    }
+};
+
+# Two connections: A, in a transaction, runs $first; B, a child process,
+# runs $second, which must wait on A's lock. Once B waits, A commits.
+# Returns whether B waited and what $second returned.
+sub race ( $first, $second ) {
+    my $uri = $test_db->uri;
+    pipe( my $parent_reads, my $child_writes ) or die "pipe: $!";
+    my $adb = Registry::DAO->new( url => $uri )->db;
+    my $tx  = $adb->begin;
+    my $a   = $first->($adb);
+    my $holder = $adb->query('SELECT pg_backend_pid()')->array->[0];
+    my $pid    = fork() // die "fork: $!";
+    unless ($pid) {
+        close $parent_reads;
+        my $bdb = Registry::DAO->new( url => $uri )->db;
+        my $out = eval { Mojo::JSON::to_json( $second->($bdb) ) } // Mojo::JSON::to_json( { died => "$@" } );
+        print $child_writes $out;
+        close $child_writes;
+        POSIX::_exit(0);
+    }
+    close $child_writes;
+    my ( $blocked, $deadline ) = ( 0, time + 30 );
+    until ( $blocked || waitpid( $pid, POSIX::WNOHANG() ) || time > $deadline ) {
+        select undef, undef, undef, 0.05;
+        $blocked = $db->query( 'SELECT count(*) FROM pg_stat_activity WHERE ? = ANY (pg_blocking_pids(pid))',
+            $holder )->array->[0];
+    }
+    $tx->commit;
+    waitpid $pid, 0;
+    return ( $blocked, $a, Mojo::JSON::from_json( do { local $/; readline $parent_reads } ) );
+}
+
+subtest 'concurrent changes into last seat one wins' => sub {
+    my ( $version, $held, $target ) = occurrences( \%WINDOW, 72, 96, { capacity => 2 } );
+    booking( $version, $target );
+    my ($one) = chosen( booking( $version, $held ) );
+    my ($two) = chosen( booking( $version, $held ) );
+    my ( $waited, $first, $second ) = race(
+        sub ($adb) { $one->process( $adb, step('hold-target'), { target_occurrence_id => $target->id } ) },
+        sub ($bdb) { $two->process( $bdb, step('hold-target'), { target_occurrence_id => $target->id } ) },
+    );
+    ok $waited, 'the second change waits on the first one\'s hold of the target';
+    ok !$first->{errors}, 'the first change holds the last seat' or diag explain $first->{errors};
+    like "@{ $second->{errors} // [] }", qr/room/, 'the second is refused' or diag explain $second;
+    is scalar live_holds($one)->@*, 1, 'one hold, the first change\'s';
+    is_deeply live_holds($two), [], 'none for the second';
+    ok !reload($two)->data->{owed_payment}, 'the second owes no fee';
+    like $two->process( $db, step('pay'), {} )->{redirect}, qr{/entitlement-change/[^/]+/hold-target\z},
+        'and its pay step charges nothing: it sends the person back to choose a target';
+    is_deeply payments_of($two), [], 'no payment is started for it';
+    is $target->free_units($db), 0, 'the target is full';
+};
+
 done_testing;
