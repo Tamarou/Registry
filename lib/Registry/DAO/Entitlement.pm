@@ -216,13 +216,17 @@ active and the period covers T (in_effect_sql).
         return Registry::DAO::Tenant->holds( $db, $tenant_id, "run:$slug" );
     }
 
-    # may_run for the tenant whose schema is $tenant_slug: the workflow gate's
-    # question. False for a slug that names no tenant.
+    # The workflow gate's question: may the tenant whose schema is
+    # $tenant_slug run $slug? may_run, or, for a slug registry does not have
+    # (the platform offers no right to it, so the tenant wrote it), the right
+    # to create workflows: ADR 004 (b). False for a slug that names no tenant.
     sub tenant_may_run ( $class, $db, $tenant_slug, $slug ) {
         $db = $db->db if $db isa Registry::DAO;
         require Registry::DAO::Tenant;
         my $tenant = Registry::DAO::Tenant->find( $db, { slug => $tenant_slug } ) or return 0;
-        return $class->may_run( $db, $tenant->id, $slug );
+        return 1 if $class->may_run( $db, $tenant->id, $slug );
+        return 0 if $db->select( 'registry.workflows', 'id', { slug => $slug // '' } )->rows;
+        return $class->may_run( $db, $tenant->id, 'workflow-creation' );
     }
 
     # The one in-effect rule, as SQL over entitlement row $e (an alias or table

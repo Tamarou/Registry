@@ -105,6 +105,28 @@ subtest 'the platform tenant runs its own workflows through the same gate' => su
     $t->get_ok('/')->status_is(200);
 };
 
+# ADR 004 (b): the right to create workflows covers running the ones the
+# tenant wrote. A slug registry does not have is the tenant's own.
+my $OWN = "name: own-flow\nslug: own-flow\ndescription: fixture\nroles: [admin]\n"
+  . "steps:\n  - slug: first\n    description: x\n  - slug: second\n    description: y\n";
+
+subtest 'tenant-authored workflow runs under the create right' => sub {
+    Registry::DAO::Workflow->from_yaml( $solo_dao, $OWN );
+    ok !$dao->find( 'Registry::DAO::Workflow', { slug => 'own-flow' } ), 'registry has no such workflow';
+    ok Registry::DAO::Entitlement->may_run( $db, $solo->id, 'workflow-creation' ), 'the tenant may create workflows';
+    # Started rather than shown: a fixture has no templates of its own.
+    app_as($solo_admin)->post_ok( '/own-flow' => $SOLO => form => {} )->status_is(302);
+    is runs_of( $solo_dao, 'own-flow' ), 1, 'a run was started';
+};
+
+subtest 'tenant-authored workflow refused without the create right' => sub {
+    Registry::DAO::Workflow->from_yaml( $bare_dao, $OWN );
+    my $t = app_as($bare_admin);
+    $t->get_ok( '/own-flow' => $BARE )->status_is(403);
+    $t->post_ok( '/own-flow' => $BARE => form => {} )->status_is(403);
+    is runs_of( $bare_dao, 'own-flow' ), 0, 'no run was created';
+};
+
 # --- Negative scenarios ---
 
 subtest 'public workflow refused without tenant entitlement' => sub {
