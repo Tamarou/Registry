@@ -169,7 +169,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # The root route names no workflow: which storefront to serve depends on
         # who is asking. Everything else routes with an explicit slug.
         my $workflow_slug = $self->param('workflow')
-          // $self->app->storefront_workflow( $self->tenant );
+          // $self->app->storefront_workflow( $self->dao('registry')->db, $self->tenant );
         my $workflow = $self->workflow($workflow_slug);
 
         # The row-based gate here as well as on /:workflow: `/` and the /admin
@@ -265,7 +265,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
     method start_workflow() {
         my $dao = $self->dao;
         my $workflow_slug = $self->param('workflow')
-          // $self->app->storefront_workflow( $self->tenant );
+          // $self->app->storefront_workflow( $self->dao('registry')->db, $self->tenant );
         # Same gate as index(), for the same routes.
         return unless $self->require_workflow_role($workflow_slug);
         my $workflow = $self->workflow($workflow_slug);

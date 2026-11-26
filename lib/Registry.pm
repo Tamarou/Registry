@@ -1423,8 +1423,14 @@ class Registry :isa(Mojolicious) {
         return $permitted ? $requested : undef;
     }
 
-    method storefront_workflow ($tenant) {
-        return $tenant eq 'registry' ? 'registry-storefront' : 'tenant-storefront';
+    # ADR 004 ruling (c): the storefront is the one whose run right tenant
+    # $tenant holds, read from registry's live rows in $db; undef if neither.
+    method storefront_workflow ( $db, $tenant ) {
+        # Ordered because registry holds the run right to both.
+        for my $storefront (qw( registry-storefront tenant-storefront )) {
+            return $storefront if Registry::DAO::Entitlement->tenant_may_run( $db, $tenant, $storefront );
+        }
+        return undef;
     }
 
     method import_workflows ($schema = 'registry', $files = undef, $verbose = 0) {

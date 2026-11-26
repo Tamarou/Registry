@@ -1,0 +1,64 @@
+#!/usr/bin/env perl
+# ABOUTME: A tenant's root serves the storefront workflow whose run right it holds (ADR 004 ruling (c)).
+# ABOUTME: The slug chooses nothing, and a tenant holding no storefront right gets a 404 and no run.
+
+BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
+
+use 5.42.0;
+use warnings;
+use utf8;
+
+use lib qw(lib t/lib);
+use Test::More;
+use Test::Registry::Mojo;
+use Test::Registry::SoloVersion qw(accept_solo);
+use Test::Registry::DB;
+
+use Registry::DAO qw(Workflow);
+use Registry::DAO::Entitlement;
+use Registry::DAO::Offer;
+use Registry::DAO::Tenant;
+use Mojo::Home;
+use YAML::XS qw(Load);
+
+my $test_db = Test::Registry::DB->new;
+my $dao     = $test_db->db;
+$ENV{DB_URL} = $test_db->uri;
+
+for my $file ( Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each ) {
+    next if Load( $file->slurp )->{draft};
+    Workflow->from_yaml( $dao, $file->slurp );
+}
+
+# No dao helper override: each request reads the schema its host names.
+my $t = Test::Registry::Mojo->new('Registry');
+
+# The runs of workflow $slug in schema $schema_dao.
+sub runs_of ( $schema_dao, $slug ) {
+    my $wf = $schema_dao->find( Workflow => { slug => $slug } ) or return 0;
+    return scalar( my @runs = $schema_dao->find( WorkflowRun => { workflow_id => $wf->id } ) );
+}
+
+# GET / on $host starts a run of exactly $slug in $schema_dao.
+sub root_serves ( $host, $schema_dao, $slug ) {
+    my %before = map { $_ => runs_of( $schema_dao, $_ ) } qw( registry-storefront tenant-storefront );
+    $t->get_ok( '/' => { Host => $host } )->status_is(200);
+    for my $sf (qw( registry-storefront tenant-storefront )) {
+        is runs_of( $schema_dao, $sf ) - $before{$sf}, $sf eq $slug ? 1 : 0,
+            $sf eq $slug ? "$host starts a $sf run" : "$host starts no $sf run";
+    }
+}
+
+subtest 'registry serves the storefront its data names' => sub {
+    root_serves( 'localhost', $dao, 'registry-storefront' );
+};
+
+my $studio = Registry::DAO::Tenant->provision( $dao->db,
+    { name => 'Data Studio', slug => 'data_studio', users => [] } );
+accept_solo( $dao->db, $studio );
+
+subtest 'tenant serves the storefront its data names' => sub {
+    root_serves( 'data_studio.localhost', $dao->schema('data_studio'), 'tenant-storefront' );
+};
+
+done_testing;
