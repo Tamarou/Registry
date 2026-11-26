@@ -141,6 +141,7 @@ subtest 'direct charge on sacp account with the solo fee' => sub {
     is $intent->{amount}, 9000, 'for two seats at $45';
     is $intent->{application_fee_amount}, 225, "with Solo's 2.5% application fee";
     ok !$intent->{transfer_data}, 'and no transfer_data';
+    ok !$intent->{on_behalf_of}, 'and no on_behalf_of: sacp is the merchant of record';
 
     # Stripe reports the sale to the Connect endpoint; the run driver completes the booking.
     Test::Registry::StripeWebhook::post_connect( $t, {

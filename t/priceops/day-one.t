@@ -212,7 +212,7 @@ subtest 'tenant without solo cannot charge' => sub {
 
     my $t = client();
     $t->get_ok( '/in-studio-booking' => { Host => 'no_solo.localhost' } );
-    isnt $t->tx->res->code, 200, 'its booking page is refused';
+    $t->status_is( 403, 'its booking page is refused' );
 
     my $room   = Test::Registry::Fixtures::create_location( $ndb, { name => 'Room', slug => 'room', time_zone => 'America/New_York' } );
     my $who    = Test::Registry::Fixtures::create_user( $ndao,
@@ -286,14 +286,20 @@ subtest 'other tenant cannot see sacp booking' => sub {
         my ( $role, $user ) = @$_;
         my $c = client($user);
         $c->get_ok( $url => \%SACP )->status_is( 403, "the other tenant's $role is refused sacp's day view" )
+            ->content_is( 'Forbidden', 'by the role check' )
             ->content_unlike( qr/Day One Booker/, 'and shown no booking' );
         $c->post_ok( $form->attr('action') => \%SACP => form => { entitlement_id => $booking->id,
-            occurrence_id => $occurrence->id } )->status_is( 403, 'nor may they mark it' );
+            occurrence_id => $occurrence->id } )->status_is( 403, 'nor may they mark it' )
+            ->content_is( 'Forbidden', 'refused by the role check, not CSRF' );
     }
-    # On its own host, naming SACP's studio and booking finds neither.
-    my $c = client( Registry::DAO::User->find( $db, { username => 'clay_other_admin' } ) );
-    $c->get_ok( $url => \%OTHER )->status_is( 400, "its own day view does not know sacp's studio" )
-        ->content_unlike( qr/Day One Booker/, 'and shows no booking' );
+    # On its own host each passes the role check (so each really is the other
+    # tenant's admin or staff), and naming SACP's studio finds nothing.
+    for ( [ admin => Registry::DAO::User->find( $db, { username => 'clay_other_admin' } ) ], [ staff => $staff ] ) {
+        my ( $role, $user ) = @$_;
+        client($user)->get_ok( $url => \%OTHER )
+            ->status_is( 400, "its $role's own day view does not know sacp's studio" )
+            ->content_unlike( qr/Day One Booker/, 'and shows no booking' );
+    }
     my $odb = Registry::DAO->new( url => $test_db->uri, schema => 'clay_other' )->db;
     ok !Registry::DAO::Entitlement->find( $odb, { id => $booking->id } ), "nor does its data hold the booker's entitlement";
     ok !Registry::DAO::Entitlement->held_by( $odb, $booker->id ), 'or any held by the booker';
