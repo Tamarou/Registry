@@ -1,15 +1,104 @@
 %# ABOUTME: /terms: the platform's terms of service, the same on the apex and every tenant host.
-%# ABOUTME: A marked DRAFT placeholder until perigrin supplies the text (ADR 005, ruling 12).
+%# ABOUTME: perigrin's text, effective 2026-11-26; Registry::Terms::VERSION names it and bookings record it.
 % layout 'default';
 % title 'Terms of Service';
 
 <article class="card" data-terms-version="<%= $terms_version %>">
     <div class="card-body">
-        <div class="notification warning" role="note">
-            <strong>DRAFT</strong>: these are not the platform's terms of service yet.
-            The final text has not been published, and until it is, no payment is taken.
-        </div>
-        <p>A studio's own booking terms (refunds, changes, expiry) are shown with
-        each offer when you book.</p>
+        <p><strong>Effective November 26, 2026. Version <%= $terms_version %>.</strong></p>
+
+        <p>These terms govern your use of Registry, the booking and registration
+        service operated by Tamarou LLC, a New Mexico limited liability company
+        ("Tamarou", "we", "us"), at tinyartempire.com and at every studio's own
+        address on it. By creating an account, booking, or running a studio on
+        Registry, you agree to them.</p>
+
+        <h2>1. Who is who</h2>
+        <ul>
+            <li><strong>Studios</strong> are the businesses that sell classes, camps,
+            programs and bookings through Registry. Each studio is a customer of Tamarou.</li>
+            <li><strong>Customers</strong> are the people who book with a studio:
+            parents, guardians, and students.</li>
+            <li><strong>Tamarou</strong> provides the software. Tamarou is not the seller
+            of any class, camp or booking, and is not a party to the agreement between a
+            studio and its customers.</li>
+        </ul>
+
+        <h2>2. Buying from a studio</h2>
+        <p>When you book, you are buying from the studio, not from Tamarou.</p>
+        <ul>
+            <li><strong>The studio is the merchant.</strong> Your payment is charged
+            directly on the studio's own Stripe account, and the studio's name appears as
+            the seller. Questions about a charge, a class, or a refund go to the studio first.</li>
+            <li><strong>The studio sets its own terms.</strong> Each offer shows its price
+            and its own rules for refunds, changes, and expiry before you pay. Those rules
+            are part of your agreement with the studio. Read them before you book.</li>
+            <li><strong>Seats are held while you pay.</strong> When you choose a time,
+            Registry holds your seats for a short while. If the hold lapses before payment
+            completes, the seats are released and you can start a new booking.</li>
+            <li><strong>Automatic returns.</strong> If a payment arrives after its hold
+            lapsed and the seats are no longer free, or if the amount paid does not match
+            the price, the payment is returned to your card automatically and no booking is
+            made. Returns can take 5 to 10 business days to appear.</li>
+            <li><strong>Refunds and disputes.</strong> Any other refund is the studio's
+            decision, under the terms of the offer you bought, and is issued by the studio.
+            If you dispute a charge with your card issuer, the outcome Stripe reports is
+            applied to your booking.</li>
+        </ul>
+
+        <h2>3. Running a studio on Registry</h2>
+        <p>If you run a studio on Registry, these further terms apply to you.</p>
+        <ul>
+            <li><strong>Your plan.</strong> On signup you accept a Tamarou offer. Today the
+            only offer is Solo: no monthly fee, plus 2.5% of each sale processed through
+            Registry, including change fees. The terms of the offer you accepted, as shown
+            when you accepted it, govern what you pay.</li>
+            <li><strong>How the fee is collected.</strong> The 2.5% is taken as a Stripe
+            application fee on each charge to your customers. You need a Stripe account
+            connected to Registry to take payments, and you are bound by Stripe's own terms.</li>
+            <li><strong>You are the merchant of record.</strong> You are responsible for
+            your offers, your prices, your refund and change rules, delivering what you
+            sell, taxes on your sales, and complying with the law that applies to your
+            business. Stripe fees, refunds, chargebacks and dispute fees fall on your
+            account as Stripe places them.</li>
+            <li><strong>The fee on refunds.</strong> When you refund a sale, Tamarou keeps
+            its 2.5%, unless the sale was wrong because of a Registry fault, in which case
+            Tamarou returns its fee for that sale.</li>
+            <li><strong>Your data and your customers' data.</strong> You keep ownership of
+            your data and your customers' data. Tamarou processes it only to run Registry
+            for you, and keeps each studio's data separate from every other studio's.</li>
+            <li><strong>Your account.</strong> Keep your sign-in secure. Only your admins
+            can publish offers and set prices.</li>
+        </ul>
+
+        <h2>4. Using Registry</h2>
+        <ul>
+            <li>Don't misuse Registry: no attempts to reach another studio's data,
+            interfere with the service, or use it for anything unlawful.</li>
+            <li>You must be 18 or older to create an account. A parent or guardian books
+            on a child's behalf.</li>
+            <li>We may suspend an account that breaks these terms or puts other users at
+            risk, and will tell you why where the law allows.</li>
+        </ul>
+
+        <h2>5. Changes to these terms</h2>
+        <p>We may update these terms. When we do, the version and effective date above
+        change, and you are asked to agree again before your next booking. Each booking
+        records the version you agreed to.</p>
+
+        <h2>6. Warranties and liability</h2>
+        <p>Registry is provided "as is". To the extent the law allows, Tamarou is not
+        liable for indirect or consequential losses, and its total liability to you is
+        limited to the greater of the fees Tamarou received from you in the twelve months
+        before the claim, or $100. Nothing in these terms limits rights you have under
+        consumer law that cannot be waived.</p>
+
+        <h2>7. Governing law</h2>
+        <p>These terms are governed by the laws of the State of Florida, and disputes
+        are heard in the state or federal courts located in Florida.</p>
+
+        <h2>8. Contact</h2>
+        <p>Tamarou LLC · 429 Hoffer Ave., Orlando, FL 32809 ·
+        <a href="mailto:registry@tamarou.com">registry@tamarou.com</a></p>
     </div>
 </article>

@@ -8,7 +8,6 @@ class Registry::DAO::Payment :isa(Registry::DAO::Object) {
 use Registry::Service::Stripe;
 use Registry::PriceOps::RevenueShare;
 use Registry::PriceOps::PlatformTerms ();
-use Registry::Terms ();
 use Mojo::JSON qw(encode_json from_json);
 use Mojo::Promise ();
 use experimental 'keyword_any';
@@ -775,8 +774,6 @@ field $_stripe_client = undef;
     }
 
     method create_payment_intent ($db, $args = {}) {
-        # Refused before Stripe, leaving the row as it was (ADR 005, ruling 12).
-        if ( my $refusal = Registry::Terms::checkout_refusal() ) { die "$refusal\n" }
         my $intent;
         try {
             # Blocking resolver here on purpose: this wrapper only runs where
@@ -2382,9 +2379,6 @@ SQL
     # blocking Stripe call inside the running IOLoop can never settle, because
     # Mojo::Promise::wait is a no-op once its loop is already running.
     method create_payment_intent_async ($db, $args = {}) {
-        if ( my $refusal = Registry::Terms::checkout_refusal() ) {
-            return Mojo::Promise->reject($refusal);
-        }
         # The customer is resolved INSIDE the chain. _intent_params is called
         # synchronously, so anything it needed from the network would be a
         # blocking call in the live IOLoop -- which is what #284 was: a parent

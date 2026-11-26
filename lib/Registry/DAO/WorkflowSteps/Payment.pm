@@ -10,9 +10,19 @@ use Registry::DAO::User;
 use Registry::DAO::Location;
 use Registry::DAO::Notification;
 use Registry::DAO::Tenant;
-use Registry::Terms ();
 use Mojo::JSON qw(encode_json);
 use Mojo::Promise;
+
+# camp_checkout_refusal($mode) -> message | undef
+#
+# Camp checkout stays closed in production until it moves to the PriceOps
+# model: it prices from the old tables and records no /terms agreement
+# (perigrin, 2026-11-26). Development and test stay open; $mode defaults to the
+# one Mojolicious would pick.
+sub camp_checkout_refusal ( $class, $mode = $ENV{MOJO_MODE} || $ENV{PLACK_ENV} || 'development' ) {
+    return undef if $mode eq 'development' || $mode eq 'test';
+    return 'Online payment for this program is not open yet. Nothing has been charged.';
+}
 
 # The two Stripe-touching branches (create_payment, handle_payment_callback)
 # return a Mojo::Promise; the free-enrollment and page-view branches return a
@@ -41,9 +51,9 @@ method process ($db, $form_data, $run = undef) {
             session_selections => $run->data->{session_selections} || {},
         });
 
-        # A charge is refused before anything is written (ADR 005, ruling 12).
+        # A charge is refused before anything is written (perigrin, 2026-11-26).
         if ( ( $info->{total} // 0 ) != 0 && $ENV{STRIPE_SECRET_KEY} ) {
-            if ( my $refusal = Registry::Terms::checkout_refusal() ) {
+            if ( my $refusal = __PACKAGE__->camp_checkout_refusal ) {
                 return {
                     next_step => $self->id,
                     errors    => [$refusal],
