@@ -61,4 +61,31 @@ subtest 'tenant serves the storefront its data names' => sub {
     root_serves( 'data_studio.localhost', $dao->schema('data_studio'), 'tenant-storefront' );
 };
 
+subtest 'tenant without a storefront choice fails closed' => sub {
+    my $bare = Registry::DAO::Tenant->provision( $dao->db,
+        { name => 'Bare Studio', slug => 'bare_studio', users => [] } );
+    ok $bare, 'a tenant that accepted no offer' or return;
+    my $bare_dao = $dao->schema('bare_studio');
+    my @before   = map { runs_of( $_, 'registry-storefront' ) + runs_of( $_, 'tenant-storefront' ) }
+        $dao, $bare_dao;
+
+    $t->get_ok( '/' => { Host => 'bare_studio.localhost' } )->status_is(404);
+    $t->content_unlike( qr/Your art deserves a real business/, 'not the platform storefront' );
+    is_deeply [ map { runs_of( $_, 'registry-storefront' ) + runs_of( $_, 'tenant-storefront' ) }
+            $dao, $bare_dao ], \@before, 'no storefront run is created';
+};
+
+# Last: it ends registry's right to its own storefront.
+subtest 'slug alone does not choose the storefront' => sub {
+    my $registry = Registry::DAO::Tenant->find( $dao->db, { slug => 'registry' } );
+    my $right    = Registry::DAO::Offer->find( $dao->db, { name => 'Platform run registry-storefront' } )
+        ->current_version( $dao->db );
+    my $held = Registry::DAO::Entitlement->find( $dao->db,
+        { holder_tenant_id => $registry->id, offer_version_id => $right->id, state => 'active' } );
+    ok $held, 'registry holds run:registry-storefront' or return;
+    $held->end( $dao->db, 'expired', 'storefront-from-data test' );
+
+    root_serves( 'localhost', $dao, 'tenant-storefront' );
+};
+
 done_testing;
