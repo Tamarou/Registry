@@ -65,6 +65,7 @@ my @CHANGES = qw(
     location-time-zone
     entitlement-terms-version
     solo-grants-workflow-set
+    registry-run-right-at-import
 );
 
 my $pgsql = Test::PostgreSQL->new() or plan skip_all => $Test::PostgreSQL::errstr;
@@ -124,7 +125,7 @@ my $sqitch = App::Sqitch->new();
 # that introduced it.  Verified against live Postgres -- clone_schema('default')
 # succeeds and pg_dump renders it "default".enrollments, so the quoted assertion
 # below matches.
-my @SLUGS = qw( order user group default table check select where having limit offset fetch union lateral window returning using references constraint primary foreign natural grant cross column inner unique leading trailing distinct collate both asymmetric only );
+my @SLUGS = qw( order user group default table check select where having limit offset fetch union lateral window returning using references constraint primary foreign natural grant cross column inner unique leading trailing distinct collate both asymmetric only placing );
 @CHANGES <= @SLUGS
     or die sprintf 'revert-round-trip needs one reserved-word slug per change: %d changes, %d slugs',
         scalar @CHANGES, scalar @SLUGS;
@@ -198,6 +199,27 @@ subtest 'location-time-zone revert leaves no zone guard in a tenant cloned after
         } )->array->[0], undef, 'no zone guard function is left in any schema';
     is $db->query( q{SELECT count(*) FROM pg_trigger WHERE tgname = 'locations_time_zone_known'} )->array->[0],
         0, 'no zone guard trigger is left';
+};
+
+# clone_schema copies both of registry-run-right-at-import's functions into a
+# tenant cloned after deploy; the revert must drop every copy.
+subtest 'registry-run-right-at-import revert leaves no run-right function in a tenant cloned after deploy' => sub {
+    my $pg = Test::PostgreSQL->new or return fail $Test::PostgreSQL::errstr;
+    my $to = $pg->uri;
+    my $db = Mojo::Pg->new($to)->db;
+
+    $sqitch->run( 'sqitch', 'deploy', '-t', $to, '--to', 'registry-run-right-at-import' );
+    $db->query( 'INSERT INTO registry.tenants (name, slug) VALUES (?, ?)', 'Post clone', 'post_clone' );
+    $db->query( 'SELECT registry.clone_schema(?)', 'post_clone' );
+    $sqitch->run( 'sqitch', 'revert', '-t', $to, '--to', 'registry-run-right-at-import^', '-y' );
+
+    is $db->query( q{
+            SELECT string_agg(n.nspname || '.' || p.proname, ', ')
+              FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE p.proname IN ('registry_holds_run_right', 'workflow_registry_run_right')
+        } )->array->[0], undef, 'no run-right function is left in any schema';
+    is $db->query( q{SELECT count(*) FROM pg_trigger WHERE tgname = 'workflow_registry_run_right'} )->array->[0],
+        0, 'no run-right trigger is left';
 };
 
 # The terms version guard lives in each tenant's own copy of entitlement_stamp,

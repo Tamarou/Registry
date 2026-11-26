@@ -20,6 +20,7 @@ BEGIN
         EXECUTE format('DROP TRIGGER IF EXISTS workflow_registry_run_right ON %I.workflows', s);
         IF s != 'registry' THEN
             EXECUTE format('DROP FUNCTION IF EXISTS %I.workflow_registry_run_right()', s);
+            EXECUTE format('DROP FUNCTION IF EXISTS %I.registry_holds_run_right(text)', s);
         END IF;
     END LOOP;
 END $$;
