@@ -395,7 +395,7 @@ subtest 'a posted tenant id is ignored and signup provisions a new tenant' => su
     $url = $t->tx->res->headers->location;
     $t->post_ok( $url => form => {
         terms_accepted => 1, tenant => $existing,
-        offer_version  => '00000000-0000-0000-0003-000000000001',
+        offer_version  => '9bc4069a-f0a7-0026-3a84-aeb0d0732995',    # Solo v2
     } )->status_is(302);
 
     my ($run_id) = $url =~ m{/tenant-signup/([^/]+)/};

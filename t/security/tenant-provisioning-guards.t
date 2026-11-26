@@ -40,7 +40,7 @@ ok $step, 'the signup commit step exists' or BAIL_OUT 'no review step';
 
 # A platform offer to tenants with a monthly base. Signup collects no card, so
 # it cannot be paid for: it must be neither listed nor accepted.
-my $SOLO_V1 = '00000000-0000-0000-0003-000000000001';
+my $SOLO_V2 = '9bc4069a-f0a7-0026-3a84-aeb0d0732995';    # solo-grants-workflow-set's
 my $priced_offer = Registry::DAO::Offer->create( $db, { name => 'Guard Test Monthly' } );
 my $priced_version_id = $priced_offer->draft( $db, offer_terms( '00000000-0000-0000-0001-000000000001',
     price_cents   => 19900,
@@ -86,7 +86,7 @@ subtest 'production without stripe keys refuses signup' => sub {
         my ($flag) = keys %$form;
         my $slug   = "guard_prod_$flag";
         my $run    = new_run_with_profile($slug);
-        my $result = $step->process( $db, { %$form, offer_version => $SOLO_V1 }, $run );
+        my $result = $step->process( $db, { %$form, offer_version => $SOLO_V2 }, $run );
 
         ok !$result->{tenant_created}, "$flag: no tenant is reported as created";
         ok !tenant_exists($slug), "$flag: and none exists in the database";
@@ -100,7 +100,7 @@ subtest 'without Stripe keys, development still provisions' => sub {
     delete local $ENV{STRIPE_PUBLISHABLE_KEY};
 
     my $run    = new_run_with_profile('guard_dev');
-    my $result = $step->process( $db, { offer_version => $SOLO_V1 }, $run );
+    my $result = $step->process( $db, { offer_version => $SOLO_V2 }, $run );
 
     ok $result->{tenant_created}, 'the development path is untouched';
     ok tenant_exists('guard_dev'), 'and the tenant is provisioned';

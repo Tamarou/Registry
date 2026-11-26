@@ -15,6 +15,7 @@ use Test::Registry::Fixtures;
 use Test::Registry::Helpers qw( authenticate_as import_all_workflows join_tenant );
 use Registry;
 use Registry::DAO;
+use Registry::DAO::Offer;
 use Registry::DAO::OfferVersion;
 use Registry::DAO::WorkflowRun;
 
@@ -196,10 +197,17 @@ subtest 'a new version pre-fills every payment and policy screen from the curren
     is_deeply $terms->( $versions[1] ), $terms->( $versions[0] ), 'with the same terms as the version it supersedes';
 };
 
-# The seeded platform offers: Solo has every policy and declines one-time
-# payment; email sending has only a refund policy and declines a share of sales.
-my ( $solo, $email ) = map { $db->query( 'SELECT id FROM offers WHERE name = ?', $_ )->hash->{id} }
-    'Solo', 'Platform email sending';
+# An offer on Solo v1's terms, which has every policy and declines one-time
+# payment; the seeded email sending has only a refund policy and declines a
+# share of sales. Not Solo itself: its current version buys a set, which
+# offer-publishing cannot version (offer-basics sells one resource).
+my $solo = Registry::DAO::Offer->create( $db, { name => 'Solo terms' } )->draft( $db, {
+    resource_id   => '00000000-0000-0000-0001-000000000001',
+    ( map { $_ => Registry::DAO::OfferVersion->find( $db, { id => '00000000-0000-0000-0003-000000000001' } )->$_ }
+        qw( price_cents units_per_acceptance per_booking_cap policies ) ),
+    payment_plans => [ { id => 'revenue_share', kind => 'percentage_of_sales', fraction => 0.025 } ],
+} )->publish($db)->offer_id;
+my $email = $db->query( 'SELECT id FROM offers WHERE name = ?', 'Platform email sending' )->hash->{id};
 # The resource each sells: a new version of an offer sells what it does.
 my ( $solo_sells, $email_sells ) = map {
     $db->query( 'SELECT resource_id FROM offer_versions WHERE offer_id = ? AND published_at IS NOT NULL AND superseded_at IS NULL', $_ )
