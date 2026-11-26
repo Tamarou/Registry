@@ -20,6 +20,7 @@ use Registry::DAO::Entitlement;
 use Registry::DAO::Offer;
 use Registry::DAO::Resource;
 use Registry::DAO::Tenant;
+use Registry::DAO::WorkflowRun;
 use Registry::PriceOps::Hold;
 
 my $test_db = Test::Registry::DB->new;
@@ -63,16 +64,16 @@ sub occurrence ( $local, $capacity = 8, $location = $floor ) {
 }
 
 # $holder's booking of $count couples in $resource.
-sub booking ( $resource, $holder, $count = 1 ) {
+sub booking ( $resource, $holder, $count = 1, $sold = $version ) {
     my ( undef, $ends ) = $resource->occurrence_window($db);
     return Registry::DAO::Entitlement->grant( $db, {
         holder_user_id   => $holder->id,
-        offer_version_id => $version->id,
+        offer_version_id => $sold->id,
         payment_plan_id  => 'pay',
         starts_at        => '2020-01-01T00:00:00Z',
         ends_at          => $ends,
         resource_id      => $resource->id,
-        units            => $version->seats_for($count),
+        units            => $sold->seats_for($count),
     } );
 }
 
@@ -137,7 +138,8 @@ subtest 'staff see a local day\'s occurrences with seats held and bookings' => s
     like $row->all_text, qr/DV Parent/, 'with its booker';
     like $row->all_text, qr/\b2 booked\b/, 'the count booked';
     like $row->all_text, qr/\b4 seats\b/, 'and the seats';
-    ok $row->at(qq{a[href\$="/entitlement-change?entitlement_id=${\ $e->id }"]}), 'staff can reschedule it from here';
+    my $re = $row->at('form[action$="/entitlement-change"]');
+    ok $re && $re->at(qq{input[name="entitlement_id"][value="${\ $e->id }"]}), 'staff can reschedule it from here';
     like section( $t, $late )->all_text, qr/Seats held 0\b/, 'an empty occurrence holds nothing';
 
     my $today = $db->query(q{SELECT to_char(now() AT TIME ZONE 'America/New_York', 'YYYY-MM-DD')})->array->[0];
@@ -149,6 +151,10 @@ subtest 'staff see a local day\'s occurrences with seats held and bookings' => s
             'with several locations and none chosen, it asks which' )
         ->element_exists_not( '[data-occurrence]', 'and lists nothing yet' );
 };
+
+sub hidden ($form) {
+    return map { $_->attr('name') => $_->attr('value') } $form->find('input[type="hidden"]')->each;
+}
 
 sub uses ($e) {
     return $db->select( 'entitlement_uses', '*', { entitlement_id => $e->id } )->hashes->to_array;
@@ -171,7 +177,7 @@ subtest 'marking attendance records it' => sub {
     my $t = client( $user{staff} );
     $t->get_ok( day_url('2027-05-20') )->status_is(200);
     my $form = section( $t, $o )->at(qq{[data-entitlement="${\ $e->id }"] form}) or return fail 'a present mark';
-    my %fields = map { $_->attr('name') => $_->attr('value') } $form->find('input[type="hidden"]')->each;
+    my %fields = hidden($form);
     $t->post_ok( $form->attr('action') => form => \%fields )->status_is(302);
     my $back = Mojo::URL->new( $t->tx->res->headers->location );
     is $back->path, '/in-studio-day-view', 'back to the day view';
@@ -182,7 +188,7 @@ subtest 'marking attendance records it' => sub {
     is $uses->[0]{recorded_by}, $user{staff}->id, 'by the staff member who marked it';
     $t->get_ok($back)->status_is(200);
     like section( $t, $o )->at(qq{[data-entitlement="${\ $e->id }"]})->all_text, qr/Present/, 'the booking shows present';
-    is section( $t, $o )->at(qq{[data-entitlement="${\ $e->id }"] form}), undef, 'with no mark left to make';
+    is section( $t, $o )->at(qq{[data-entitlement="${\ $e->id }"] input[name="occurrence_id"]}), undef, 'with no mark left to make';
 };
 
 subtest 'a customer is refused' => sub {
@@ -250,7 +256,7 @@ subtest 'staff of another tenant refused' => sub {
 
 subtest 'malformed day parameter is a 400' => sub {
     my $t = client( $user{staff} );
-    for my $day ( '2027-02-30', 'yesterday', q{2027-01-01'; DROP TABLE events; --}, '27-1-1' ) {
+    for my $day ( '2027-02-30', '0000-02-15', 'yesterday', q{2027-01-01'; DROP TABLE events; --}, '27-1-1' ) {
         $t->get_ok( day_url($day) )->status_is( 400, "'$day' is a 400" )
             ->content_like( qr/Give the day as a real date, YYYY-MM-DD/, 'with a message' )
             ->element_exists_not( '[data-occurrence]', 'and no occurrence' );
@@ -270,14 +276,17 @@ subtest 'attendance on foreign booking refused' => sub {
     $t->get_ok( day_url('2027-06-12') )->status_is(200);
     my $action = section( $t, $o )->at('form')->attr('action');
 
-    $t->post_ok( $action => form => { entitlement_id => $elsewhere->id, occurrence_id => $o->id } )->status_is(302);
-    $t->get_ok( $t->tx->res->headers->location )->content_like( qr/holds no place in that occurrence/,
+    my %shown = ( day => '2027-06-12', location_id => $floor->id );
+    $t->post_ok( $action => form => { %shown, entitlement_id => $elsewhere->id, occurrence_id => $o->id } )
+        ->status_is(200)->content_like( qr/holds no place in that occurrence/,
         'a booking not in that occurrence is refused with a message' );
+    is_deeply listed($t), [ $o->id, $there->id ], 'back on the same day and location';
+    $t->element_exists( '#workflow-content input[name="day"][value="2027-06-12"]', 'with that day chosen' );
     is_deeply uses($elsewhere), [], 'and nothing is recorded';
 
     my ( $b, $far ) = other_tenant( member('staff') );
-    $t->post_ok( $action => form => { entitlement_id => $far->id, occurrence_id => $o->id } )->status_is(302);
-    $t->get_ok( $t->tx->res->headers->location )->content_like( qr/That booking was not found/,
+    $t->post_ok( $action => form => { %shown, entitlement_id => $far->id, occurrence_id => $o->id } )
+        ->status_is(200)->content_like( qr/That booking was not found/,
         'another tenant\'s booking is not found' );
     is $b->select( 'entitlement_uses', 'count(*)', { entitlement_id => $far->id } )->array->[0], 0,
         'nothing is recorded in its tenant';
@@ -316,6 +325,73 @@ subtest 'early morning local occurrence on its local day' => sub {
     like $card->all_text, qr/00:30/, 'at its local start';
     $t->get_ok( day_url( '2027-06-01', $tokyo ) )->status_is(200);
     is_deeply listed($t), [], 'and not on the UTC day';
+};
+
+subtest 'marking present for an occurrence not on the shown day refused' => sub {
+    my $shown = occurrence('2027-06-14 10:00');
+    my $other = occurrence('2027-06-15 10:00');
+    my $e     = booking( $other, member('parent') );
+    booking( $shown, member('parent') );
+    my $back  = Test::Registry::Fixtures::create_location( $db,
+        { name => 'Back room', slug => 'back-room', time_zone => 'America/New_York' } );
+    my $t = client( $user{staff} );
+    $t->get_ok( day_url('2027-06-14') )->status_is(200);
+    my $action = section( $t, $shown )->at('form')->attr('action');
+    my %mark   = ( entitlement_id => $e->id, occurrence_id => $other->id );
+    $t->post_ok( $action => form => { %mark, day => '2027-06-14', location_id => $floor->id } )
+        ->status_is(200)->content_like( qr/That class is not on the day shown here/, 'a class on another day is refused' );
+    $t->post_ok( $action => form => { %mark, day => '2027-06-15', location_id => $back->id } )
+        ->status_is(200)->content_like( qr/That class is not on the day shown here/, 'and one at another location' );
+    is_deeply uses($e), [], 'and nothing is recorded';
+    $t->post_ok( $action => form => { %mark, day => '2027-06-15', location_id => $floor->id } )->status_is(302);
+    is scalar uses($e)->@*, 1, 'on its own day and location it is recorded';
+};
+
+# A published version of a new offer for the class that may be changed up to
+# 48 hours before, for $fee cents, to another occurrence of the same offer.
+sub changeable ($fee) {
+    return Registry::DAO::Offer->create( $db, { name => 'Changeable ' . ++$made } )
+        ->draft( $db, offer_terms( undef, class_project_id => $class, policies => {
+            refund => { kind => 'none' }, use => { kind => 'optional_attendance' },
+            change => { kind => 'window', window_hours => 48, fee_cents => $fee, targets => 'same_offer' },
+            expiry => { kind => 'end_of_occurrence' } } ) )
+        ->publish($db);
+}
+
+subtest 'reschedule from the day view starts a change for exactly that booking' => sub {
+    my $v  = changeable(0);
+    my $o  = occurrence('2027-06-20 10:00');
+    my $to = occurrence('2027-06-27 10:00');
+    my $y  = booking( $o, member('parent'), 1, $v );
+    my $z  = booking( $o, member('parent'), 1, $v );
+    my $t  = client( $user{staff} );
+    # Follows $e's Reschedule control on the day view; returns the change run it lands in.
+    my $reschedule = sub ($e) {
+        $t->get_ok( day_url('2027-06-20') )->status_is(200);
+        my $row = section( $t, $o )->at(qq{[data-entitlement="${\ $e->id }"]}) or return fail 'the booking is listed';
+        if ( my $form = $row->at('form[action*="entitlement-change"]') ) {
+            $t->post_ok( $form->attr('action') => form => { hidden($form) } )->status_is(302);
+            $t->get_ok( $t->tx->res->headers->location )->status_is(200);
+        }
+        else {
+            $t->get_ok( $row->at('a[href*="entitlement-change"]')->attr('href') )->status_is(200);
+        }
+        my ($id) = ( $t->tx->res->dom->at('#workflow-content form') // return fail 'a change form' )->attr('action')
+            =~ m{/entitlement-change/([0-9a-f-]{36})/};
+        return Registry::DAO::WorkflowRun->find( $db, { id => $id } );
+    };
+    my $first = $reschedule->($y) or return;
+    is $first->data->{change_entitlement_id}, $y->id, 'the first reschedule changes Y';
+    my $second = $reschedule->($z) or return;    # Y's change is abandoned
+    is $second->data->{change_entitlement_id}, $z->id, 'the second changes Z, not the abandoned Y';
+
+    my $form = $t->tx->res->dom->at('#workflow-content form');
+    $t->post_ok( $form->attr('action') => form => { target_occurrence_id => $to->id } )->status_is(302);
+    like my $next = $t->tx->res->headers->location, qr{/complete-change\z}, 'a $0 change needs no payment';
+    $t->get_ok($next)->status_is(200);
+    $t->post_ok( $t->tx->res->dom->at('#workflow-content form')->attr('action') => form => {} )->status_is(302);
+    is_deeply $z->units( $db, $to->id ), [1], 'Z moves to the target';
+    is_deeply $y->units( $db, $o->id ), [1], 'and Y stays where it was';
 };
 
 done_testing;

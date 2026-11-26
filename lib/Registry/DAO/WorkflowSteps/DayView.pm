@@ -14,14 +14,20 @@ class Registry::DAO::WorkflowSteps::DayView :isa(Registry::DAO::WorkflowSteps::R
     use Registry::DAO::Resource;
 
     # Viewing submits no booking: stay. Marking one present is the parent's
-    # write; once it is recorded, back to the same day.
+    # write, for an occurrence on the day and at the location shown; once it
+    # is recorded, back to that day. A refusal shows that day with why.
     method process ( $db, $form_data, $run = undef ) {
         return { stay => 1 } unless exists $form_data->{entitlement_id};
-        my $result = $self->SUPER::process( $db, $form_data, $run );
-        return $result if $result->{errors};
-        my %query = map { defined $form_data->{$_} && !ref $form_data->{$_} ? ( $_ => $form_data->{$_} ) : () }
+        my %shown = map { defined $form_data->{$_} && !ref $form_data->{$_} ? ( $_ => $form_data->{$_} ) : () }
             qw( day location_id );
-        return { redirect => Mojo::URL->new('/in-studio-day-view')->query(%query)->to_string };
+        my $page = $self->prepare_template_data( $db, $run, \%shown );
+        my $occurrence = $form_data->{occurrence_id} // '';
+        my $errors = $page->{errors}
+            // ( ( ref $occurrence || !grep { $_->{id} eq $occurrence } $page->{occurrences}->@* )
+                ? ['That class is not on the day shown here'] : undef )
+            // $self->SUPER::process( $db, $form_data, $run )->{errors};
+        return { stay => 1, template_data => { %$page, errors => $errors } } if $errors;
+        return { redirect => Mojo::URL->new('/in-studio-day-view')->query(%shown)->to_string };
     }
 
     method prepare_template_data ( $db, $run, $params = {} ) {
@@ -34,7 +40,7 @@ class Registry::DAO::WorkflowSteps::DayView :isa(Registry::DAO::WorkflowSteps::R
         if ( length $day ) {
             my ( $y, $m, $d ) = ref $day ? () : $day =~ /\A(\d{4})-(\d\d)-(\d\d)\z/a;
             return $refuse->('Give the day as a real date, YYYY-MM-DD')
-                unless $y && eval { DateTime->new( year => $y, month => $m, day => $d ); 1 };
+                unless $y && $y > 0 && eval { DateTime->new( year => $y, month => $m, day => $d ); 1 };
         }
         return $refuse->('Choose one of the listed locations') if ref $location_id;
         my ($location) = length $location_id

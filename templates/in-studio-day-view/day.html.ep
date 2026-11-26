@@ -1,5 +1,5 @@
 %# ABOUTME: in-studio-day-view's one screen: a studio-local day's occurrences, capacity, seats held and bookings.
-%# ABOUTME: Each booking may be marked present (optional attendance) or rescheduled; nothing else is editable.
+%# ABOUTME: Each booking may be marked present (optional attendance) or rescheduled in a fresh change run; nothing else is editable.
 % extends 'layouts/workflow';
 % title 'Day view';
 % stash description => 'One day at the studio, in its local time.';
@@ -69,7 +69,12 @@
           </form>
         % }
         </td>
-        <td><a href="<%= url_for('workflow_index', workflow => 'entitlement-change')->query(entitlement_id => $b->{id}) %>">Reschedule</a></td>
+        <td>
+          <form method="POST" action="<%= url_for('workflow_start', workflow => 'entitlement-change') %>">
+            <input type="hidden" name="entitlement_id" value="<%= $b->{id} %>">
+            <button type="submit" class="btn btn-sm btn-secondary">Reschedule</button>
+          </form>
+        </td>
       </tr>
       % }
     </tbody>
