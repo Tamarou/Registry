@@ -443,6 +443,8 @@ class Registry::DAO::InitiateProjectWorkflow :isa(Registry::DAO::WorkflowStep) {
 
 ### Multi-tenant Support
 
+For the operator's task guide (gaining a workflow, the 403 checklist, running the divergence report and its rulings), see [How Tenants Gain and Run Workflows](../guides/workflow-entitlements.md).
+
 A tenant runs its own copy of a platform workflow, in its own schema. The copy arrives when the tenant accepts the platform's offer that grants the workflow's run right (`run:<slug>`): `Registry::DAO::Tenant->accept_platform_offer`, which tenant signup's accept step (`TenantPayment`, through `provision`) calls. Never a CLI or a migration. Accepting copies each workflow the offer version grants, from `registry` only, into the accepting tenant's schema only; submitted data naming another tenant or schema is ignored. The copy brings the workflow's steps with their classes, its templates, the outcome definitions its steps use, and its role data (`roles` or the `public` mark). The accept and the copies are one transaction: a copy that fails leaves no entitlement and no partial workflow.
 
 A tenant that already holds a copy of the slug:
