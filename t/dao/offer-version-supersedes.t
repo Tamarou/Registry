@@ -11,6 +11,7 @@ use POSIX ();
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Test::Registry::Helpers qw( import_all_workflows join_tenant publish_offer );
+use Test::Registry::SoloVersion qw( publish_solo_version );
 use Registry::DAO;
 use Registry::DAO::Entitlement;
 use Registry::DAO::Offer;
@@ -219,9 +220,7 @@ subtest 'signup resolves one platform offer after a new solo version' => sub {
         'percentage-of-sales-payment' => { percentage_of_sales => 'offered', rate_percent => '2.4' },
         price(0),
     );
-    my $solo = publish_offer( $dao, 'registry', $admin, { %platform,
-        'offer-basics' => { $platform{'offer-basics'}->%*, offer_id => '00000000-0000-0000-0002-000000000001' },
-        refund => 'keep_fee_with_admin_exception' } );
+    my $solo = publish_solo_version( $rdb, 0.024 );
     # The platform's 0% offer to itself, which must stay restricted to itself.
     my $own = publish_offer( $dao, 'registry', $admin, { %platform,
         'offer-basics'                => { $platform{'offer-basics'}->%*, offer_id => '00000000-0000-0000-0002-000000000002' },
@@ -255,19 +254,21 @@ subtest 'a solo version that is no offer to tenants is refused' => sub {
     like $@, qr/\Apublish_offer: offer-basics refused: Choose one of the offers for this resource/, 'at offer-basics';
     is_deeply current_versions( $solo_id, $rdb ), [ $before->version ], 'the old version stays current';
 
-    my @logged;
+    # Solo's version buys a set, which offer-publishing cannot version (as
+    # above), so a version without its percentage plan is published directly.
+    my $set = $rdb->query( 'SELECT array_agg(resource_id) FROM registry.offer_version_resources
+                             WHERE offer_version_id = ?', $before->id )->array->[0];
     my $ok = eval {
-        local $SIG{__WARN__} = sub { push @logged, @_ };
-        publish_offer( $dao, 'registry', $admin, { %solo,
-            'one-time-payment'            => { one_time => 'offered' },
-            'percentage-of-sales-payment' => { percentage_of_sales => 'declined' } } );
+        my $tx = $rdb->begin;
+        Registry::DAO::OfferVersion->draft( $rdb, $solo_id, {
+            resource_ids => $set, price_cents => 0, units_per_acceptance => 1, per_booking_cap => 1,
+            policies => $before->policies, payment_plans => [ { id => 'pay', kind => 'one_time' } ],
+        } )->publish($rdb);
+        $tx->commit;
         1;
     };
     ok !$ok, 'a solo version without its percentage plan is refused';
-    like $@, qr/\Apublish_offer: publish refused: Publishing this would leave signup with no platform offer/,
-        'at publish, saying why';
-    unlike $@, qr/[0-9a-f]{8}-[0-9a-f]{4}-/, 'with no id on the screen';
-    like "@logged", qr/no current published platform offer to tenants/, 'the database refused it';
+    like $@, qr/no current published platform offer to tenants/, 'by the database, at commit';
     is_deeply current_versions( $solo_id, $rdb ), [ $before->version ], 'the old version stays current';
 
     ok !eval { $rdb->query( 'UPDATE registry.offer_versions SET superseded_at = now() WHERE id = ?', $before->id ); 1 },

@@ -15,7 +15,7 @@ use Test::Registry::PricingProbe qw( solo_linked_tenant );
 use Registry;
 use Registry::DAO;
 use Registry::DAO::Payment;
-use Registry::DAO::OfferVersion;
+use Test::Registry::SoloVersion qw( publish_solo_version );
 use Registry::PriceOps::PlatformTerms ();
 use Registry::PriceOps::RevenueShare qw( revenue_share_fraction_for_tenant );
 
@@ -101,14 +101,7 @@ subtest 'alex publishes a later solo version' => sub {
         'offer-basics does not offer a new version of Solo, whose version buys a set';
 
     # A later Solo version lists its set, as solo-grants-workflow-set did.
-    my $v2  = Registry::DAO::OfferVersion->find( $db, { id => $SOLO_V2 } );
-    my $set = $db->query( 'SELECT array_agg(resource_id) FROM registry.offer_version_resources WHERE offer_version_id = ?',
-        $SOLO_V2 )->array->[0];
-    Registry::DAO::OfferVersion->draft( $db, $SOLO, {
-        resource_ids  => $set,
-        ( map { $_ => $v2->$_ } qw( price_cents units_per_acceptance per_booking_cap policies ) ),
-        payment_plans => [ { id => 'revenue_share', kind => 'percentage_of_sales', fraction => 0.024 } ],
-    } )->publish($db);
+    publish_solo_version( $db, 0.024 );
 
     my $current = solo_current();
     is scalar @$current, 1, 'Solo has exactly one current version';

@@ -15,7 +15,8 @@ use Registry::DAO::Entitlement;
 use Registry::DAO::Tenant;
 use Registry::DAO::Resource;
 use Test::Registry::Fixtures;
-use Test::Registry::Helpers qw( import_all_workflows join_tenant publish_offer );
+use Test::Registry::Helpers qw( import_all_workflows join_tenant );
+use Test::Registry::SoloVersion qw( publish_solo_version );
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;     # Registry::DAO
@@ -189,15 +190,7 @@ my $platform_admin = Test::Registry::Fixtures::create_user( $dao,
 join_tenant( $dao, $platform_admin, 'admin', 'registry' );
 
 subtest 'solo v2 leaves a v1 holders rate' => sub {
-    publish_offer( $dao, 'registry', $platform_admin, {
-        'offer-basics'                => { resource_id => '00000000-0000-0000-0001-000000000001',
-                                           offer_id    => '00000000-0000-0000-0002-000000000001' },
-        'offer-price'                 => { price_cents => 0, currency => 'usd',
-                                           units_per_acceptance => 1, per_booking_cap => 1 },
-        'one-time-payment'            => { one_time => 'declined' },
-        'percentage-of-sales-payment' => { percentage_of_sales => 'offered', rate_percent => '2.4' },
-        refund                        => 'keep_fee_with_admin_exception',
-    } );
+    publish_solo_version( $db, 0.024 );
 
     is platform_offered_fraction($db), '0.024', 'the platform now quotes Solo v2\'s 2.4%';
     is revenue_share_fraction_for_tenant( $db, $seeded_slug ), '0.025',
