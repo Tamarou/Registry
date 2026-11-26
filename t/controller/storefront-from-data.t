@@ -88,4 +88,16 @@ subtest 'slug alone does not choose the storefront' => sub {
     root_serves( 'localhost', $dao, 'tenant-storefront' );
 };
 
+# Only an explicit run right chooses: if registry has no registry-storefront
+# row (a failed import), a tenant's right to create workflows must not stand in.
+subtest 'the create right does not choose a storefront' => sub {
+    ok Registry::DAO::Entitlement->may_run( $dao->db, $studio->id, 'workflow-creation' ),
+        'the studio holds the create right';
+    my $tx = $dao->db->begin;
+    $dao->db->query(q{UPDATE registry.workflows SET slug = 'registry-storefront-gone' WHERE slug = 'registry-storefront'});
+    is $t->app->storefront_workflow( $dao->db, 'data_studio' ), 'tenant-storefront',
+        'the studio is still given tenant-storefront';
+    undef $tx;    # rolled back
+};
+
 done_testing;

@@ -1381,16 +1381,6 @@ class Registry :isa(Mojolicious) {
 
     }
 
-    # Which storefront belongs to the requester.
-    #
-    # The apex has no subdomain, so `tenant` falls back to registry (see the
-    # helper at :169). Pointing the root route at tenant-storefront therefore
-    # made the PLATFORM render a tenant's template -- and the only way to get
-    # the platform's own marketing page onto tinyartempire.com was to hand-edit
-    # registry's copy of that tenant template, which is why exactly one row in
-    # registry.templates has an updated_at that differs from its created_at.
-    #
-    # The platform has its own storefront instead.
     # The tenant an authenticated user is permitted to act as, or undef.
     # A member may act as their own tenant. Acting as any other is the operator
     # right (spec, "Decided with perigrin"): an admin-role member of a tenant
@@ -1425,10 +1415,14 @@ class Registry :isa(Mojolicious) {
 
     # ADR 004 ruling (c): the storefront is the one whose run right tenant
     # $tenant holds, read from registry's live rows in $db; undef if neither.
+    # An explicit right only (may_run): the create-right fallback in
+    # tenant_may_run must never stand in for a missing storefront row.
     method storefront_workflow ( $db, $tenant ) {
+        require Registry::DAO::Tenant;
+        my $holder = Registry::DAO::Tenant->find( $db, { slug => $tenant } ) or return undef;
         # Ordered because registry holds the run right to both.
         for my $storefront (qw( registry-storefront tenant-storefront )) {
-            return $storefront if Registry::DAO::Entitlement->tenant_may_run( $db, $tenant, $storefront );
+            return $storefront if Registry::DAO::Entitlement->may_run( $db, $holder->id, $storefront );
         }
         return undef;
     }
