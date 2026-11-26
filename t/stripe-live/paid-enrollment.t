@@ -10,7 +10,7 @@ use Test::Registry::StripeConnect;
 use Test::Registry::StripeConfirm;
 use Test::Registry::StripeWebhook;
 use Test::Registry::DB;
-use Test::Registry::PricingProbe qw( give_tenant_terms );
+use Test::Registry::SoloVersion qw( accept_solo );
 use Test::Registry::Mojo;
 use Test::Registry::Async qw( settle );
 
@@ -298,10 +298,12 @@ $db->query(
     $ready_acct, $slug,
 );
 
-# State the platform terms the tenant charges under, so the fee resolver has a
-# rate to apply. The assertions read the rate back through the resolver rather
-# than assuming it here.
-give_tenant_terms( $db, $slug, { rate => '0.025' } );
+# The tenant accepts Solo, as signup would: that states the 2.5% platform terms
+# the fee resolver applies, and it holds the run rights the gate requires --
+# including workflow-creation, under which this file's own fixture workflow
+# runs. The assertions read the rate back through the resolver rather than
+# assuming it here.
+accept_solo( $db, $tenant );
 
 # Shared state populated by I1+I2 and consumed by I4 and I6.
 my ($main_payment_id, $main_pi_id, $charge_id, $charge_fee_id,
