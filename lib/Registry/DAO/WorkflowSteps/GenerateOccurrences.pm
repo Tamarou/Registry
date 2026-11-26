@@ -121,7 +121,7 @@ class Registry::DAO::WorkflowSteps::GenerateOccurrences :isa(Registry::DAO::Work
     # a time that occurs twice is the earlier instant; a time that does not
     # exist moves forward by the gap (read with the offset before it) and is
     # reported as shifted. Offsets a day either side bound the candidates.
-    method instant ( $db, $local, $zone ) {
+    sub instant ( $class, $db, $local, $zone ) {
         return $db->query( q{
             SELECT instant, NOT (be OR ae) AS shifted,
                    to_char(instant AT TIME ZONE z, 'YYYY-MM-DD HH24:MI') AS local_start
