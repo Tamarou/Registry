@@ -69,6 +69,10 @@ CREATE TRIGGER workflow_registry_run_right
     FOR EACH ROW EXECUTE FUNCTION registry.workflow_registry_run_right();
 
 -- Workflows imported between workflow-run-entitlements and now.
-SELECT registry.registry_holds_run_right(slug) FROM (SELECT DISTINCT slug FROM registry.workflows) w;
+-- In a DO block, so the deploy prints no result rows.
+DO $$
+BEGIN
+    PERFORM registry.registry_holds_run_right(slug) FROM (SELECT DISTINCT slug FROM registry.workflows) w;
+END $$;
 
 COMMIT;
