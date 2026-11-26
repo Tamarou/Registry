@@ -43,6 +43,7 @@
 
   <h2><%= $editing_template->name %></h2>
 
+  % if (stash('may_change')) {
   <form method="POST" action="<%= $action %>">
     <input type="hidden" name="action" value="save">
     <input type="hidden" name="template_id" value="<%= $editing_template->id %>">
@@ -58,6 +59,10 @@
     <input type="hidden" name="template_id" value="<%= $editing_template->id %>">
     <button type="submit">Revert to Default</button>
   </form>
+  % } else {
+  <p>Templates can only be changed by the platform operator.</p>
+  <pre><%= $editing_template->content %></pre>
+  % }
 
   <form method="POST" action="<%= $action %>">
     <input type="hidden" name="action" value="list">

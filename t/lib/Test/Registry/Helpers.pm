@@ -19,6 +19,7 @@ package Test::Registry::Helpers {
             platform_solo_offer_version_id =>
               __PACKAGE__->can('platform_solo_offer_version_id'),
             publish_offer        => __PACKAGE__->can('publish_offer'),
+            start_run            => __PACKAGE__->can('start_run'),
             workflow_process_step_url =>
               __PACKAGE__->can('workflow_process_step_url'),
             workflow_run_step_url => __PACKAGE__->can('workflow_run_step_url'),
@@ -258,6 +259,20 @@ package Test::Registry::Helpers {
         if ( $month < 1 ) { $month += 12; $year-- }
 
         return sprintf '%04d-%02d-15', $year - $years, $month;
+    }
+
+    # Starts a run the way a browser does, so it is bound to $t: to its signed-in
+    # user, or to its session when it has none. A run made through the DAO alone
+    # belongs to nobody, and the controller refuses it to every request.
+    sub start_run ( $t, $db, $workflow, $headers = {} ) {
+        require Registry::DAO::WorkflowRun;
+        my $max = $t->ua->max_redirects;
+        $t->ua->max_redirects(0);
+        $t->post_ok( workflow_url($workflow) => $headers => form => {} );
+        $t->ua->max_redirects($max);
+        my ($id) = ( $t->tx->res->headers->location // '' ) =~ m{/([0-9a-f-]{36})/}
+          or die 'no run was started: ' . $t->tx->res->code;
+        return Registry::DAO::WorkflowRun->find( $db, { id => $id } );
     }
 
     sub workflow_url ($workflow) {

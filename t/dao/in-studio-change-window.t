@@ -49,7 +49,7 @@ sub occurrences ( $change, @at ) {
             { returning => 'id' } )->hash->{id};
         my $event = $db->insert( 'events', {
             project_id => $class, location_id => $room, teacher_id => person(),
-            time       => !ref && /\A-?[0-9]+\z/ ? \"now() + interval '$_ hours'" : $_, duration => 90, capacity => $capacity,
+            time       => !ref && /\A-?[0-9]+\z/ ? \"now() + interval '$_ hours'" : $_, duration => 90, status => 'published', capacity => $capacity,
         }, { returning => 'id' } )->hash->{id};
         Registry::DAO::Resource->for_occurrence( $db, $event );
     } @at;

@@ -3,12 +3,22 @@
 use 5.42.0;
 use Object::Pad;
 
+use Registry::DAO::Tenant;
+
 class Registry::DAO::WorkflowSteps::TemplateEditor :isa(Registry::DAO::WorkflowStep) {
 
     method process ($db, $form_data, $run = undef) {
         $run //= do { my ($w) = $self->workflow($db); $w->latest_run($db) };
 
         my $action = $form_data->{action} // 'list';
+
+        # Template text is .ep, compiled as Perl on the server, and registry's
+        # templates are every tenant's fallback: writing it is the platform
+        # operator's alone, in registry's own schema. Checked here, not only by
+        # the workflow's roles, since this step can be composed elsewhere.
+        if ( ( $action eq 'save' || $action eq 'revert' ) && !$self->may_change( $db, $run ) ) {
+            return { stay => 1, errors => ['Only a platform operator administrator can change templates'] };
+        }
 
         if ($action eq 'edit') {
             my $template_id = $form_data->{template_id}
@@ -101,6 +111,15 @@ class Registry::DAO::WorkflowSteps::TemplateEditor :isa(Registry::DAO::WorkflowS
         };
     }
 
+    # May the run's user change template text here? Only an admin of the
+    # operator holder, in registry's own schema.
+    method may_change ( $db, $run ) {
+        $db = $db->db if $db isa Registry::DAO;
+        my $user = $run && ref $run->data->{user} eq 'HASH' ? $run->data->{user} : {};
+        return $db->query('SELECT current_schema()')->array->[0] eq 'registry'
+            && Registry::DAO::Tenant->admin_of_holder( $db, $user->{id}, 'operator' ) ? 1 : 0;
+    }
+
     method prepare_template_data ($db, $run, $params = {}) {
         $db = $db->db if $db isa Registry::DAO;
 
@@ -110,6 +129,6 @@ class Registry::DAO::WorkflowSteps::TemplateEditor :isa(Registry::DAO::WorkflowS
             Registry::DAO::Template->new( %$_ )
         } @$rows;
 
-        return { templates => \@templates };
+        return { templates => \@templates, may_change => $self->may_change( $db, $run ) };
     }
 }

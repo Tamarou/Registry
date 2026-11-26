@@ -59,7 +59,7 @@ sub occurrences ( $fee, $capacity, @hours ) {
             { returning => 'id' } )->hash->{id};
         my $event = $db->insert( 'events', {
             project_id => $class, location_id => $room, teacher_id => $teacher->id,
-            time       => \"now() + interval '$_ hours'", duration => 90, capacity => $capacity,
+            time       => \"now() + interval '$_ hours'", duration => 90, status => 'published', capacity => $capacity,
         }, { returning => 'id' } )->hash->{id};
         Registry::DAO::Resource->for_occurrence( $db, $event );
     } @hours;
@@ -194,15 +194,28 @@ subtest 'staff started change with a fee is refused until the payer is decided' 
     is_deeply $e->units( $db, $from->id ), [1], 'the booking stays where it was';
     is_deeply $e->units( $db, $to->id ), [], 'and does not move';
 
-    # The pay step asks again: staff posting a booker's paid change are refused there too.
+    # Staff posting to a booker's paid change are refused before the step runs:
+    # the run answers only to the booker who started it.
     my $holder = member('parent');
     my $mine   = booking( $version, $from, $holder );
     my ( $own, $paid ) = to_payment( $holder, $mine, $to );
-    my $staff = client( member('staff') );
-    $staff->post_ok( form_of($own)->attr('action') => form => {} )->status_is(302);
-    $staff->get_ok( $staff->tx->res->headers->location )
-        ->content_like( qr/This change has a fee, so the booker must start it from their booking\./,
-            'the pay step refuses staff as well' );
+    my $data_before = $db->query( 'SELECT data::text FROM workflow_runs WHERE id = ?', $paid->id )->array->[0];
+    my $staff_member = member('staff');
+    my $staff = client($staff_member);
+    $staff->post_ok( form_of($own)->attr('action') => form => {} )
+        ->status_is( 404, "staff cannot post to the booker's run" );
+    is payments_of($paid), 0, 'and writes no payment row';
+    is $db->query( 'SELECT data::text FROM workflow_runs WHERE id = ?', $paid->id )->array->[0],
+        $data_before, "nor anything else to the booker's run";
+
+    # The pay step still asks again, as a backstop: put staff on the run as its
+    # acting user and the step itself refuses the fee.
+    $paid->update_data( $db, { user => { id => $staff_member->id, role => 'staff' } } );
+    my $pay = $paid->next_step($db);
+    is $pay->slug, 'pay', 'the run waits on the pay step';
+    my $result = $pay->process( $db, {}, $paid );
+    like $result->{errors}[0], qr/This change has a fee, so the booker must start it from their booking\./,
+        'the pay step refuses staff as well';
     is payments_of($paid), 0, 'and writes no payment row';
 };
 
@@ -264,7 +277,7 @@ subtest 'other tenant entitlement not found' => sub {
     my @res = map {
         Registry::DAO::Resource->for_occurrence( $other, $other->insert( 'events', {
             project_id => $class, location_id => $room, teacher_id => $teach,
-            time => \"now() + interval '$_ hours'", duration => 90, capacity => 4 }, { returning => 'id' } )->hash->{id} )
+            time => \"now() + interval '$_ hours'", duration => 90, status => 'published', capacity => 4 }, { returning => 'id' } )->hash->{id} )
     } 72, 96;
     my $version = Registry::DAO::Offer->create( $other, { name => 'Far wheel' } )
         ->draft( $other, offer_terms( undef, class_project_id => $class, policies => {

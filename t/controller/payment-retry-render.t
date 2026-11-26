@@ -11,6 +11,7 @@ use Test::Registry::Mojo;
 use Registry;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
+use Test::Registry::Helpers qw(authenticate_as);
 use Registry::DAO qw(Workflow);
 use Registry::DAO::WorkflowRun;
 use Mojo::Home;
@@ -30,6 +31,11 @@ for my $file (@files) {
 my $t = Test::Registry::Mojo->new('Registry');
 $t->ua->max_redirects(5);
 
+# The parent the runs belong to: a run answers only to its own user.
+my $parent = $dao->create( User => { username => 'retry_parent', name => 'Retry Parent',
+    email => 'retry_parent@example.com', user_type => 'parent' } );
+authenticate_as( $t, $parent );
+
 # Fetch the payment step id so we can build the run URL.
 my $workflow = $dao->find(Workflow => { slug => 'summer-camp-registration' });
 my $payment_step = Registry::DAO::WorkflowStep->find($dao->db, {
@@ -46,7 +52,7 @@ subtest 'retry state in run data renders error banner and stripe form' => sub {
         { id => $run->id },
     );
     $run->update_data($dao->db, {
-        user_id             => 'some-user-id',
+        user_id             => $parent->id,
         payment_retry_state => {
             payment_id       => 'pi_fake_payment_id',
             client_secret    => 'pi_retry_secret_abc',
@@ -72,7 +78,7 @@ subtest 'errors_json decodes into the server-side banner' => sub {
         { id => $run->id },
     );
     $run->update_data($dao->db, {
-        user_id             => 'some-user-id',
+        user_id             => $parent->id,
         payment_retry_state => {
             payment_id       => 'p2',
             client_secret    => 'pi_other_secret',

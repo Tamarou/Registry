@@ -7,6 +7,7 @@ use warnings;
 use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
+use Test::Registry::Helpers qw(start_run);
 use Test::Registry::Mojo;
 use Test::Registry::PricingProbe qw( give_tenant_terms );
 use Test::Registry::Offers qw( offer_terms );
@@ -226,8 +227,7 @@ $form_wf->add_step( $db, { slug => $_, class => 'Registry::DAO::WorkflowStep' } 
 
 subtest 'form submitted amount ignored' => sub {
     # Posted through the controller, none of it reaches the run's data.
-    my $run = $form_wf->new_run( $db, {} );
-    $run->process( $db, $form_wf->first_step($db), {} );
+    my $run = start_run( $t, $db, $form_wf );
     $t->post_ok( "/otp-form-$$/${\ $run->id }/next" => form => {
         'owed_payment[amount_cents]'     => 1,
         'owed_payment[offer_version_id]' => $studio->{version}->id,

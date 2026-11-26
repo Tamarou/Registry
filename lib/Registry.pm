@@ -963,14 +963,15 @@ class Registry :isa(Mojolicious) {
             }
         );
 
-        # Rate limiting: applied to all requests before dispatch.
-        # Webhook and static-asset paths are excluded (see Registry::Middleware::RateLimit).
-        # Auth endpoints (login, signup, etc.) are limited to 10 req/min per IP.
-        # All other endpoints are limited to 100 req/min per IP (or authenticated user).
+        # Rate limiting: wraps dispatch, so a limited request stops at its 429
+        # before any before_dispatch hook (auth, CSRF, redirects) or route runs.
+        # Webhooks and the asset paths public/ is served at are excluded (see
+        # Registry::Middleware::RateLimit). Auth endpoints (login, signup, etc.)
+        # are limited to 10 req/min per IP; all others to 100 req/min per IP.
         my $rate_limiter = Registry::Middleware::RateLimit->new;
         $self->hook(
-            before_dispatch => sub ($c) {
-                $rate_limiter->before_dispatch($c);
+            around_dispatch => sub ($next, $c) {
+                $rate_limiter->around_dispatch($next, $c);
             }
         );
 

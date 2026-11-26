@@ -162,7 +162,9 @@ subtest 'a callcc into the registration funnel still works anonymously' => sub {
       Registry::DAO->new( url => $test_db->uri, schema => 'guardtest' );
     my ($storefront) =
       $tenant_dao->find( Workflow => { slug => 'tenant-storefront' } );
-    my $run = $storefront->new_run( $tenant_dao->db );
+    # The visitor's own storefront run, as visiting the storefront starts it.
+    $t->get_ok( '/tenant-storefront' => { Host => $TENANT_HOST } )->status_is(200);
+    my $run = $storefront->latest_run( $tenant_dao->db );
 
     $t->post_ok(
         "/tenant-storefront/@{[ $run->id ]}/callcc/summer-camp-registration"

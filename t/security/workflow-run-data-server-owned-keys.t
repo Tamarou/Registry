@@ -14,7 +14,7 @@ use Test::Registry::SoloVersion qw( publish_solo_version accept_solo );
 use Registry::PriceOps::PlatformTerms ();
 use Test::Registry::Fixtures;
 use Test::Registry::Mojo;
-use Test::Registry::Helpers qw( authenticate_as );
+use Test::Registry::Helpers qw( authenticate_as start_run );
 
 use Registry::DAO qw(Workflow);
 use Registry::DAO::Workflow;
@@ -93,11 +93,15 @@ my $other_user = Registry::DAO::User->create($dao->db, {
 my $t = Test::Registry::Mojo->new('Registry');
 $t->app->helper(dao => sub { $dao });
 
-# A run parked on the landing step, ready for a POST to the next one.
+# Every run here is started through the app, as its owner would start it, which
+# takes this one client past the per-IP limit of a minute's browsing.
+use Registry::Middleware::RateLimit;
+$Registry::Middleware::RateLimit::GENERAL_LIMIT = $Registry::Middleware::RateLimit::AUTH_LIMIT = 10_000;
+
+# A run past the landing step, ready for a POST to the next one. Started
+# through the app, so it belongs to $t's session (or signed-in user).
 sub run_on_second_step {
-    my $run = $workflow->new_run($dao->db);
-    $run->process($dao->db, $landing, {});
-    return $run;
+    return start_run( $t, $dao->db, $workflow );
 }
 
 sub data_for {

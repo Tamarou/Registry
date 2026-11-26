@@ -1,6 +1,6 @@
 name: Template Editor
 slug: template-editor
-roles: [admin, staff]
+roles: [admin]
 description: Admin tool for viewing and customizing tenant templates
 first_step: editor
 steps:

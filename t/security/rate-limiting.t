@@ -143,9 +143,11 @@ subtest 'Static asset paths are excluded from rate limiting' => sub {
         $t->get_ok('/health', { 'X-Forwarded-For' => $ip });
     }
 
-    # Static assets under /static/ should bypass rate limiting
-    # We test the path pattern exclusion logic; the actual file may not exist
-    # but the rate limiter should not block the request with a 429
-    my $res = $t->ua->get('/static/test.css', { 'X-Forwarded-For' => $ip });
-    isnt $res->res->code, 429, 'Static asset path not rate-limited (returns 404, not 429)';
+    # The assets a page actually loads (public/css, public/js, public/images,
+    # /favicon.svg) are served, not counted against the limit: a real file
+    # returns 200 after the page limit is spent.
+    for my $asset (qw( /css/app.css /js/form-builder.js /favicon.svg )) {
+        $t->get_ok( $asset, { 'X-Forwarded-For' => $ip } )
+          ->status_is( 200, "$asset is served after the limit is spent" );
+    }
 };

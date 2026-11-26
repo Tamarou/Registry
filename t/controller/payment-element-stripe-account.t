@@ -12,6 +12,7 @@ use Registry;
 use Test::Registry::DB;
 use Test::Registry::SoloVersion qw( accept_solo_at );
 use Test::Registry::Fixtures;
+use Test::Registry::Helpers qw(authenticate_as);
 use Registry::DAO qw(Workflow);
 use Registry::DAO::Payment;
 use Registry::DAO::User;
@@ -48,6 +49,7 @@ $t->ua->max_redirects(5);
 # A run on the payment step of $slug whose payment intent is awaiting the card
 # form, as create_payment leaves it. The payment row snapshots the tenant's
 # account at creation, which is where the intent was created.
+my %owner;
 sub run_awaiting_card ($slug, %extra_data) {
     my $db       = $dao->connect_schema($slug)->db;
     my $workflow = Registry::DAO::Workflow->find($db, { slug => 'summer-camp-registration' });
@@ -77,14 +79,20 @@ sub run_awaiting_card ($slug, %extra_data) {
         },
         %extra_data,
     });
+    # The run answers only to its parent, so each is visited by its own.
+    my $client = Test::Registry::Mojo->new('Registry');
+    $client->ua->max_redirects(5);
+    authenticate_as( $client, $user );
+    $owner{ $run->id } = $client;
     return $run;
 }
+sub as_owner ($run) { $owner{ $run->id } }
 
 sub payment_url ($run) { "/summer-camp-registration/@{[ $run->id ]}/payment" }
 
 subtest 'payment page initialises stripe with the intent account' => sub {
     my $run = run_awaiting_card('ta');
-    $t->get_ok(payment_url($run) => { Host => 'ta.localhost' })
+    as_owner($run)->get_ok(payment_url($run) => { Host => 'ta.localhost' })
       ->status_is(200)
       ->content_like(qr/Stripe\('pk_test_page', \{ stripeAccount: 'acct_x' \}\)/,
                      'Stripe.js is initialised on the account the intent was created on');
@@ -102,7 +110,7 @@ subtest 'account from request is ignored' => sub {
         },
     );
 
-    $t->get_ok(payment_url($run) . '?stripe_account=acct_evil_query&stripeAccount=acct_evil_query'
+    as_owner($run)->get_ok(payment_url($run) . '?stripe_account=acct_evil_query&stripeAccount=acct_evil_query'
                => { Host => 'ta.localhost' })
       ->status_is(200)
       ->content_like(qr/stripeAccount: 'acct_x'/, 'the intent account is rendered')
@@ -110,13 +118,13 @@ subtest 'account from request is ignored' => sub {
 
     # A form body lands in run data; the page rendered afterwards still names
     # only the intent's account.
-    $t->post_ok(payment_url($run) => { Host => 'ta.localhost' }
+    as_owner($run)->post_ok(payment_url($run) => { Host => 'ta.localhost' }
                 => form => { stripe_account => 'acct_evil_body', stripeAccount => 'acct_evil_body' })
       ->content_unlike(qr/acct_evil/, 'the posted account is not rendered');
     $run->update_data($dao->connect_schema('ta')->db, { payment_retry_state => {
         client_secret => 'pi_x_secret_y', show_stripe_form => 1,
     } });
-    $t->get_ok(payment_url($run) => { Host => 'ta.localhost' })
+    as_owner($run)->get_ok(payment_url($run) => { Host => 'ta.localhost' })
       ->status_is(200)
       ->content_like(qr/stripeAccount: 'acct_x'/, 'the intent account is rendered after a post')
       ->content_unlike(qr/acct_evil/, 'the posted account was not kept for a later render');
@@ -127,7 +135,7 @@ subtest 'account from request is ignored' => sub {
     $db->query(q{UPDATE payments SET metadata = jsonb_set(metadata, '{stripe_account_id}', '"acct_evil_other"')
                  WHERE id = ?}, $other->id);
     my $borrower = run_awaiting_card('ta', payment_id => $other->id);
-    $t->get_ok(payment_url($borrower) => { Host => 'ta.localhost' })
+    as_owner($borrower)->get_ok(payment_url($borrower) => { Host => 'ta.localhost' })
       ->status_is(200)
       ->content_unlike(qr/acct_evil/, "another run's payment account is not rendered");
 };
@@ -137,7 +145,7 @@ subtest 'no account renders stripe key alone' => sub {
     my $run = run_awaiting_card('ta');
     $run->update_data($dao->connect_schema('ta')->db, { payment_id => undef });
 
-    $t->get_ok(payment_url($run) => { Host => 'ta.localhost' })
+    as_owner($run)->get_ok(payment_url($run) => { Host => 'ta.localhost' })
       ->status_is(200)
       ->content_like(qr/Stripe\('pk_test_page'\);/, 'Stripe.js gets the publishable key alone')
       ->content_unlike(qr/stripeAccount/, 'no stripeAccount option at all, empty, null or undefined');
@@ -169,12 +177,12 @@ subtest 'tenant a page never renders tenant b account' => sub {
     my $run_a = run_awaiting_card('ta');
     my $run_b = run_awaiting_card('tb');
 
-    $t->get_ok(payment_url($run_a) => { Host => 'ta.localhost' })
+    as_owner($run_a)->get_ok(payment_url($run_a) => { Host => 'ta.localhost' })
       ->status_is(200)
       ->content_like(qr/stripeAccount: 'acct_x'/, "tenant a's page names its own account")
       ->content_unlike(qr/acct_tb/, "and never tenant b's");
 
-    $t->get_ok(payment_url($run_b) => { Host => 'tb.localhost' })
+    as_owner($run_b)->get_ok(payment_url($run_b) => { Host => 'tb.localhost' })
       ->status_is(200)
       ->content_like(qr/stripeAccount: 'acct_tb'/, "tenant b's page names its own account")
       ->content_unlike(qr/acct_x/, "and never tenant a's");
@@ -185,7 +193,7 @@ subtest 'rendered account is the intent account after row change' => sub {
     $dao->db->query(q{UPDATE registry.tenants SET stripe_connect_account_id = 'acct_moved'
                       WHERE slug = 'ta'});
 
-    $t->get_ok(payment_url($run) => { Host => 'ta.localhost' })
+    as_owner($run)->get_ok(payment_url($run) => { Host => 'ta.localhost' })
       ->status_is(200)
       ->content_like(qr/stripeAccount: 'acct_x'/, 'the account the intent was created on')
       ->content_unlike(qr/acct_moved/, "not the tenant row's new account");
@@ -198,7 +206,7 @@ subtest 'page never contains a secret key' => sub {
     local $ENV{STRIPE_SECRET_KEY} = 'sk_test_never_on_the_page';
     my $run = run_awaiting_card('ta');
 
-    $t->get_ok(payment_url($run) => { Host => 'ta.localhost' })
+    as_owner($run)->get_ok(payment_url($run) => { Host => 'ta.localhost' })
       ->status_is(200)
       ->content_like(qr/stripeAccount: 'acct_x'/, 'the card form is rendered')
       ->content_unlike(qr/sk_(?:test|live)_/, 'no Stripe secret key is in the page');
@@ -211,7 +219,7 @@ subtest 'a declined card retry form keeps the intent account' => sub {
     my $run = run_awaiting_card('ta');
     $dao->connect_schema('ta')->db->query(
         q{UPDATE payments SET status = 'failed' WHERE id = ?}, $run->data->{payment_id} );
-    $t->get_ok( payment_url($run) => { Host => 'ta.localhost' } )->status_is(200)
+    as_owner($run)->get_ok( payment_url($run) => { Host => 'ta.localhost' } )->status_is(200)
       ->content_like( qr/stripeAccount: 'acct_x'/, 'the retry form is initialised on the intent account' );
 };
 

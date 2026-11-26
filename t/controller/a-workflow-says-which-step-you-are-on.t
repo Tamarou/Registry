@@ -6,7 +6,7 @@ use experimental qw(defer signatures);
 use Test::More import => [qw( done_testing is ok cmp_ok like unlike is_deeply subtest note )];
 defer { done_testing };
 
-use Test::Mojo;
+use Test::Registry::Mojo;
 use Registry;
 use Registry::DAO;
 use Test::Registry::DB;
@@ -19,7 +19,7 @@ $ENV{DB_URL} = $test_db->uri;
 
 import_all_workflows($dao);
 
-my $t = Test::Mojo->new('Registry');
+my $t = Test::Registry::Mojo->new('Registry');
 
 # Registry has computed this on every workflow step render since the feature was
 # written -- ordered steps loaded, walked twice, a URL built per completed step --
@@ -46,7 +46,7 @@ cmp_ok scalar @$steps, '>', 1,
 my $step_slug = $steps->[1]{slug};
 
 subtest 'a step page carries the element the script defines' => sub {
-    my $run = $workflow->new_run($db);
+    my $run = start_run( $t, $db, $workflow );
     $t->get_ok("/tenant-signup/@{[ $run->id ]}/$step_slug")->status_is(200);
 
     $t->element_exists( 'workflow-progress',
@@ -59,7 +59,7 @@ subtest 'a step page carries the element the script defines' => sub {
 };
 
 subtest 'and it carries the data the controller computed' => sub {
-    my $run = $workflow->new_run($db);
+    my $run = start_run( $t, $db, $workflow );
     $t->get_ok("/tenant-signup/@{[ $run->id ]}/$step_slug")->status_is(200);
 
     my $el = $t->tx->res->dom->at('workflow-progress');

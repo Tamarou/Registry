@@ -178,9 +178,12 @@ subtest 'Workflow run data preserved in database' => sub {
 # === Phase 3: "Close browser" - create fresh Test::Mojo instance ===
 
 subtest 'Resume workflow in new session - GET step renders with child data' => sub {
-    # Fresh Test::Mojo simulates a new browser session (no cookies)
+    # Fresh Test::Mojo simulates a new browser session (no cookies). The run
+    # answers only to its owner, so the parent signs in again, as the emailed
+    # magic link has them do.
     my $t2 = Test::Registry::Mojo->new('Registry');
     $t2->app->helper(dao => sub { $dao });
+    authenticate_as($t2, Registry::DAO::User->find($dao->db, { username => 'resume.parent' }));
 
     # GET the workflow step URL directly (as if pasting URL in new browser)
     $t2->get_ok($resume_url)
@@ -198,6 +201,7 @@ subtest 'Can continue workflow from resumed step' => sub {
 
     # Find the child to select
     my $user = Registry::DAO::User->find($dao->db, { username => 'resume.parent' });
+    authenticate_as($t2, $user);
     my $children = Registry::DAO::Family->list_children($dao->db, $user->id);
     ok scalar @$children >= 1, 'Child exists for user';
     my $child = $children->[0];

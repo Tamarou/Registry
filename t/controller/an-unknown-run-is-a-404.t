@@ -9,6 +9,7 @@ use experimental 'signatures';
 use Mojo::JSON qw(decode_json);
 use Test::Registry::Mojo;
 use Test::Registry::DB;
+use Test::Registry::Helpers qw(start_run);
 use Registry::DAO::Workflow;
 use Mojo::Home;
 use YAML::XS qw(Load);
@@ -85,7 +86,7 @@ subtest 'a real run still works' => sub {
     # The guard must refuse only what does not exist. Without this the whole
     # file passes against a controller that 404s everything.
     my ($workflow) = $dao->find( Workflow => { slug => 'tenant-signup' } );
-    my $run = $workflow->new_run( $dao->db );
+    my $run = start_run( $t, $dao->db, $workflow );
 
     # profile, not landing: a run-scoped GET of a step whose template is named
     # something other than the step slug is its own 500, filed separately. This

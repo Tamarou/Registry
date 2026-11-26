@@ -166,13 +166,19 @@ subtest 'every shipped workflow imports with the roles or public mark its YAML d
           "$_.unlisted-flow has no entry" for qw(registry backfilled);
     };
 
-    my $agrees = sub (@schemas) {
+    # Slugs a change after $refuses narrows, with the entry they had before it:
+    # a studio's copies can only be checked before $refuses, so there they
+    # still carry the earlier entry; the change itself is checked below.
+    my %narrowed_later = ( 'template-editor' => { roles => [qw(admin staff)], public => 0 } );
+
+    my $agrees = sub ( $before_later = 0, @schemas ) {
         ok @known, 'the backfill gave existing rows an entry';
         for my $schema (@schemas) {
             for my $slug (@known) {
                 # Gone: a later migration cleared it so import rebuilds it from the YAML.
                 my $got = $entry->( $schema, $slug ) or next;
-                is_deeply $got, declared( $yaml{$slug} ), "$schema.$slug has what its YAML declares";
+                my $want = $before_later && $narrowed_later{$slug} || declared( $yaml{$slug} );
+                is_deeply $got, $want, "$schema.$slug has what its YAML declares";
             }
         }
     };
@@ -184,14 +190,26 @@ subtest 'every shipped workflow imports with the roles or public mark its YAML d
     $sqitch->run( 'sqitch', 'deploy', '-t', $pg->uri, '--to', "$refuses^" );
 
     subtest 'after every migration a carried-forward row agrees with its shipped YAML' => sub {
-        $agrees->(qw( registry backfilled ));
+        $agrees->( 1, qw( registry backfilled ) );
     };
 
     $db->query('DELETE FROM backfilled.workflows');
+
+    # A studio copy made after $refuses, as provisioning makes them, still
+    # carries the earlier entry until the change that narrows it.
+    my $narrows = 'template-editor-admin-only';
+    $sqitch->run( 'sqitch', 'deploy', '-t', $pg->uri, '--to', "$narrows^" );
+    $db->query( q{INSERT INTO backfilled.workflows (name, slug, roles) VALUES (?, ?, ?)},
+        'template-editor', 'template-editor', [qw(admin staff)] );
     $sqitch->run( 'sqitch', 'deploy', '-t', $pg->uri );
 
     subtest 'after every migration a carried-forward registry row agrees with its shipped YAML' => sub {
-        $agrees->('registry');
+        $agrees->( 0, 'registry' );
+    };
+
+    subtest "$narrows narrows a studio's copy too" => sub {
+        is_deeply $entry->( backfilled => 'template-editor' ), declared( $yaml{'template-editor'} ),
+          'backfilled.template-editor has what its YAML declares';
     };
 
     # The handle goes before the server does, or its DESTROY talks to a dead one.

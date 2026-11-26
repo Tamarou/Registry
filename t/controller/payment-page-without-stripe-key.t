@@ -9,6 +9,7 @@ use Test::More;
 use Test::Registry::Mojo;
 use Registry;
 use Test::Registry::DB;
+use Test::Registry::Helpers qw(authenticate_as);
 use Registry::DAO qw(Workflow);
 use Registry::DAO::WorkflowRun;
 use Registry::DAO::Session;
@@ -28,6 +29,11 @@ for my $file ( Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/
 }
 
 my $t = Test::Registry::Mojo->new('Registry');
+
+# The parent whose cart it is: a run answers only to its own user.
+my $parent = $dao->create( User => { username => 'no_key_parent', name => 'No Key Parent',
+    email => 'no_key_parent@example.com', user_type => 'parent' } );
+authenticate_as( $t, $parent );
 
 my $workflow     = $dao->find( Workflow => { slug => 'summer-camp-registration' } );
 my $payment_step = Registry::DAO::WorkflowStep->find( $db, { workflow_id => $workflow->id, slug => 'payment' } );
@@ -50,6 +56,7 @@ sub page_for ($session) {
     my $run   = $workflow->new_run($db);
     $db->update( 'workflow_runs', { latest_step_id => $payment_step->id }, { id => $run->id } );
     $run->update_data( $db, {
+        user_id            => $parent->id,
         children           => [ { id => $child, first_name => 'Kid', last_name => '' } ],
         session_selections => { $child => $session->id },
         enrollment_items   => [ { child_id => $child, session_id => $session->id } ],

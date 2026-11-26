@@ -23,11 +23,15 @@ our @AUTH_PATHS = qw(
     magic/request
 );
 
-# Route prefixes that bypass rate limiting entirely
+# Route prefixes that bypass rate limiting entirely. The asset prefixes are
+# where public/ is served, so a page's CSS, JS and images don't spend the
+# visitor's page budget.
 our @EXCLUDED_PREFIXES = qw(
     /webhooks/
-    /static/
-    /public/
+    /css/
+    /js/
+    /images/
+    /favicon.svg
     /auth/magic/poll/
 );
 
@@ -122,17 +126,24 @@ sub check ($self, $key, $limit) {
     return ( allowed => 1, retry_after => 0 );
 }
 
-# Mojolicious before_dispatch hook handler.
-# Attach via: $app->hook(before_dispatch => \&Registry::Middleware::RateLimit::before_dispatch);
-sub before_dispatch ($class_or_self, $c) {
+# Mojolicious around_dispatch hook handler: dispatch continues only through
+# $next, so a limited request ends here with its 429 and nothing after it --
+# no before_dispatch hook, no route -- runs or renders.
+# Attach via: $app->hook(around_dispatch => sub ($next, $c) { $limiter->around_dispatch($next, $c) });
+sub around_dispatch ($class_or_self, $next, $c) {
+    return $next->() unless $class_or_self->limited($c);
+}
+
+# Renders the 429 and returns true when $c is over its limit.
+sub limited ($class_or_self, $c) {
     # Bypass entirely in E2E/test environments, where many requests share one
     # client IP against a single long-lived app instance and would otherwise trip
     # the per-IP limit. Production never sets this, so limiting stays on there.
-    return if $ENV{REGISTRY_RATE_LIMIT_DISABLED};
+    return 0 if $ENV{REGISTRY_RATE_LIMIT_DISABLED};
 
     my $path = $c->req->url->path->to_string;
 
-    return if $class_or_self->_is_excluded($path);
+    return 0 if $class_or_self->_is_excluded($path);
 
     my $key   = $class_or_self->_request_key($c);
     my $limit = $class_or_self->_limit_for_path($path);
@@ -146,21 +157,20 @@ sub before_dispatch ($class_or_self, $c) {
 
     my %result = $class_or_self->check("$class:$key", $limit);
 
-    unless ($result{allowed}) {
-        my $retry_after = $result{retry_after};
+    return 0 if $result{allowed};
 
-        $c->res->headers->header('Retry-After' => $retry_after);
+    my $retry_after = $result{retry_after};
 
-        $c->render(
-            status => 429,
-            json   => {
-                error       => 'Rate limit exceeded. Please try again later.',
-                retry_after => $retry_after,
-            },
-        );
+    $c->res->headers->header('Retry-After' => $retry_after);
 
-        $c->rendered(429);
-    }
+    $c->render(
+        status => 429,
+        json   => {
+            error       => 'Rate limit exceeded. Please try again later.',
+            retry_after => $retry_after,
+        },
+    );
+    return 1;
 }
 
 1;

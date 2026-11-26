@@ -10,7 +10,7 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::Mojo;
 use Test::Registry::DB;
-use Test::Registry::Helpers qw(authenticate_as import_all_workflows);
+use Test::Registry::Helpers qw(authenticate_as import_all_workflows start_run);
 use Test::Registry::SoloVersion qw(accept_solo);
 use Registry::DAO::Entitlement;
 use Registry::DAO::Tenant;
@@ -91,9 +91,10 @@ sub children_of ( $tdao, $run ) {
 }
 
 subtest 'the callcc leg starts a run of a workflow the tenant holds the run entitlement for' => sub {
-    my $source = $solo_dao->find( 'Registry::DAO::Workflow', { slug => 'program-creation' } )
-      ->new_run( $solo_dao->db );
-    app_as($solo_admin)->post_ok( "/program-creation/@{[ $source->id ]}/callcc/location-creation" => $SOLO => form => {} )
+    my $t      = app_as($solo_admin);
+    my $source = start_run( $t, $solo_dao->db,
+      $solo_dao->find( 'Registry::DAO::Workflow', { slug => 'program-creation' } ), $SOLO );
+    $t->post_ok( "/program-creation/@{[ $source->id ]}/callcc/location-creation" => $SOLO => form => {} )
       ->status_is(302)->header_like( Location => qr{^/location-creation/} );
     is children_of( $solo_dao, $source ), 1, 'one child run continues the source run';
 };
@@ -161,10 +162,12 @@ subtest 'parked run refused after entitlement ends' => sub {
     my $admin     = member( $ended, 'ended_admin', 'admin' );
     my $HOST      = { Host => 'ended_studio.localhost' };
     my $tdao      = $dao->connect_schema('ended_studio');
-    my $run  = $tdao->find( 'Registry::DAO::Workflow', { slug => 'program-creation' } )->new_run( $tdao->db );
+    my $starter = app_as($admin);
+    my $run  = start_run( $starter, $tdao->db,
+      $tdao->find( 'Registry::DAO::Workflow', { slug => 'program-creation' } ), $HOST );
     my $step = $run->next_step( $tdao->db )->slug;
     my $url  = "/program-creation/@{[ $run->id ]}/$step";
-    app_as($admin)->get_ok( $url => $HOST )->status_is( 200, 'the parked run is reachable while Solo is held' );
+    $starter->get_ok( $url => $HOST )->status_is( 200, 'the parked run is reachable while Solo is held' );
 
     $solo_held->end( $db, 'refunded', 're_run_entitlement_probe' );
     ok !Registry::DAO::Entitlement->may_run( $db, $ended->id, 'program-creation' ), 'the run right has ended';
