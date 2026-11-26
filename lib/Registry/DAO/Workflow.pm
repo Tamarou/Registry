@@ -21,6 +21,24 @@ class Registry::DAO::Workflow :isa(Registry::DAO::Object) {
 
     sub table { 'workflows' }
 
+    # Every workflow in $schema (already quoted), as rows of id, slug,
+    # first_step, roles and public (Registry::WorkflowDivergence).
+    sub rows_in_schema ( $class, $db, $schema ) {
+        return $db->query("SELECT id, slug, first_step, roles, public FROM $schema.workflows")->hashes->each;
+    }
+
+    # Every workflow step in $schema (already quoted), by slug, as rows with
+    # its template's name and content.
+    sub step_rows_in_schema ( $class, $db, $schema ) {
+        return $db->query( qq{
+            SELECT s.id, s.workflow_id, s.slug, s.depends_on, s.class,
+                   t.name AS template, t.content
+              FROM $schema.workflow_steps s
+              LEFT JOIN $schema.templates t ON t.id = s.template_id
+             ORDER BY s.slug
+        } )->hashes->each;
+    }
+
     sub create ( $class, $db, $data ) {
         $db = $db->db if $db isa Registry::DAO;
         

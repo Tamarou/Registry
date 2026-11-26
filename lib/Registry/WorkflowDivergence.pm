@@ -8,6 +8,8 @@ package Registry::WorkflowDivergence;
 use Digest::SHA qw( sha256_hex );
 use Encode      qw( encode_utf8 );
 use Mojo::File;
+use Registry::DAO::Tenant;
+use Registry::DAO::Workflow;
 
 # Provisioning never copies these to a tenant, so their absence is expected.
 my %NOT_COPIED = map { $_ => 1 } qw( tenant-signup registry-storefront );
@@ -26,16 +28,10 @@ my %UNLINKED = ( 'tenant-storefront' => { 'program-listing' => 1 } );
 # any step the chain does not reach, by slug.
 sub _workflows ( $db, $schema ) {
     my %by_id = map { $_->{id} => { %$_, steps => [] } }
-      $db->query("SELECT id, slug, first_step, roles, public FROM $schema.workflows")->hashes->each;
+      Registry::DAO::Workflow->rows_in_schema( $db, $schema );
 
     my ( %steps, %children );
-    for my $s ( $db->query( qq{
-        SELECT s.id, s.workflow_id, s.slug, s.depends_on, s.class,
-               t.name AS template, t.content
-          FROM $schema.workflow_steps s
-          LEFT JOIN $schema.templates t ON t.id = s.template_id
-         ORDER BY s.slug
-    } )->hashes->each ) {
+    for my $s ( Registry::DAO::Workflow->step_rows_in_schema( $db, $schema ) ) {
         push $steps{ $s->{workflow_id} }->@*, $s;
         push $children{ $s->{depends_on} }->@*, $s if $s->{depends_on};
     }
@@ -125,13 +121,7 @@ sub rulings ( $text = Mojo::File::curfile->dirname->dirname->dirname
 
 # The Markdown report: a section per tenant schema, registry excluded.
 sub report ($db) {
-    my @tenants = $db->query(q{
-        SELECT t.slug,
-               EXISTS ( SELECT 1 FROM pg_namespace n WHERE n.nspname = t.slug ) AS present
-          FROM registry.tenants t
-         WHERE t.slug <> 'registry'
-         ORDER BY t.slug
-    })->hashes->each;
+    my @tenants = Registry::DAO::Tenant->slugs_with_schema_presence($db);
 
     my $platform = _workflows( $db, 'registry' );
     my $md       = "# Tenant workflow divergence\n";

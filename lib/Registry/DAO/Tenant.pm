@@ -997,6 +997,18 @@ class Registry::DAO::Tenant :isa(Registry::DAO::Object) {
         };
     }
 
+    # Every tenant but registry, by slug, as rows of slug and whether its
+    # schema exists (present).
+    sub slugs_with_schema_presence ( $class, $db ) {
+        return $db->query(q{
+            SELECT t.slug,
+                   EXISTS ( SELECT 1 FROM pg_namespace n WHERE n.nspname = t.slug ) AS present
+              FROM registry.tenants t
+             WHERE t.slug <> 'registry'
+             ORDER BY t.slug
+        })->hashes->each;
+    }
+
     # Get all tenant schemas for background jobs
     sub get_all_tenant_schemas($class, $db) {
         return $db->select('registry.tenants', ['slug'])->hashes->to_array;

@@ -73,6 +73,9 @@ class Registry::DAO {
 
     method begin() { $db->begin }
 
+    # Every later transaction on this connection is read only.
+    method read_only() { $db->query('SET default_transaction_read_only = on') }
+
     method query ( $sql, @params ) {
         return unless defined wantarray;
 

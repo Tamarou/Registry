@@ -12,7 +12,7 @@ use Mojo::File qw( path );
 my %ALLOWED = (
     'lib/Mojolicious/Plugin/DBTemplates.pm'     => 1,
     'lib/Registry.pm'                           => 4,
-    'lib/Registry/Command/workflow.pm'          => 2,
+    'lib/Registry/Command/workflow.pm'          => 1,
     'lib/Registry/Controller/AdminDashboard.pm' => 1,
     'lib/Registry/Controller/Messages.pm'       => 5,
     'lib/Registry/Controller/Waitlist.pm'       => 1,
@@ -23,7 +23,6 @@ my %ALLOWED = (
     'lib/Registry/Job/SendNotifications.pm'     => 4,
     'lib/Registry/Job/ExpireEntitlements.pm'    => 1,
     'lib/Registry/Job/InstalmentReconcile.pm'   => 3,
-    'lib/Registry/WorkflowDivergence.pm'        => 3,
 );
 
 # A database handle ($db, $tdb, ...->db, a Registry::DAO in $dao) receiving one
