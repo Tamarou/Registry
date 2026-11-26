@@ -31,6 +31,11 @@ class Registry::DAO::WorkflowSteps::DayView :isa(Registry::DAO::WorkflowSteps::R
         my $refuse = sub ($why) { return { %page, status => 400, errors => [$why] } };
 
         my ( $location_id, $day ) = map { $_ // '' } $params->@{qw( location_id day )};
+        if ( length $day ) {
+            my ( $y, $m, $d ) = ref $day ? () : $day =~ /\A(\d{4})-(\d\d)-(\d\d)\z/a;
+            return $refuse->('Give the day as a real date, YYYY-MM-DD')
+                unless $y && eval { DateTime->new( year => $y, month => $m, day => $d ); 1 };
+        }
         return $refuse->('Choose one of the listed locations') if ref $location_id;
         my ($location) = length $location_id
             ? grep { $_->{id} eq $location_id } @$locations
@@ -39,15 +44,8 @@ class Registry::DAO::WorkflowSteps::DayView :isa(Registry::DAO::WorkflowSteps::R
         return \%page unless $location;
         $page{location} = $location;
 
-        if ( length $day ) {
-            my ( $y, $m, $d ) = ref $day ? () : $day =~ /\A(\d{4})-(\d\d)-(\d\d)\z/a;
-            return $refuse->('Give the day as a real date, YYYY-MM-DD')
-                unless $y && eval { DateTime->new( year => $y, month => $m, day => $d ); 1 };
-        }
-        else {
-            $day = $db->query( q{SELECT to_char(now() AT TIME ZONE ?, 'YYYY-MM-DD')}, $location->{time_zone} )
-                ->array->[0];
-        }
+        $day = $db->query( q{SELECT to_char(now() AT TIME ZONE ?, 'YYYY-MM-DD')}, $location->{time_zone} )
+            ->array->[0] unless length $day;
         $page{day} = $day;
 
         my $in_effect = Registry::DAO::Entitlement->in_effect_sql( 'e', 'tstzrange(now(), NULL)' );

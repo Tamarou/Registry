@@ -19,6 +19,7 @@ use Registry::DAO;
 use Registry::DAO::Entitlement;
 use Registry::DAO::Offer;
 use Registry::DAO::Resource;
+use Registry::DAO::Tenant;
 use Registry::PriceOps::Hold;
 
 my $test_db = Test::Registry::DB->new;
@@ -158,7 +159,8 @@ subtest 'an occurrence at 23:30 local, the next day in UTC, is on its local day'
     my $t    = client( $user{staff} );
     $t->get_ok( day_url('2027-05-10') )->status_is(200);
     is_deeply listed($t), [ $late->id ], 'listed on its local day';
-    like section( $t, $late )->all_text, qr/23:30/, 'at its local start';
+    my $card = section( $t, $late ) or return fail q{it is listed};
+    like $card->all_text, qr/23:30/, 'at its local start';
     $t->get_ok( day_url('2027-05-11') )->status_is(200);
     is_deeply listed($t), [], 'not on the UTC day it falls in';
 };
@@ -194,6 +196,126 @@ subtest 'a customer is refused' => sub {
     $t->post_ok( $action => form => { entitlement_id => $e->id, occurrence_id => $o->id } )
         ->status_is( 403, 'nor may they mark themselves present' );
     is_deeply uses($e), [], 'and nothing is recorded';
+};
+
+# Tenant B: its own schema, with $staff as its staff member and a booking of
+# its own in an occurrence of its own. Returns B's handle and that booking.
+sub other_tenant ($staff) {
+    my $slug = 'dv_other_' . ++$made;
+    Registry::DAO::Tenant->provision( $db, { name => "DV Other $made", slug => $slug, users => [] } );
+    join_tenant( $dao, $staff, 'staff', $slug );
+    my $b     = $dao->connect_schema($slug)->db;
+    my $room  = $b->insert( 'locations', { time_zone => 'America/New_York', name => 'Far room', slug => 'far-room' },
+        { returning => 'id' } )->hash->{id};
+    my $class = $b->insert( 'projects', { name => 'Far class', slug => 'far-class' }, { returning => 'id' } )->hash->{id};
+    my $who   = $b->insert( 'users', { username => "dv-far-$made" }, { returning => 'id' } )->hash->{id};
+    my $res   = Registry::DAO::Resource->for_occurrence( $b, $b->insert( 'events', {
+        project_id => $class, location_id => $room, teacher_id => $who,
+        time => '2027-07-01T14:00:00Z', duration => 90, capacity => 4 }, { returning => 'id' } )->hash->{id} );
+    my $v = Registry::DAO::Offer->create( $b, { name => 'Far wheel' } )
+        ->draft( $b, offer_terms( undef, class_project_id => $class,
+            policies => { refund => { kind => 'none' }, use => { kind => 'optional_attendance' } } ) )->publish($b);
+    my $e = Registry::DAO::Entitlement->grant( $b, {
+        holder_user_id => $who, offer_version_id => $v->id, payment_plan_id => 'pay',
+        starts_at => '2020-01-01T00:00:00Z', ends_at => '2027-07-01T15:30:00Z', resource_id => $res->id, units => 1 } );
+    return ( $b, $e );
+}
+
+subtest 'anonymous visitor refused' => sub {
+    my $o = occurrence('2027-06-10 10:00');
+    my $e = booking( $o, member('parent') );
+    my $t = client();
+    $t->get_ok( day_url('2027-06-10') )->status_is(302)->header_is( Location => '/auth/login', 'sent to log in' )
+        ->content_unlike( qr/DV Parent/, 'and shown no booking' );
+    $t->post_ok( '/in-studio-day-view' => form => { entitlement_id => $e->id, occurrence_id => $o->id } )
+        ->status_is(302)->header_is( Location => '/auth/login', 'a POST is sent to log in too' );
+    is_deeply uses($e), [], 'and nothing is recorded';
+};
+
+subtest 'staff of another tenant refused' => sub {
+    my $o        = occurrence('2027-06-11 10:00');
+    my $e        = booking( $o, member('parent') );
+    my $stranger = Test::Registry::Fixtures::create_user( $dao, {
+        username => 'dv_far_staff', name => 'Far Staff', email => 'far@day.test', user_type => 'staff' } );
+    other_tenant($stranger);
+    my $t = client($stranger);
+    $t->get_ok( day_url('2027-06-11') )->status_is( 403, 'tenant B\'s staff are refused on tenant A\'s host' )
+        ->content_unlike( qr/DV Parent/, 'and shown no booking' );
+    my $staff = client( $user{staff} );
+    $staff->get_ok( day_url('2027-06-11') )->status_is(200);
+    $t->post_ok( section( $staff, $o )->at('form')->attr('action') =>
+        form => { entitlement_id => $e->id, occurrence_id => $o->id } )->status_is( 403, 'nor may they mark it' );
+    is_deeply uses($e), [], 'and nothing is recorded';
+};
+
+subtest 'malformed day parameter is a 400' => sub {
+    my $t = client( $user{staff} );
+    for my $day ( '2027-02-30', 'yesterday', q{2027-01-01'; DROP TABLE events; --}, '27-1-1' ) {
+        $t->get_ok( day_url($day) )->status_is( 400, "'$day' is a 400" )
+            ->content_like( qr/Give the day as a real date, YYYY-MM-DD/, 'with a message' )
+            ->element_exists_not( '[data-occurrence]', 'and no occurrence' );
+    }
+    $t->get_ok('/in-studio-day-view?day=2027-06-01&day=2027-06-02')->status_is( 400, 'two days are a 400' );
+    $t->get_ok( Mojo::URL->new('/in-studio-day-view')->query( location_id => 'nowhere', day => '2027-06-01' ) )
+        ->status_is( 400, 'an unknown location is a 400' )->content_like(qr/Choose one of the listed locations/);
+    ok $db->query(q{SELECT to_regclass('events')})->array->[0], 'events survives';
+};
+
+subtest 'attendance on foreign booking refused' => sub {
+    my $o     = occurrence('2027-06-12 10:00');
+    my $there = occurrence('2027-06-12 12:00');
+    my $mine  = booking( $o, member('parent') );
+    my $elsewhere = booking( $there, member('parent') );
+    my $t = client( $user{staff} );
+    $t->get_ok( day_url('2027-06-12') )->status_is(200);
+    my $action = section( $t, $o )->at('form')->attr('action');
+
+    $t->post_ok( $action => form => { entitlement_id => $elsewhere->id, occurrence_id => $o->id } )->status_is(302);
+    $t->get_ok( $t->tx->res->headers->location )->content_like( qr/holds no place in that occurrence/,
+        'a booking not in that occurrence is refused with a message' );
+    is_deeply uses($elsewhere), [], 'and nothing is recorded';
+
+    my ( $b, $far ) = other_tenant( member('staff') );
+    $t->post_ok( $action => form => { entitlement_id => $far->id, occurrence_id => $o->id } )->status_is(302);
+    $t->get_ok( $t->tx->res->headers->location )->content_like( qr/That booking was not found/,
+        'another tenant\'s booking is not found' );
+    is $b->select( 'entitlement_uses', 'count(*)', { entitlement_id => $far->id } )->array->[0], 0,
+        'nothing is recorded in its tenant';
+    is $db->select( 'entitlement_uses', 'count(*)', { entitlement_id => $far->id } )->array->[0], 0, 'nor in this one';
+    is_deeply uses($mine), [], 'nor against this occurrence\'s own booking';
+};
+
+subtest 'ended bookings and expired holds not shown as held' => sub {
+    my $o       = occurrence( '2027-06-13 10:00', 10 );
+    my $kept    = booking( $o, member('parent') );
+    my $ended   = booking( $o, member('parent'), 2 );
+    $ended->end( $db, 'refunded', 'refunded in full' );
+    my $lapsed  = hold( $o, 3 );
+    $db->update( 'holds', { expires_at => \"clock_timestamp() - interval '1 minute'" }, { id => $lapsed->id } );
+    my $released = hold( $o, 1 );
+    $db->update( 'holds', { state => 'released' }, { id => $released->id } );
+
+    my $t = client( $user{staff} );
+    $t->get_ok( day_url('2027-06-13') )->status_is(200);
+    my $card = section( $t, $o );
+    like $card->all_text, qr/Seats held 2\b/, 'only the active booking\'s two seats are held';
+    ok $card->at(qq{[data-entitlement="${\ $kept->id }"]}), 'it is listed';
+    is $card->at(qq{[data-entitlement="${\ $ended->id }"]}), undef, 'the ended one is not';
+};
+
+subtest 'early morning local occurrence on its local day' => sub {
+    my $tokyo = Test::Registry::Fixtures::create_location( $db,
+        { name => 'Tokyo annex', slug => 'tokyo-annex', time_zone => 'Asia/Tokyo' } );
+    my $o = occurrence( '2027-06-02 00:30', 8, $tokyo );
+    is $db->query( q{SELECT to_char(time AT TIME ZONE 'UTC', 'YYYY-MM-DD') FROM events WHERE id = ?}, $o->event_id )
+        ->array->[0], '2027-06-01', 'it is the previous day in UTC';
+    my $t = client( $user{staff} );
+    $t->get_ok( day_url( '2027-06-02', $tokyo ) )->status_is(200);
+    is_deeply listed($t), [ $o->id ], 'listed on its local day';
+    my $card = section( $t, $o ) or return fail q{it is listed};
+    like $card->all_text, qr/00:30/, 'at its local start';
+    $t->get_ok( day_url( '2027-06-01', $tokyo ) )->status_is(200);
+    is_deeply listed($t), [], 'and not on the UTC day';
 };
 
 done_testing;
