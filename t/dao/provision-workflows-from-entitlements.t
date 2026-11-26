@@ -66,9 +66,11 @@ subtest 'a tenant made by signup holds exactly the workflows its entitlements gr
     }
 
     my $tdb  = $tdao->db;
-    my $used = $tdb->query( 'SELECT count(DISTINCT outcome_definition_id) FROM workflow_steps' )->array->[0];
-    is $tdb->query('SELECT count(*) FROM outcome_definitions')->array->[0], $used,
-      'it holds only the outcome definitions its workflows use';
+    my $ids = sub ($sql) { [ sort map { $_->[0] } $tdb->query($sql)->arrays->each ] };
+    my $used = $ids->('SELECT DISTINCT outcome_definition_id FROM workflow_steps WHERE outcome_definition_id IS NOT NULL');
+    cmp_ok scalar @$used, '>', 0, 'its workflows use outcome definitions';
+    is_deeply $ids->('SELECT id FROM outcome_definitions'), $used,
+      'it holds exactly the outcome definitions its workflows use';
 };
 
 subtest 'no fresh tenant receives tenant-signup or registry-storefront, and provisioning names neither' => sub {
