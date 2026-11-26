@@ -36,12 +36,12 @@ sub person () {
     return $db->insert( 'users', { username => "icw-p-$$-" . ++$made }, { returning => 'id' } )->hash->{id};
 }
 
-# A class whose occurrences start at @at (hours from now, or a timestamptz
-# literal), each with $capacity seats (default 4) at a location in $ZONE,
+# A class whose occurrences start at @at (hours from now, a timestamptz
+# literal, or a reference to SQL), each with $capacity seats (default 4) at a location in $ZONE,
 # and a published class offer version covering them with change policy
 # $change. Returns the version and the occurrences' resources.
 sub occurrences ( $change, @at ) {
-    my $capacity = ref $at[-1] ? pop(@at)->{capacity} : 4;
+    my $capacity = ref $at[-1] eq 'HASH' ? pop(@at)->{capacity} : 4;
     my $class = $db->insert( 'projects', { name => 'Class ' . ++$made, slug => "icw-class-$made" },
         { returning => 'id' } )->hash->{id};
     my @resources = map {
@@ -49,7 +49,7 @@ sub occurrences ( $change, @at ) {
             { returning => 'id' } )->hash->{id};
         my $event = $db->insert( 'events', {
             project_id => $class, location_id => $room, teacher_id => person(),
-            time       => /\A-?[0-9]+\z/ ? \"now() + interval '$_ hours'" : $_, duration => 90, capacity => $capacity,
+            time       => !ref && /\A-?[0-9]+\z/ ? \"now() + interval '$_ hours'" : $_, duration => 90, capacity => $capacity,
         }, { returning => 'id' } )->hash->{id};
         Registry::DAO::Resource->for_occurrence( $db, $event );
     } @at;
@@ -104,11 +104,26 @@ sub payments_of ($run) {
 
 my $refusal = sub { Registry::DAO::WorkflowSteps::ChooseChangeTarget->refusal( $db, @_ ) };
 
+# Two days before each 2027 DST change in $ZONE, and the clock a second later.
+my %EVE = ( 'fall-back' => "2027-11-05 10:00 $ZONE", 'spring-forward' => "2027-03-12 10:00 $ZONE" );
+sub later ($at) { $db->query( q{SELECT ?::timestamptz + interval '1 second'}, $at )->array->[0] }
+
+# An occurrence $hours on the wall clock after $at, in $ZONE.
+sub wall_after ( $at, $hours ) {
+    return \"(('$at'::timestamptz AT TIME ZONE '$ZONE') + interval '$hours hours') AT TIME ZONE '$ZONE'";
+}
+
 subtest 'change 49 hours before allowed' => sub {
-    my ( $version, $held, $target ) = occurrences( \%WINDOW, 49, 96 );
+    for my $eve ( sort keys %EVE ) {
+        my ( $version, $held ) = occurrences( \%WINDOW, wall_after( $EVE{$eve}, 49 ) );
+        is $refusal->( booking( $version, $held ), later( $EVE{$eve} ) ), undef,
+            "49 wall hours before, on the eve of $eve, the change is allowed";
+    }
+    # Through the workflow on the real clock: 72 hours is more than 48 + 1 DST hour on any date.
+    my ( $version, $held, $target ) = occurrences( \%WINDOW, 72, 96 );
     my $e = booking( $version, $held );
     my ( $run, $chose ) = chosen($e);
-    ok !$chose->{errors}, 'choosing a target 49 hours before is allowed' or diag explain $chose->{errors};
+    ok !$chose->{errors}, 'choosing a target outside the window is allowed' or diag explain $chose->{errors};
     is_deeply [ map { $_->{id} } $chose->{change_targets}->@* ], [ $target->id ], 'the other occurrence is listed';
     my $held_data = hold_target( $run, $target );
     ok !$held_data->{errors}, 'and its seats are held' or diag explain $held_data->{errors};
@@ -116,11 +131,17 @@ subtest 'change 49 hours before allowed' => sub {
 };
 
 subtest 'change 47 hours before refused with the policy wording' => sub {
-    my ( $version, $held, $target ) = occurrences( \%WINDOW, 47, 96 );
+    for my $eve ( sort keys %EVE ) {
+        my ( $version, $held ) = occurrences( \%WINDOW, wall_after( $EVE{$eve}, 47 ) );
+        is $refusal->( booking( $version, $held ), later( $EVE{$eve} ) ), 'Changes close 48 hours before the class starts',
+            "47 wall hours before, on the eve of $eve, the change is refused in the policy's words";
+    }
+    # Through the workflow on the real clock: 24 hours is inside 48 - 1 DST hour on any date.
+    my ( $version, $held, $target ) = occurrences( \%WINDOW, 24, 96 );
     my $e = booking( $version, $held );
     my ( $run, $chose ) = chosen($e);
     is_deeply $chose->{errors}, ['Changes close 48 hours before the class starts'],
-        'choosing 47 hours before a 48-hour window is refused in the policy\'s words';
+        'choosing inside the window is refused in the policy\'s words';
     $run->update_data( $db, { change_entitlement_id => $e->id } );    # as if chosen while open
     like "@{ hold_target( $run, $target )->{errors} // [] }", qr/48 hours/, 'and so is holding a target';
     is_deeply live_holds($run), [], 'no hold is placed';
@@ -146,6 +167,17 @@ subtest 'cutoff on a nonexistent local time moves forward by the gap' => sub {
     my $e = booking( $version, $held );
     is $refusal->( $e, '2027-03-14T07:30:00Z' ), undef, 'at 03:30 EDT on the Sunday the change is allowed';
     ok $refusal->( $e, '2027-03-14T07:30:01Z' ), 'a second later it is refused';
+};
+
+subtest 'cutoff on a repeated local time is the earlier instant' => sub {
+    # 01:30 EST on Tuesday 2027-11-09 (06:30Z): 48 wall hours earlier is 01:30
+    # on the fall-back Sunday, which happens twice. The cutoff is the first,
+    # 01:30 EDT (05:30Z), the stricter reading for the booker.
+    my ( $version, $held ) = occurrences( \%WINDOW, "2027-11-09 01:30 $ZONE" );
+    my $e = booking( $version, $held );
+    is $refusal->( $e, '2027-11-07T05:30:00Z' ), undef, 'at the first 01:30 the change is allowed';
+    is $refusal->( $e, '2027-11-07T05:30:01Z' ), 'Changes close 48 hours before the class starts',
+        'a second later it is refused, though the second 01:30 is an hour away';
 };
 
 subtest 'target of a different offer refused' => sub {
