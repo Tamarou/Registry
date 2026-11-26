@@ -7,6 +7,7 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Helpers qw(import_all_workflows);
+use Test::Registry::SoloVersion qw(accept_solo);
 use Registry::DAO::Tenant;
 use Mojo::Home;
 use Mojo::File;
@@ -33,7 +34,7 @@ subtest 'every shipped workflow has a role entry or the public mark' => sub {
 };
 
 subtest "every workflow a tenant is provisioned with keeps its entry" => sub {
-    Registry::DAO::Tenant->provision( $db, { name => 'Coverage', slug => 'coverage', users => [] } );
+    accept_solo( $db, Registry::DAO::Tenant->provision( $db, { name => 'Coverage', slug => 'coverage', users => [] } ) );
     ok $db->query('SELECT count(*) FROM coverage.workflows')->array->[0], 'the tenant has workflows';
     is_deeply $db->query( q{
         SELECT slug FROM coverage.workflows

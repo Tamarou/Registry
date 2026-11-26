@@ -24,9 +24,10 @@ $ENV{DB_URL} = $test_db->uri;
 
 import_all_workflows($dao);
 
-# Provisioned without accepting Solo: until 01a20415-6a27 it still receives a
-# copy of every platform workflow, but holds no run right to any of them.
+# Held Solo once, so it keeps copies of Solo's workflows, but Solo was
+# refunded: it holds no run right to any of them.
 my $bare     = Registry::DAO::Tenant->provision( $db, { name => 'Bare Studio', slug => 'bare_studio', users => [] } );
+accept_solo( $db, $bare )->{entitlement}->end( $db, 'refunded', 're_bare_studio_probe' );
 my $BARE     = { Host => 'bare_studio.localhost' };
 my $bare_dao = $dao->connect_schema('bare_studio');
 
@@ -65,9 +66,10 @@ subtest 'a copied workflow without a run entitlement is refused to an authorised
 
 subtest 'the same tenant admits its admin once it holds the run entitlement' => sub {
     my $late     = Registry::DAO::Tenant->provision( $db, { name => 'Late Studio', slug => 'late_studio', users => [] } );
+    accept_solo( $db, $late )->{entitlement}->end( $db, 'refunded', 're_late_studio_probe' );    # copies, no right
     my $late_adm = member( $late, 'late_admin', 'admin' );
     my $HOST     = { Host => 'late_studio.localhost' };
-    app_as($late_adm)->get_ok( '/program-creation' => $HOST )->status_is( 403, 'refused before it holds Solo' );
+    app_as($late_adm)->get_ok( '/program-creation' => $HOST )->status_is( 403, 'refused while it holds no Solo' );
     accept_solo( $db, $late );
     app_as($late_adm)->get_ok( '/program-creation' => $HOST )->status_is( 200, 'admitted once it holds Solo' );
 };

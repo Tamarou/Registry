@@ -309,8 +309,8 @@ sub race ( $first, $second ) {
     my $pid    = fork() // die "fork: $!";
     unless ($pid) {
         close $parent_reads;
-        my $bdb = Registry::DAO->new( url => $uri )->db;
-        my $out = eval { Mojo::JSON::to_json( $second->($bdb) ) } // Mojo::JSON::to_json( { died => "$@" } );
+        my $out = eval { Mojo::JSON::to_json( $second->( Registry::DAO->new( url => $uri )->db ) ) }
+            // Mojo::JSON::to_json( { died => "$@" } );
         print $child_writes $out;
         close $child_writes;
         POSIX::_exit(0);
@@ -324,7 +324,13 @@ sub race ( $first, $second ) {
     }
     $tx->commit;
     waitpid $pid, 0;
-    return ( $blocked, $a, Mojo::JSON::from_json( do { local $/; readline $parent_reads } ) );
+    my $status = $?;
+    my $out    = do { local $/; readline $parent_reads } // '';
+    # A child that wrote nothing died outside its eval (a signal, or before
+    # it could connect): say how, instead of failing on empty JSON.
+    return ( $blocked, $a, { died => sprintf 'child sent nothing; exit %d, signal %d', $status >> 8, $status & 127 } )
+        unless length $out;
+    return ( $blocked, $a, Mojo::JSON::from_json($out) );
 }
 
 subtest 'concurrent changes into last seat one wins' => sub {

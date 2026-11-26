@@ -15,3 +15,4 @@
     - Classes that start early or late in the day, which must show on the
       right day.
     - Not being able to bend the terms, and having to say so politely.
+* Guide: [Running in-studio bookings](../guides/in-studio-bookings.md), how to use the day view, mark attendance and reschedule.

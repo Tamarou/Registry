@@ -19,3 +19,4 @@
     - Keeping online bookings, counter sales and her Stripe dashboard telling
       the same story.
     - Explaining "sales are final" to customers who did not read the terms.
+* Guide: [Running in-studio bookings](../guides/in-studio-bookings.md), how to set up classes, prices and the schedule.

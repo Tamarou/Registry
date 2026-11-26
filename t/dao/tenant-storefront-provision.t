@@ -12,6 +12,7 @@ use Registry::DAO::User;
 use Registry::DAO::Template;
 use Test::Registry::DB;
 use Test::Registry::Helpers qw(import_all_workflows);
+use Test::Registry::SoloVersion qw(accept_solo);
 
 my $t_db = Test::Registry::DB->new;
 my $dao  = $t_db->db;
@@ -82,6 +83,7 @@ my $tenant = Registry::DAO::Tenant->provision($db, {
     users => [ $admin ],
 });
 ok $tenant, 'provision returned a tenant';
+accept_solo( $db, $tenant );    # which copies tenant-storefront, as signup does
 
 # The registry schema seeds a DB template named tenant-storefront/program-listing
 # whose content is the REGISTRY marketing page ("Your art deserves a real business").

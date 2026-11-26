@@ -1067,6 +1067,12 @@ every tenant payment is made on the tenant's own connected account:
   `application_fee_amount` 2.5% of the amount and no `transfer_data` or
   `on_behalf_of`; paying and returning books the seats; retrying the payment
   step makes one PaymentIntent.
+- `day-one-direct-charge.t` -- the live end of the PriceOps day-one journey:
+  SACP, signed up holding Solo, takes a booking whose PaymentIntent on its
+  connected test account (retrieved with `Stripe-Account`) carries Solo's 2.5%
+  `application_fee_amount` and no `transfer_data`; the signed Connect
+  `payment_intent.succeeded` completes the payment stamped with the Solo
+  version, and the booker's entitlement is stamped with SACP's offer version.
 - `instalment-schedule.t` -- the schedule for instalments two onwards is on
   the tenant account with the fee percent and no transfer destination, and is
   not found on the platform account.
@@ -1091,6 +1097,20 @@ The suite skips cleanly when `STRIPE_SECRET_KEY` is unset or absent.
 `Test::Registry::StripeConnect::available()` checks that the key matches
 `^sk_test_`, and every network helper calls the same guard before making a
 request -- a live key aborts rather than falls through.
+
+The rest of day one needs no Stripe key. `t/priceops/day-one.t`, the
+milestone's acceptance test, runs in full with the placeholder key, skipping
+nothing, under `make test` and the milestone resolution command
+(`make test && STRIPE_SECRET_KEY=ci_placeholder_not_a_stripe_key carton exec
+prove -l t/priceops/day-one.t`): registry sells only Solo, SACP signs up
+holding it, its admin sets up and schedules a class, and a booking holds its
+seats with Solo's 2.5% fee quoted. The live direct charge is
+`t/stripe-live/day-one-direct-charge.t`, run with an `sk_test_`
+`STRIPE_SECRET_KEY`:
+
+```bash
+STRIPE_SECRET_KEY=<sk_test_...> carton exec prove -lv t/stripe-live/day-one-direct-charge.t
+```
 
 Run this suite once in test mode before switching SACP from test to live keys
 (see step 5).

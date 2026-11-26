@@ -97,7 +97,7 @@ Then it reads the current tenant's own `workflows` row for the slug:
 - anything else is refused 403, for everyone, admins included: a row with no
   roles (or an empty list) and no public mark, or no row at all in this
   tenant's schema. The gate never falls back to `registry`'s row, so
-  `tenant-signup`, which a tenant is not provisioned with, is refused on a
+  `tenant-signup`, which no tenant is granted or copied, is refused on a
   tenant host, and one tenant's public copy never opens another's.
 
 A slug with no row and no legacy `{slug}/index` template is a 404 before the
@@ -177,7 +177,7 @@ The gate above requires them.
 
 **Changing who may run an existing workflow ships a migration.** `from_yaml`
 returns an existing row unchanged and a tenant's copies are written only by
-`copy_workflow` at provisioning, so editing a YAML's `roles` or `public` alone
+`copy_workflow` when the tenant accepts an offer, so editing a YAML's `roles` or `public` alone
 changes only fresh databases. The change needs a sqitch migration that
 updates `registry` and every tenant schema, looping over `registry.tenants`
 as `workflow-roles-data` does. Clearing the stored workflow so import rebuilds
@@ -443,6 +443,8 @@ class Registry::DAO::InitiateProjectWorkflow :isa(Registry::DAO::WorkflowStep) {
 
 ### Multi-tenant Support
 
+For the operator's task guide (gaining a workflow, the 403 checklist, running the divergence report and its rulings), see [How Tenants Gain and Run Workflows](../guides/workflow-entitlements.md).
+
 A tenant runs its own copy of a platform workflow, in its own schema. The copy arrives when the tenant accepts the platform's offer that grants the workflow's run right (`run:<slug>`): `Registry::DAO::Tenant->accept_platform_offer`, which tenant signup's accept step (`TenantPayment`, through `provision`) calls. Never a CLI or a migration. Accepting copies each workflow the offer version grants, from `registry` only, into the accepting tenant's schema only; submitted data naming another tenant or schema is ignored. The copy brings the workflow's steps with their classes, its templates, the outcome definitions its steps use, and its role data (`roles` or the `public` mark). The accept and the copies are one transaction: a copy that fails leaves no entitlement and no partial workflow.
 
 A tenant that already holds a copy of the slug:
@@ -451,7 +453,7 @@ A tenant that already holds a copy of the slug:
 - has it replaced by the platform's definition only under a `Ruling: replace <tenant>/<slug>` line in `docs/reviews/tenant-workflow-divergence.md`, perigrin's recorded rulings;
 - otherwise keeps it: under a `Ruling: merge <tenant>/<slug>` line, which needs a hand merge, or with no ruling. The accept's result names each kept copy, why, and its differences.
 
-Until 01a20415-6a27, provisioning still copies every other `registry` workflow (all but `tenant-signup` and `registry-storefront`) after signup's accept, skipping any the accept copied. Migrations that reset a workflow change only `registry`'s copy, so a tenant's copy can fall behind or be edited away from the platform's. To see how, run:
+So a new tenant's workflows are exactly those its accepted offer's entitlements grant. Provisioning copies no others: it no longer copies every `registry` workflow, nor skips `tenant-signup` and `registry-storefront` by slug. No offer grants those two to a studio, and the accept never copies a workflow `Registry::WorkflowDivergence::never_copied` names even if one did. A tenant provisioned without accepting an offer holds no workflows. Migrations that reset a workflow change only `registry`'s copy, so a tenant's copy can fall behind or be edited away from the platform's. To see how, run:
 
 ```bash
 carton exec ./registry workflow divergence registry
@@ -459,7 +461,7 @@ carton exec ./registry workflow divergence registry
 
 It compares every tenant schema in `registry.tenants` with `registry`, and is read-only: it only runs `SELECT`s. For each tenant it reports:
 
-- a slug the tenant has that `registry` does not, and a `registry` slug the tenant lacks. `tenant-signup` and `registry-storefront` are never copied at provisioning, so their absence is expected and not reported; a tenant that does hold one is reported;
+- a slug the tenant has that `registry` does not, and a `registry` slug the tenant lacks. `tenant-signup` and `registry-storefront` are never copied to a tenant, so their absence is expected and not reported; a tenant that does hold one is reported;
 - for a shared slug, the step order (the `first_step`/`depends_on` walk), and for each shared step its `class`, its template by name, and its template by exact content (no whitespace normalising; content is shown as a sha256 prefix and byte length). One template difference is expected and not reported: provisioning unlinks the tenant's `tenant-storefront` `program-listing` template on purpose (#173, #229), because registry's is the platform's marketing page and a tenant must fall back to its catalog on disk. Only the tenant having no template there is excused; a tenant step linked to some other template is still reported.
 
 Every difference names the field and both values. `registry` itself is never a section, and a tenant whose schema is missing or unreadable gets an error line while the others are still compared. The output is Markdown, one section per tenant in slug order, and is what `docs/reviews/tenant-workflow-divergence.md` records.

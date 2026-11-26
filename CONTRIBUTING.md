@@ -484,5 +484,7 @@ Thank you for contributing to Registry! Your help makes this project better for 
 - [Decisions](docs/decisions) — architecture decision records (ADRs)
 - [Contributing guides](docs/contributing) — coding conventions and development workflow
 - [Guides](docs/guides) — how-to guides for common tasks
+- [Running in-studio bookings](docs/guides/in-studio-bookings.md) — the guide for a studio's admins and front-desk staff
+- [How tenants gain and run workflows](docs/guides/workflow-entitlements.md) — run rights, why a workflow URL answers 403, and the divergence report
 - [Architecture](docs/architecture) — system design and component descriptions
 - [Reference](docs/reference) — reference documentation

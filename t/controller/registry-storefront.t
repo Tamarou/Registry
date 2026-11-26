@@ -62,10 +62,8 @@ subtest 'the platform has a storefront workflow of its own' => sub {
 };
 
 subtest 'the root route picks the storefront that belongs to the requester' => sub {
-    is $t->app->storefront_workflow('registry'), 'registry-storefront',
+    is $t->app->storefront_workflow( $dao, 'registry' ), 'registry-storefront',
         'the platform gets its own';
-    is $t->app->storefront_workflow('big_cups'), 'tenant-storefront',
-        'a tenant gets the tenant one';
 };
 
 subtest 'the apex renders the platform landing page' => sub {
@@ -90,6 +88,8 @@ subtest 'a tenant is not given the platform storefront' => sub {
         { name => 'Big Cups', slug => 'big_cups', users => [] } );
     ok $tenant, 'tenant provisioned' or return;
     accept_solo( $dao->db, $tenant );    # as signup does: its storefront's run right
+    is $t->app->storefront_workflow( $dao, 'big_cups' ), 'tenant-storefront',
+        'a tenant gets the tenant one';
 
     my $tenant_dao = $dao->schema('big_cups');
     ok !$tenant_dao->find( Workflow => { slug => 'registry-storefront' } ),
