@@ -63,6 +63,72 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
         return $count * $units_per_acceptance;
     }
 
+    # Platform terms rows (Registry::PriceOps::PlatformTerms): what every
+    # lookup returns about a registry offer version and one of its plans.
+    my $TERMS_COLUMNS = q{
+        v.id, p.id AS plan_id, o.name, v.price_cents, p.fraction,
+        v.policies->'refund' AS refund_policy
+    };
+
+    # The terms row of the entitlement tenant $slug holds to $resource in
+    # effect at $at (default now), or undef. At most one row: the database
+    # refuses overlapping active platform entitlements to payment processing
+    # (platform-entitlement-one-in-effect).
+    sub platform_terms_row_for_tenant ( $class, $db, $slug, $resource, $at = undef ) {
+        require Registry::DAO::Entitlement;
+        my $in_effect = Registry::DAO::Entitlement->in_effect_sql( 'e',
+            q{tstzrange(coalesce(?::timestamptz, now()), coalesce(?::timestamptz, now()), '[]')} );
+        return $db->query( qq{
+            SELECT $TERMS_COLUMNS
+              FROM registry.entitlements e
+              JOIN registry.tenants t ON t.id = e.holder_tenant_id
+              JOIN registry.offer_versions v ON v.id = e.offer_version_id
+              JOIN registry.offers o ON o.id = v.offer_id
+              JOIN registry.resources r ON r.id = v.resource_id
+                  OR r.id IN (SELECT s.resource_id FROM registry.offer_version_resources s
+                              WHERE s.offer_version_id = v.id)
+              JOIN registry.offer_version_payment_plans p
+                ON p.offer_version_id = v.id AND p.id = e.payment_plan_id
+             WHERE t.slug = ? AND r.name = ? AND $in_effect
+        }, $slug, $resource, $at, $at )->hash;
+    }
+
+    # The terms row of registry offer version $version_id with plan $plan_id,
+    # superseded or not, when it buys $resource; else undef.
+    sub platform_terms_row ( $class, $db, $version_id, $plan_id, $resource ) {
+        return $db->query( qq{
+            SELECT $TERMS_COLUMNS
+              FROM registry.offer_versions v
+              JOIN registry.offers o ON o.id = v.offer_id
+              JOIN registry.resources r ON r.id = v.resource_id
+                  OR r.id IN (SELECT s.resource_id FROM registry.offer_version_resources s
+                              WHERE s.offer_version_id = v.id)
+              JOIN registry.offer_version_payment_plans p ON p.offer_version_id = v.id
+             WHERE v.id = ? AND p.id = ? AND r.name = ?
+        }, $version_id, $plan_id, $resource )->hash;
+    }
+
+    # Terms rows, with currency and offer_id, of registry's current published
+    # free versions buying $resource with a percentage-of-sales plan, less its
+    # offers to itself (holder_is_offerer), cheapest first.
+    sub platform_offer_rows ( $class, $db, $resource ) {
+        return $db->query( qq{
+            SELECT $TERMS_COLUMNS, v.currency, v.offer_id
+              FROM registry.offer_versions v
+              JOIN registry.offers o ON o.id = v.offer_id
+              JOIN registry.resources r ON r.id = v.resource_id
+                  OR r.id IN (SELECT s.resource_id FROM registry.offer_version_resources s
+                              WHERE s.offer_version_id = v.id)
+              JOIN registry.offer_version_payment_plans p
+                ON p.offer_version_id = v.id AND p.kind = 'percentage_of_sales'
+             WHERE r.name = ?
+               AND v.published_at IS NOT NULL AND v.superseded_at IS NULL
+               AND v.price_cents = 0
+               AND NOT v.conditions \@> '[{"kind": "holder_is_offerer"}]'
+             ORDER BY p.fraction, o.name
+        }, $resource )->hashes;
+    }
+
     # Drafting and publishing both read the offer's versions and then write
     # one, so two writers to the same offer take turns on the offer row. Without
     # it the second computes the same next number, or retires a version the

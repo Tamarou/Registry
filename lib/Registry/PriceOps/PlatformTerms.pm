@@ -11,7 +11,7 @@ our @EXPORT_OK = qw(platform_terms_for_tenant
                     platform_offers_to_tenants $SOLO_OFFER_ID);
 
 use Mojo::JSON qw( from_json );
-use Registry::DAO::Entitlement;
+use Registry::DAO::OfferVersion;
 
 # The resource a tenant's platform entitlement buys; named, never a plan name.
 my $PAYMENT_PROCESSING = 'payment processing';
@@ -19,12 +19,6 @@ my $PAYMENT_PROCESSING = 'payment processing';
 # Solo, the offer signup preselects: the bootstrap seed's fixed offer id
 # (bootstrap-platform-offers), never its name or its place in the listing.
 our $SOLO_OFFER_ID = '00000000-0000-0000-0002-000000000001';
-
-# What every terms lookup returns about an offer version and one of its plans.
-my $TERMS_COLUMNS = q{
-    v.id, p.id AS plan_id, o.name, v.price_cents, p.fraction,
-    v.policies->'refund' AS refund_policy
-};
 
 # platform_terms_for_tenant($db, $tenant_slug) -> terms
 #
@@ -45,24 +39,8 @@ sub platform_terms_for_tenant ( $db, $tenant_slug ) {
 # in effect -- absence is not zero, and there is no fallback to Free or to 0.
 sub platform_entitlement_terms ( $db, $tenant_slug, $at = undef ) {
     $db = $db->db if $db isa Registry::DAO;
-    my $in_effect = Registry::DAO::Entitlement->in_effect_sql( 'e',
-        q{tstzrange(coalesce(?::timestamptz, now()), coalesce(?::timestamptz, now()), '[]')} );
-
-    # At most one row: the database refuses overlapping active platform
-    # entitlements to payment processing (platform-entitlement-one-in-effect).
-    my $row = $db->query( qq{
-        SELECT $TERMS_COLUMNS
-          FROM registry.entitlements e
-          JOIN registry.tenants t ON t.id = e.holder_tenant_id
-          JOIN registry.offer_versions v ON v.id = e.offer_version_id
-          JOIN registry.offers o ON o.id = v.offer_id
-          JOIN registry.resources r ON r.id = v.resource_id
-              OR r.id IN (SELECT s.resource_id FROM registry.offer_version_resources s
-                          WHERE s.offer_version_id = v.id)
-          JOIN registry.offer_version_payment_plans p
-            ON p.offer_version_id = v.id AND p.id = e.payment_plan_id
-         WHERE t.slug = ? AND r.name = ? AND $in_effect
-    }, $tenant_slug, $PAYMENT_PROCESSING, $at, $at )->hash;
+    my $row = Registry::DAO::OfferVersion->platform_terms_row_for_tenant( $db, $tenant_slug,
+        $PAYMENT_PROCESSING, $at );
 
     die "Tenant '$tenant_slug' holds no platform entitlement to $PAYMENT_PROCESSING in effect"
       . ( defined $at ? " at $at" : '' ) . " - there is no fallback to Free or to 0.\n"
@@ -80,16 +58,8 @@ sub platform_entitlement_terms ( $db, $tenant_slug, $at = undef ) {
 sub platform_version_terms ( $db, $offer_version_id, $payment_plan_id ) {
     $db = $db->db if $db isa Registry::DAO;
 
-    my $row = $db->query( qq{
-        SELECT $TERMS_COLUMNS
-          FROM registry.offer_versions v
-          JOIN registry.offers o ON o.id = v.offer_id
-          JOIN registry.resources r ON r.id = v.resource_id
-              OR r.id IN (SELECT s.resource_id FROM registry.offer_version_resources s
-                          WHERE s.offer_version_id = v.id)
-          JOIN registry.offer_version_payment_plans p ON p.offer_version_id = v.id
-         WHERE v.id = ? AND p.id = ? AND r.name = ?
-    }, $offer_version_id, $payment_plan_id, $PAYMENT_PROCESSING )->hash;
+    my $row = Registry::DAO::OfferVersion->platform_terms_row( $db, $offer_version_id, $payment_plan_id,
+        $PAYMENT_PROCESSING );
 
     die "Offer version '$offer_version_id' with payment plan '$payment_plan_id' is not "
       . "a $PAYMENT_PROCESSING version and plan.\n"
@@ -110,21 +80,7 @@ sub platform_version_terms ( $db, $offer_version_id, $payment_plan_id ) {
 sub platform_offers_to_tenants ($db) {
     $db = $db->db if $db isa Registry::DAO;
 
-    return $db->query( qq{
-        SELECT $TERMS_COLUMNS, v.currency, v.offer_id
-          FROM registry.offer_versions v
-          JOIN registry.offers o ON o.id = v.offer_id
-          JOIN registry.resources r ON r.id = v.resource_id
-              OR r.id IN (SELECT s.resource_id FROM registry.offer_version_resources s
-                          WHERE s.offer_version_id = v.id)
-          JOIN registry.offer_version_payment_plans p
-            ON p.offer_version_id = v.id AND p.kind = 'percentage_of_sales'
-         WHERE r.name = ?
-           AND v.published_at IS NOT NULL AND v.superseded_at IS NULL
-           AND v.price_cents = 0
-           AND NOT v.conditions \@> '[{"kind": "holder_is_offerer"}]'
-         ORDER BY p.fraction, o.name
-    }, $PAYMENT_PROCESSING )->hashes->map( sub ($row) {
+    return Registry::DAO::OfferVersion->platform_offer_rows( $db, $PAYMENT_PROCESSING )->map( sub ($row) {
         +{ %{ _entitlement_terms( $row, "offer version '$row->{id}'" ) }, currency => $row->{currency},
             offer_id => $row->{offer_id} };
     } )->to_array;

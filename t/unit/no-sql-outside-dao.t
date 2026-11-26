@@ -23,7 +23,6 @@ my %ALLOWED = (
     'lib/Registry/Job/SendNotifications.pm'     => 4,
     'lib/Registry/Job/ExpireEntitlements.pm'    => 1,
     'lib/Registry/Job/InstalmentReconcile.pm'   => 3,
-    'lib/Registry/PriceOps/PlatformTerms.pm'    => 3,
     'lib/Registry/WorkflowDivergence.pm'        => 3,
 );
 
