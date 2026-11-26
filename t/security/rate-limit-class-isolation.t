@@ -10,7 +10,7 @@ defer { done_testing };
 
 use Registry::Middleware::RateLimit;
 
-# Minimal controller stub sufficient for before_dispatch: a path, a peer
+# Minimal controller stub sufficient for the limiter: a path, a peer
 # address, and enough of the render plumbing to observe a 429.
 
 package Fake::Path;
@@ -56,12 +56,13 @@ sub was_limited { ($_[0]->{rendered_status} // 0) == 429 }
 
 package main;
 
-# Drive a request through the real before_dispatch hook and report whether
-# it was rejected with a 429.
+# Drive a request through the real around_dispatch hook and report whether
+# it was rejected: answered with a 429 and never passed on to dispatch.
 sub request_limited ($rl, $ip, $path) {
     my $c = Fake::Controller->new( ip => $ip, path => $path );
-    $rl->before_dispatch($c);
-    return $c->was_limited;
+    my $dispatched;
+    $rl->around_dispatch( sub { $dispatched = 1 }, $c );
+    return $c->was_limited && !$dispatched;
 }
 
 subtest 'general traffic does not consume the auth budget' => sub {
