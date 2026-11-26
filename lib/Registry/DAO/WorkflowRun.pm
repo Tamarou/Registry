@@ -79,7 +79,7 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
     # run's JSONB data column to prevent transient metadata from polluting
     # the workflow state.
     my @TRANSIENT_KEYS = qw(
-        next_step errors data _validation_errors stay redirect
+        next_step errors data template_data _validation_errors stay redirect
         retry retry_count retry_delay retry_exceeded should_retry
     );
 

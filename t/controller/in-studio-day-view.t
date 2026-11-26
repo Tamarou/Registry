@@ -281,6 +281,10 @@ subtest 'attendance on foreign booking refused' => sub {
         ->status_is(200)->content_like( qr/holds no place in that occurrence/,
         'a booking not in that occurrence is refused with a message' );
     is_deeply listed($t), [ $o->id, $there->id ], 'back on the same day and location';
+    my ($run_id) = $action =~ m{/in-studio-day-view/([0-9a-f-]{36})/};
+    my $stored = $db->select( 'workflow_runs', 'data::text', { id => $run_id } )->array->[0] // '';
+    unlike $stored, qr/template_data/, 'the refused page is not stored in the run';
+    unlike $stored, qr/DV Parent/, 'nor any booker\'s name';
     $t->element_exists( '#workflow-content input[name="day"][value="2027-06-12"]', 'with that day chosen' );
     is_deeply uses($elsewhere), [], 'and nothing is recorded';
 
