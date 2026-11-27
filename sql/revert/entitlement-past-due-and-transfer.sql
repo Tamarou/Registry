@@ -7,7 +7,7 @@ BEGIN;
 
 SET client_min_messages = 'warning';
 
--- The stamp, the payment link and now the terms version stay as inserted.
+-- Back to entitlement-terms-version's: the stamp, payment link and terms version stay as inserted.
 CREATE OR REPLACE FUNCTION registry.entitlement_stamp() RETURNS trigger AS $t$
 DECLARE
     is_draft boolean;

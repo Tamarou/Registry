@@ -282,15 +282,17 @@ their failures. It keeps its units and stays in effect while past due.
                 ->arrays->flatten->each ];
     }
 
-    # Records that it owes failed Stripe invoice $invoice_id, if it is active:
-    # past due until every invoice it owes is paid. Once per invoice.
-    method mark_past_due ( $db, $invoice_id ) {
+    # Records that it owes failed Stripe invoice $invoice_id, which failed at
+    # $failed_at (default now): past due until every invoice it owes is paid.
+    # Once per invoice. Croaks, recording nothing, unless it is active.
+    method mark_past_due ( $db, $invoice_id, $failed_at = undef ) {
         $self->_past_due( $db, sub ($db) {
+            croak "entitlement $id is not active: an ended entitlement is not marked past due"
+                unless $db->select( 'entitlements', 1, { id => $id, state => 'active' } )->rows;
             $db->query( q{
-                INSERT INTO entitlement_past_due_invoices (entitlement_id, invoice_id)
-                SELECT id, ? FROM entitlements WHERE id = ? AND state = 'active'
-                ON CONFLICT DO NOTHING
-            }, $invoice_id, $id );
+                INSERT INTO entitlement_past_due_invoices (entitlement_id, invoice_id, failed_at)
+                VALUES (?, ?, coalesce(?::timestamptz, now())) ON CONFLICT DO NOTHING
+            }, $id, $invoice_id, $failed_at );
         } );
     }
 
@@ -309,16 +311,18 @@ their failures. It keeps its units and stays in effect while past due.
         my $tx = $db->dbh->{AutoCommit} ? $db->begin : undef;
         $db->query( 'SELECT 1 FROM entitlements WHERE id = ? FOR UPDATE', $id );
         $change->($db);
-        $db->query( q{
+        $past_due_since = $db->query( q{
             UPDATE entitlements SET past_due_since =
                 (SELECT min(failed_at) FROM entitlement_past_due_invoices WHERE entitlement_id = ?)
-             WHERE id = ?
-        }, $id, $id );
+             WHERE id = ? RETURNING past_due_since
+        }, $id, $id )->array->[0];
         $tx->commit if $tx;
         return $self;
     }
 
-    method is_past_due { return defined $past_due_since ? 1 : 0 }
+    # Only an active entitlement is past due; an ended one keeps its owed
+    # invoices and past_due_since as history.
+    method is_past_due { return defined $past_due_since && $state eq 'active' ? 1 : 0 }
 
     # It and the entitlements it was transferred from, oldest first.
     method chain ($db) {
@@ -334,18 +338,20 @@ their failures. It keeps its units and stays in effect while past due.
     }
 
     # What has been paid for it so far, over its chain: each entitlement's
-    # share of the payment that created it and its completed instalment and
-    # change payments, less what was refunded against each.
+    # share of the payment that created it and its instalment and change
+    # payments that took money (refunded or not), less what was refunded
+    # against each.
     method paid_cents ($db) {
         $db = $db->db if $db isa Registry::DAO;
+        require Registry::DAO::Payment;
         my @ids = map { $_->id } $self->chain($db)->@*;
         return $db->query( q{
             SELECT (SELECT coalesce(sum(payment_share_cents), 0) FROM entitlements WHERE id = ANY(?::uuid[]))
                  + (SELECT coalesce(sum(amount_cents), 0) FROM payments
-                     WHERE entitlement_id = ANY(?::uuid[]) AND status = 'completed')
+                     WHERE entitlement_id = ANY(?::uuid[]) AND status = ANY(?))
                  - (SELECT coalesce(sum(amount_cents), 0) FROM entitlement_refunds
                      WHERE entitlement_id = ANY(?::uuid[]))
-        }, \@ids, \@ids, \@ids )->array->[0];
+        }, \@ids, \@ids, Registry::DAO::Payment->_settled_statuses, \@ids )->array->[0];
     }
 
     # Ends as `expired` each active entitlement whose stamped expiry policy is

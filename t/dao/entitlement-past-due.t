@@ -28,7 +28,7 @@ sub person () {
     return $db->insert( 'users', { username => 'pd' . ++$people }, { returning => 'id' } )->hash->{id};
 }
 
-my $resource = Registry::DAO::Resource->create( $db, { name => 'Session seats', kind => 'finite', capacity => 10 } );
+my $resource = Registry::DAO::Resource->create( $db, { name => 'Session seats', kind => 'finite', capacity => 50 } );
 my $version  = Registry::DAO::Offer->create( $db, { name => 'Session' } )
     ->draft( $db, offer_terms( $resource->id ) )->publish($db);
 
@@ -60,7 +60,9 @@ subtest 'past due keeps the entitlement active and the seat held' => sub {
     $e = reread($e);
     ok $e->is_past_due, 'it is past due';
     is $e->state, 'active', 'and still active';
-    is scalar $e->units( $db, $resource->id )->@*, 1, 'it holds its seat';
+    my ($unit) = $e->units( $db, $resource->id )->@*;
+    ok scalar( grep { $_ == $unit } Registry::DAO::Resource->find( $db, { id => $resource->id } )->held_units($db)->@* ),
+        'the resource still holds its seat';
     ok $e->is_in_effect($db), 'and is in effect';
 };
 
@@ -154,6 +156,48 @@ subtest 'a transfer link cannot be cleared once set' => sub {
     throws_ok { $db->update( 'entitlements', { transferred_from_entitlement_id => undef }, { id => $t->id } ) }
         qr/keeps/, 'the database refuses';
     is reread($t)->transferred_from_entitlement_id, $from->id, 'and the link stays';
+};
+
+subtest 'a partly refunded instalment counts once' => sub {
+    my $e = seat( payment_id => payment()->id, payment_share_cents => 3000 );
+    payment( amount_cents => 1500, entitlement_id => $e->id, instalment_seq => 2, instalment_count => 3,
+        status => 'partially_refunded', refunded_cents => 500 );
+    $e->record_refund( $db, { amount_cents => 500, stripe_refund_id => 're_pd_2' } );
+    is $e->paid_cents($db), 4000, 'the instalment counts, less its refund once';
+};
+
+subtest 'an entitlement cannot be transferred from itself' => sub {
+    my $id = $db->query('SELECT gen_random_uuid()')->array->[0];
+    throws_ok { seat( id => $id, transferred_from_entitlement_id => $id ) }
+        qr/entitlements_transferred_from_check/, 'the database refuses';
+};
+
+subtest 'marking an ended entitlement past due marks nothing' => sub {
+    my $ended = seat()->end( $db, 'expired', 'occurrence ended' );
+    throws_ok { $ended->mark_past_due( $db, 'in_1' ) } qr/not active/, 'it says so';
+    ok !reread($ended)->past_due_since, 'and records nothing';
+};
+
+subtest 'marking and clearing update the object they are called on' => sub {
+    my $e = seat();
+    ok $e->mark_past_due( $db, 'in_1' )->is_past_due,   'marked';
+    ok !$e->clear_past_due( $db, 'in_1' )->is_past_due, 'cleared';
+};
+
+subtest 'an ended entitlement is not past due and keeps its invoices' => sub {
+    my $e = seat();
+    $e->mark_past_due( $db, 'in_1' );
+    my $ended = $e->end( $db, 'unpaid', 'in_1' );
+    ok !$ended->is_past_due,         'not past due once ended';
+    ok !reread($e)->is_past_due,     'read back either';
+    is $db->select( 'entitlement_past_due_invoices', 'invoice_id', { entitlement_id => $e->id } )->array->[0],
+        'in_1', 'the failed invoice stays as history';
+};
+
+subtest 'past due counts from when the invoice failed' => sub {
+    my $e = seat()->mark_past_due( $db, 'in_1', '2026-01-02T03:04:05Z' );
+    is $db->query( 'SELECT past_due_since = ?::timestamptz FROM entitlements WHERE id = ?',
+        '2026-01-02T03:04:05Z', $e->id )->array->[0], 1, 'past due since the failure Stripe reported';
 };
 
 done_testing;

@@ -30,7 +30,9 @@ BEGIN
                 ADD COLUMN past_due_since timestamp with time zone,
                 ADD COLUMN transferred_from_entitlement_id uuid
                     CONSTRAINT entitlements_transferred_from_entitlement_id_key UNIQUE
-                    REFERENCES %1$I.entitlements (id)
+                    REFERENCES %1$I.entitlements (id),
+                ADD CONSTRAINT entitlements_transferred_from_check
+                    CHECK (transferred_from_entitlement_id <> id)
         $f$, s);
         EXECUTE format('ALTER TABLE %1$I.payments ADD COLUMN entitlement_id uuid REFERENCES %1$I.entitlements (id)', s);
         -- Each failed invoice it owes: past due while any remain, since under
