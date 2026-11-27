@@ -10,6 +10,7 @@ use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Test::Registry::Helpers qw( import_all_workflows join_tenant publish_offer );
+use Test::Registry::Sessions qw( make_session );
 use Registry::DAO;
 use Registry::DAO::Workflow;
 use Registry::DAO::Resource;
@@ -262,6 +263,18 @@ subtest 'resubmitted resource step leaves one resource' => sub {
     is $brun->data->{resource_choice}{resource_id}, $bfirst->{resource_choice}{resource_id},
         'and keeps the resource it already made';
     is resource_count(), $before + 2, 'creating no second resource';
+};
+
+subtest 'a session day is not offered as an occurrence' => sub {
+    my $day  = make_session($tdb)->session_days($tdb)->[0]{id};
+    my $step = workflow()->get_step( $tdb, { slug => 'resource' } );
+    my ($run) = resource_step( $admin, { resource_mode => 'existing' } );
+    ok !( grep { $_->{id} eq $day } $step->prepare_template_data( $tdb, $run )->{occurrences}->@* ),
+        'a session day is not listed among the occurrences';
+    my $before = resource_count();
+    my ( $brun, $result ) = resource_step( $admin, { %NEW_SEATS, event_id => $day } );
+    is_deeply $result->{errors}, ['Choose one of your occurrences'], 'binding a resource to it is refused';
+    is resource_count(), $before, 'and nothing is created';
 };
 
 done_testing;
