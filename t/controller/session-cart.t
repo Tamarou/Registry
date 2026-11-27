@@ -153,4 +153,74 @@ subtest 'a full session shows join the waitlist' => sub {
     $t->content_like( qr/Join the waitlist/, 'it offers the waitlist instead' );
 };
 
+# The refusal page a posted line or checkout was redirected to.
+sub refused_with ( $t, $cart, $why ) {
+    $t->status_is(302);
+    is $t->tx->res->headers->location, $cart, 'back to the cart';
+    $t->get_ok($cart)->status_is(200)->content_like( $why, 'the refusal is shown' );
+}
+
+subtest 'the sibling price for child one is refused' => sub {
+    my $p = priced_session();
+    my ( $parent, $kid1, $kid2 ) = family( 'Fay', 'Gus' );
+    my ( $t, $cart ) = at_cart( $parent, $kid1, $kid2 );
+    is_deeply add_line( $t, $cart, $kid1, $p->{session}, $p->{sibling} ), [], 'no line is stored';
+    refused_with( $t, $cart, qr/Choose one of the listed prices/ );
+};
+
+subtest 'a child from another family is refused' => sub {
+    my $p = priced_session();
+    my ( $parent, $kid ) = family('Hal');
+    my ( undef, $stranger ) = family('Ivy');
+    my ( $t, $cart ) = at_cart( $parent, $kid );
+    ok !line_form( $t, $stranger, $p->{session} ), 'another family\'s child is not shown';
+    is_deeply add_line( $t, $cart, $stranger, $p->{session}, $p->{regular} ), [], 'no line is stored for them';
+    refused_with( $t, $cart, qr/Choose one of your own children/ );
+
+    # Chosen at the children step by a planted id, still not in the cart.
+    my $run = run_of($cart);
+    $run->update_data( $db, { selected_child_ids => [ $kid->id, $stranger->id ] } );
+    $t->get_ok($cart)->status_is(200);
+    ok !line_form( $t, $stranger, $p->{session} ), 'nor when the run names them';
+    is_deeply add_line( $t, $cart, $stranger, $p->{session}, $p->{regular} ), [], 'nor is a line stored';
+};
+
+subtest 'no terms agreement keeps the cart step' => sub {
+    my $p = priced_session();
+    my ( $parent, $kid ) = family('Jo');
+    my ( $t, $cart ) = at_cart( $parent, $kid );
+    add_line( $t, $cart, $kid, $p->{session}, $p->{early} );
+    $t->post_ok( $cart => form => { action => 'checkout', terms_version_shown => Registry::Terms::VERSION } );
+    refused_with( $t, $cart, qr/Agree to the terms of service/ );
+    my $run = run_of($cart);
+    is $run->latest_step($db)->slug, 'children', 'the run has not left the cart';
+    ok !exists $run->data->{agreed_terms_version}, 'and no agreement is recorded';
+
+    $t->post_ok( $cart => form => { action => 'checkout', agree_to_terms => 1,
+        terms_version_shown => Registry::Terms::VERSION } );
+    $run = run_of($cart);
+    is $run->latest_step($db)->slug, 'cart', 'agreeing moves the run past the cart';
+    is $run->data->{agreed_terms_version}, Registry::Terms::VERSION, 'recording the version agreed';
+};
+
+subtest 'a weekly plan past the session end is not listed' => sub {
+    # Three days starting in ten days: a fourth weekly payment, three weeks
+    # out, falls after the last day; a second, one week out, does not.
+    my $s = make_session( $db, days => [ map { days_from_now($_) } 10 .. 12 ] );
+    my $version = session_offer( $db, $s, price_cents => 30000,
+        payment_plans => [ { id => 'pay', kind => 'one_time' },
+            instalment_plan( id => 'four', count => 4, cadence => 'weekly' ),
+            instalment_plan( id => 'two',  count => 2, cadence => 'weekly' ) ],
+        policies => { refund => { kind => 'none' }, missed_payment => { kind => 'end' } } );
+    my ( $parent, $kid ) = family('Kit');
+    my ( $t, $cart ) = at_cart( $parent, $kid );
+    my $form = line_form( $t, $kid, $s ) or return fail 'no line form';
+    is_deeply choices($form), [ map { $version->id . "/$_" } qw( pay two ) ], 'the plan past the end is not offered';
+    like $form->all_text, qr/Pay in 2 weekly payments of \$150\.00/, 'a plan that fits says what it costs';
+    like $form->all_text, qr/Not offered: the last payment would fall after the session ends/, 'the other says why it is not offered';
+
+    is_deeply add_line( $t, $cart, $kid, $s, $version, 'four' ), [], 'posting it anyway stores no line';
+    refused_with( $t, $cart, qr/Not offered: the last payment would fall after the session ends/ );
+};
+
 done_testing;
