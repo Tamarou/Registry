@@ -25,6 +25,9 @@ class Registry::DAO::Entitlement :isa(Registry::DAO::Object) {
     field $payment_id :param :reader = undef;           # the payment that created it, set at insert
     field $payment_share_cents :param :reader = undef;  # its share of that payment
     field $terms_version :param :reader = undef;        # the /terms version its booker agreed to, set at insert
+    field $past_due_since :param :reader = undef;       # when an invoice of it went unpaid, while active
+    field $past_due_invoice_id :param :reader = undef;  # that Stripe invoice
+    field $transferred_from_entitlement_id :param :reader = undef;  # its predecessor, set at insert
 
     sub table { 'entitlements' }
 
@@ -32,9 +35,15 @@ class Registry::DAO::Entitlement :isa(Registry::DAO::Object) {
 
 C<state> is C<active> until end() moves it, once, to one ended state:
 C<expired> (its occurrence ended), C<refunded> (a full refund reported by
-Stripe) or C<dispute_lost> (a lost dispute). Ending records C<ended_at> and
-C<ended_reason> and closes the period at C<ended_at>. In effect at T means
-active and the period covers T (in_effect_sql).
+Stripe), C<dispute_lost> (a lost dispute), C<unpaid> (ended for a missed
+payment) or C<transferred> (moved to another offer, as a new entitlement
+naming it in C<transferred_from_entitlement_id>). Ending records C<ended_at>
+and C<ended_reason> and closes the period at C<ended_at>. In effect at T
+means active and the period covers T (in_effect_sql).
+
+Past due is not a state, because an ended state is final: it is a flag on an
+active entitlement (C<past_due_since> and C<past_due_invoice_id>), which keeps
+its units and stays in effect until the invoice is paid or it is ended.
 
 =cut
 
@@ -271,6 +280,58 @@ active and the period covers T (in_effect_sql).
                 map { scalar Registry::DAO::Resource->find( $db, { id => $_ } ) }
                 $db->select( 'entitlement_units', 'DISTINCT resource_id', { entitlement_id => $id } )
                 ->arrays->flatten->each ];
+    }
+
+    # Marks it past due for unpaid Stripe invoice $invoice_id, if it is active
+    # and not already past due: a second mark, for this invoice or another,
+    # keeps the first.
+    method mark_past_due ( $db, $invoice_id ) {
+        $db = $db->db if $db isa Registry::DAO;
+        $db->query( q{
+            UPDATE entitlements SET past_due_since = now(), past_due_invoice_id = ?
+             WHERE id = ? AND state = 'active' AND past_due_invoice_id IS NULL
+        }, $invoice_id, $id );
+        return $self;
+    }
+
+    # Clears past due when $invoice_id is the invoice it is past due for.
+    method clear_past_due ( $db, $invoice_id ) {
+        $db = $db->db if $db isa Registry::DAO;
+        $db->query( q{
+            UPDATE entitlements SET past_due_since = NULL, past_due_invoice_id = NULL
+             WHERE id = ? AND past_due_invoice_id = ?
+        }, $id, $invoice_id );
+        return $self;
+    }
+
+    method is_past_due { return defined $past_due_invoice_id ? 1 : 0 }
+
+    # It and the entitlements it was transferred from, oldest first.
+    method chain ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        return $db->query( q{
+            WITH RECURSIVE chain AS (
+                SELECT e.*, 0 AS depth FROM entitlements e WHERE e.id = ?
+                UNION ALL
+                SELECT p.*, c.depth + 1 FROM entitlements p JOIN chain c ON p.id = c.transferred_from_entitlement_id
+            )
+            SELECT * FROM chain ORDER BY depth DESC
+        }, $id )->expand->hashes->map( sub { delete $_->{depth}; __PACKAGE__->new(%$_) } )->to_array;
+    }
+
+    # What has been paid for it so far, over its chain: each entitlement's
+    # share of the payment that created it and its completed instalment and
+    # change payments, less what was refunded against each.
+    method paid_cents ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        my @ids = map { $_->id } $self->chain($db)->@*;
+        return $db->query( q{
+            SELECT (SELECT coalesce(sum(payment_share_cents), 0) FROM entitlements WHERE id = ANY(?::uuid[]))
+                 + (SELECT coalesce(sum(amount_cents), 0) FROM payments
+                     WHERE entitlement_id = ANY(?::uuid[]) AND status = 'completed')
+                 - (SELECT coalesce(sum(amount_cents), 0) FROM entitlement_refunds
+                     WHERE entitlement_id = ANY(?::uuid[]))
+        }, \@ids, \@ids, \@ids )->array->[0];
     }
 
     # Ends as `expired` each active entitlement whose stamped expiry policy is

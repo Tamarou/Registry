@@ -56,6 +56,10 @@ field $instalment_count   :param :reader = undef;
 field $due_date           :param :reader = undef;
 field $stripe_schedule_id :param :reader = undef;
 
+# The entitlement an instalment (2..N) or change payment was paid towards;
+# NULL on the charge that created entitlements, which they name instead.
+field $entitlement_id :param :reader = undef;
+
 # True when this row is one of several. Asked rather than derived at each call
 # site, so nothing has to remember that the pair is all-or-nothing.
 method is_instalment { return defined $instalment_seq ? 1 : 0 }
