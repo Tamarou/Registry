@@ -125,4 +125,17 @@ subtest 'an outcome is an object' => sub {
         for sort keys %not;
 };
 
+subtest 'a decided request reads as decided' => sub {
+    my $r = request();
+    ok $r->decide( $db, 'approved', $admin->id, 'ok' ), 'decided';
+    is $r->state,      'approved', 'the object reads approved';
+    is $r->decided_by, $admin->id, 'by the admin';
+    ok $r->decided_at, 'with when';
+    is $r->note, 'ok', 'and the note';
+    my $other = Test::Registry::Fixtures::create_user( $db, { username => 'er-admin-3' } );
+    ok !$r->decide( $db, 'declined', $other->id, 'late' ), 'a late decision is refused';
+    is $r->state,      'approved', 'and leaves the object approved';
+    is $r->decided_by, $admin->id, 'by the first admin';
+};
+
 done_testing;

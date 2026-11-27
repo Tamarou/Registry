@@ -63,9 +63,12 @@ class Registry::DAO::EntitlementRequest :isa(Registry::DAO::Object) {
     method decide ( $db, $to, $admin_id, $why = undef ) {
         croak "unknown decision state '$to': a request is approved or declined" unless $to =~ /\A(?:approved|declined)\z/;
         $db = $db->db if $db isa Registry::DAO;
-        return !!$db->update( 'entitlement_requests',
+        my $row = $db->update( 'entitlement_requests',
             { state => $to, decided_by => $admin_id, decided_at => \'clock_timestamp()', note => $why },
-            { id => $id, state => 'pending' } )->rows;
+            { id => $id, state => 'pending' }, { returning => [qw( state decided_by decided_at note )] } )->hash;
+        return false unless $row;
+        ( $state, $decided_by, $decided_at, $note ) = @$row{qw( state decided_by decided_at note )};
+        return true;
     }
 }
 
