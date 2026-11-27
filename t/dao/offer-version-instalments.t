@@ -79,6 +79,11 @@ subtest 'the database refuses publishing instalments without missed_payment' => 
         qr/missed_payment/;
 };
 
+subtest 'an unknown plan field is refused' => sub {
+    throws_ok { draft_with( instalment_plan( surcharge => '5' ) ) } qr/unknown field 'surcharge'/,
+        'a misspelt surcharge is not silently dropped';
+};
+
 subtest 'a child holds two sessions of one offer on instalments' => sub {
     my $parent = $db->insert( 'users', { username => 'instalment_parent' }, { returning => 'id' } )->hash->{id};
     my $kid    = $db->insert( 'family_members',

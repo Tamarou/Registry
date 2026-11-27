@@ -279,6 +279,9 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
                 $terms->@{qw( units_per_acceptance per_booking_cap )},
                 to_json($policies), to_json($conditions), $offer_id )->expand->hash;
             for my $plan ( ( $terms->{payment_plans} // [] )->@* ) {
+                my %known = map { $_ => 1 } @PLAN_FIELDS;
+                croak sprintf "payment plan '%s' has unknown field '%s'", $plan->{id} // '', $_
+                    for grep { !$known{$_} } sort keys %$plan;
                 $db->insert( 'offer_version_payment_plans', { offer_version_id => $row->{id},
                     $plan->%{ grep { exists $plan->{$_} } @PLAN_FIELDS } } );
             }
