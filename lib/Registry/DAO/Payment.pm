@@ -385,12 +385,32 @@ field $_stripe_client = undef;
         $txn->commit;
         return undef unless $schedule;
 
-        my $client   = $self->stripe_client;
-        return $schedule
-            if ( $client->retrieve_subscription_schedule($schedule)->{status} // '' )
-                =~ /\A(?:canceled|completed|released)\z/;
+        my $client = $self->stripe_client;
+        my $at     = $client->retrieve_subscription_schedule($schedule);
+        my $status = $at->{status} // '';
+        return $schedule if $status =~ /\A(?:canceled|completed)\z/;
+        if ( $status eq 'released' ) {
+            $self->_cancel_released( $raw, $client, $eid, $schedule, $at->{released_subscription} );
+            return $schedule;
+        }
         $client->cancel_subscription_schedule( $schedule, instalment_cancel_params($eid) );
         return $schedule;
+    }
+
+    # A released schedule no longer bills, but the subscription it let go of
+    # does, on its own: cancelled (Stripe's default: no proration, no final
+    # invoice) and the admins told, since the studio's release was not ours.
+    method _cancel_released ( $db, $client, $eid, $schedule, $sub ) {
+        $sub = $sub->{id} if ref $sub eq 'HASH';
+        return unless defined $sub && !ref $sub;
+        return if ( $client->retrieve_subscription($sub)->{status} // '' ) =~ /\A(?:canceled|incomplete_expired)\z/;
+        $client->cancel_subscription( $sub, { _idempotency_key => "cancel_subscription:$eid" } );
+        require Registry::DAO::Notification;
+        Registry::DAO::Notification->alert_admins( $db, 'A released instalment schedule was cancelled',
+            "The instalment schedule $schedule for entitlement $eid had been released in Stripe, so its "
+          . "subscription $sub went on billing by itself. Registry has cancelled that subscription; "
+          . 'check what the family was charged since the release.',
+            { entitlement_id => $eid } );
     }
 
     # The cancel request for entitlement $eid's schedule. No proration and no

@@ -215,7 +215,9 @@ class Registry::Service::Stripe {
     }
     
     method cancel_subscription_async($subscription_id, $params = {}) {
-        return $self->_request_async('DELETE', "subscriptions/$subscription_id", $params);
+        my %p  = %$params;
+        my $ik = delete $p{_idempotency_key};
+        return $self->_request_async('DELETE', "subscriptions/$subscription_id", \%p, $ik);
     }
 
     # Subscription Schedules API

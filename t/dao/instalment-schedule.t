@@ -52,7 +52,19 @@ sub with_stripe ( $code, $seen = sub { undef }, %on ) {
     };
     local *Registry::Service::Stripe::retrieve_subscription_schedule = sub ( $s, $id ) {
         push @calls, [ retrieve_subscription_schedule => $seen->(), $id ];
+        # Released by the studio: the subscription it made bills on alone.
+        return { id => $id, status => 'released', released_subscription => "sub_of_$id" }
+            if $on{released};
         return { id => $id, status => $status{$id} // 'active' };
+    };
+    local *Registry::Service::Stripe::retrieve_subscription = sub ( $s, $id ) {
+        push @calls, [ retrieve_subscription => $seen->(), $id ];
+        return { id => $id, status => $status{$id} // 'active' };
+    };
+    local *Registry::Service::Stripe::cancel_subscription = sub ( $s, $id, $p = {} ) {
+        push @calls, [ cancel_subscription => $seen->(), $id, $p ];
+        $status{$id} = 'canceled';
+        return { id => $id, status => 'canceled' };
     };
     local *Registry::Service::Stripe::cancel_subscription_schedule = sub ( $s, $id, $p = {} ) {
         push @calls, [ cancel_subscription_schedule => $seen->(), $id, $p ];
@@ -197,4 +209,24 @@ subtest 'a cancel waits for a schedule being made, then cancels it' => sub {
         $c->{payment}->cancel_instalment_schedule( $db2, $c->{entitlement} ) } );
     my ($cancel) = grep { $_->[0] eq 'cancel_subscription_schedule' } @$after;
     is $cancel->[2], rows($c)->[0]{stripe_schedule_id}, 'and once it was recorded, cancels it';
+};
+
+subtest 'a released schedule has its subscription cancelled and admins told' => sub {
+    my $admin = Test::Registry::Fixtures::create_user( $db, { username => 'released-admin', user_type => 'admin' } );
+    my $c = instalment_checkout( $db, slug => $seller );
+    my $schedule;
+    with_stripe( sub { $schedule = $c->{payment}->schedule_instalments_for( $db, $c->{entitlement} ) } );
+
+    my $calls = with_stripe( sub {
+        $c->{payment}->cancel_instalment_schedule( $db, $c->{entitlement} ) for 1 .. 2;
+    }, sub { undef }, released => 1 );
+    my @cancels = grep { $_->[0] =~ /\Acancel_/ } @$calls;
+    is_deeply [ map { [ @$_[ 0, 2, 3 ] ] } @cancels ],
+        [ [ cancel_subscription => "sub_of_$schedule",
+            { _idempotency_key => 'cancel_subscription:' . $c->{entitlement}->id } ] ],
+        'the subscription it released is cancelled, once, under a key named for the entitlement';
+
+    my $told = $db->query( q{SELECT count(*) FROM notifications WHERE user_id = ? AND message LIKE ?},
+        $admin->id, '%' . $c->{entitlement}->id . '%' )->array->[0];
+    is $told, 1, 'and the admins are told once';
 };

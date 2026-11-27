@@ -197,6 +197,34 @@ subtest 'stripe updates and then cancels a schedule as Registry asks' => sub {
     @schedules = grep { $_ ne $id } @schedules;    # cleanup has nothing left to cancel
 };
 
+# A studio can release Registry's schedule in its dashboard; the subscription
+# it lets go of bills on alone, so Registry cancels that subscription as
+# Payment::_cancel_released asks.
+subtest 'stripe cancels the subscription a released schedule let go of' => sub {
+    my $params = Registry::DAO::Payment::instalment_schedule_params({
+        product => $product->{id}, customer => $customer->{id}, payment_method => $pm->{id},
+        revenue_share_pct => 2.5, currency => 'usd', description => 'Summer Camp',
+        cadence => 'monthly', entitlement_id => $ENTITLEMENT,
+        instalments => [ { amount_cents => 3333, due_date => '2027-07-01' } ],
+    });
+    $params->{start_date} = 'now';    # so there is a subscription to release
+    my $made = eval { $stripe->create_subscription_schedule($params) };
+    ok $made, 'a started schedule' or do { diag $@; return };
+    push @schedules, $made->{id};
+
+    my $released = $stripe->_await( $stripe->_request_async( 'POST', "subscription_schedules/$made->{id}/release" ) );
+    is $released->{status}, 'released', 'released, as a studio could';
+    @schedules = grep { $_ ne $made->{id} } @schedules;    # a released schedule cannot be cancelled
+    my $sub = $released->{released_subscription};
+    like $sub, qr/^sub_/, 'letting go of its subscription';
+
+    my $key = "cancel_subscription:$ENTITLEMENT:$$:" . time;
+    my $cancelled = $stripe->cancel_subscription( $sub, { _idempotency_key => $key } );
+    is $cancelled->{status}, 'canceled', 'the cancel Registry sends is accepted';
+    is $stripe->cancel_subscription( $sub, { _idempotency_key => $key } )->{status}, 'canceled',
+        'and a retry under the same key answers the same';
+};
+
 subtest 'schedule is not on the platform account' => sub {
     my $id = $schedule && $schedule->{id}
         or plan skip_all => 'no schedule was created';
