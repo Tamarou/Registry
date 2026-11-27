@@ -127,4 +127,14 @@ subtest 'a weekly plan of four over a one week camp is refused' => sub {
     is versions_of('Camp week'), 0, 'and writes no version';
 };
 
+subtest 'the instalment step checks the run\'s sessions before an offer names one' => sub {
+    my ( $first, $last ) = ( days_from_now(1), days_from_now(7) );
+    my $run = session_run( 'Early camp', $first, $last );
+    $run->update_data( $db, { offer_basics => undef } );    # as session-setup has it: no offer step yet
+    is errors_of( $run->process( $db, step('instalment-payment'), { instalments => 'offered', count => 4, cadence => 'weekly' } ) ),
+        "A weekly plan of 4 payments bought today would end after $last, the last day of Early camp",
+        'a weekly plan of four over the run\'s one week camp is refused at the step';
+    is $run->data->{instalment_payment}, undef, 'and records no plan';
+};
+
 done_testing;

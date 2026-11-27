@@ -10,7 +10,7 @@ class Registry::DAO::WorkflowSteps::InstalmentPaymentPlan :isa(Registry::DAO::Wo
 
     my %CADENCE = map { $_ => 1 } qw( weekly monthly quarterly );
 
-    # Why $plan cannot be offered on the run's resources, or nothing. Each
+    # Why $plan cannot be offered on the offer's resources, or nothing. Each
     # session's last day and today are read in its location's zone; the
     # earliest-ending session is the one a plan must fit. Publish asks again,
     # since the offer's resources can be chosen after this step.
@@ -18,6 +18,8 @@ class Registry::DAO::WorkflowSteps::InstalmentPaymentPlan :isa(Registry::DAO::Wo
         my $basic = ref $data->{offer_basics} eq 'HASH' ? $data->{offer_basics} : {};
         my @ids   = grep { defined && !ref } $basic->{resource_id},
             ref $basic->{resource_ids} eq 'ARRAY' ? $basic->{resource_ids}->@* : ();
+        # Before an offer names its sessions, every session the run made.
+        @ids = grep { defined && !ref } $data->{sessions}->@* if !@ids && ref $data->{sessions} eq 'ARRAY';
         return unless @ids;
         my $session = $db->query( q{
             SELECT r.name, to_char(max(e.time AT TIME ZONE l.time_zone), 'YYYY-MM-DD') AS last_day,
