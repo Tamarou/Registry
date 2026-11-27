@@ -269,6 +269,12 @@ field $_stripe_client = undef;
             "instalment_schedule:$eid" );
         if ( my $done = __PACKAGE__->instalment_schedule_of( $raw, $eid ) ) { return $done }
 
+        require Registry::DAO::Entitlement;
+        # A cancel (which takes this lock too) or an end that came first wins:
+        # nothing is made to bill a child who has gone.
+        return undef if __PACKAGE__->schedule_cancelled( $raw, $id, $eid )
+            || Registry::DAO::Entitlement->find( $raw, { id => $eid } )->state ne 'active';
+
         # The customer the charge was made against, and the card it saved.
         my $intent = $client->retrieve_payment_intent($stripe_payment_intent_id);
         my $customer = $intent->{customer}
@@ -344,6 +350,12 @@ field $_stripe_client = undef;
         die "entitlement $eid was not made by payment $id\n"
             unless ( $entitlement->payment_id // '' ) eq $id;
 
+        # Under schedule_instalments_for's lock, and committed before Stripe
+        # is asked: a schedule run in flight finishes first and is cancelled
+        # below, and one that runs later sees the record and makes nothing.
+        my $txn = $raw->begin;
+        $raw->query( 'SELECT pg_advisory_xact_lock(hashtextextended(?, 0))',
+            "instalment_schedule:$eid" );
         $raw->query( q{
             UPDATE payments
                SET metadata = jsonb_set( COALESCE(metadata, '{}'), '{cancelled_schedules}',
@@ -351,8 +363,10 @@ field $_stripe_client = undef;
              WHERE id = ?
                AND NOT COALESCE(metadata->'cancelled_schedules', '[]') @> jsonb_build_array(?::text)
         }, $eid, $id, $eid );
+        my $schedule = __PACKAGE__->instalment_schedule_of( $raw, $eid );
+        $txn->commit;
+        return undef unless $schedule;
 
-        my $schedule = __PACKAGE__->instalment_schedule_of( $raw, $eid ) or return undef;
         my $client   = $self->stripe_client;
         return $schedule
             if ( $client->retrieve_subscription_schedule($schedule)->{status} // '' )
@@ -366,6 +380,14 @@ field $_stripe_client = undef;
     # on what it paid, not a credit Stripe works out.
     sub instalment_cancel_params ( $eid ) {
         return { prorate => 'false', invoice_now => 'false', _idempotency_key => "cancel_schedule:$eid" };
+    }
+
+    # Has payment $payment_id recorded entitlement $eid's schedule as cancelled?
+    sub schedule_cancelled ( $class, $db, $payment_id, $eid ) {
+        return $db->query( q{
+            SELECT 1 FROM payments
+             WHERE id = ? AND COALESCE(metadata->'cancelled_schedules', '[]') @> jsonb_build_array(?::text)
+        }, $payment_id, $eid )->rows;
     }
 
     # The Stripe schedule billing entitlement $eid's instalments, or undef.

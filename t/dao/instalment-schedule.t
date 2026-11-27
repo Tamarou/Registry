@@ -7,7 +7,7 @@ use warnings;
 use utf8;
 use lib qw(lib t/lib);
 use experimental qw(defer signatures);
-use Test::More import => [qw( done_testing is ok is_deeply subtest )];
+use Test::More import => [qw( done_testing is ok is_deeply like subtest )];
 defer { done_testing };
 
 use Test::Registry::DB;
@@ -25,8 +25,9 @@ my $seller = Test::Registry::Fixtures::platform_seller($db);
 Test::Registry::PricingProbe::give_tenant_terms( $db, $seller, { rate => '0.025', name => 'Solo' } );
 
 # Stripe's side of a schedule, recorded with what the database held when each
-# call was made: $seen->() is read at every call.
-sub with_stripe ( $code, $seen = sub { undef } ) {
+# call was made: $seen->() is read at every call. $on{schedule_made} runs
+# once, inside the schedule create.
+sub with_stripe ( $code, $seen = sub { undef }, %on ) {
     my @calls;
     my %status;
     no warnings 'redefine';
@@ -46,6 +47,7 @@ sub with_stripe ( $code, $seen = sub { undef } ) {
         push @calls, [ create_subscription_schedule => $seen->() ];
         my $id = 'sub_sched_rows_' . scalar @calls;
         $status{$id} = 'not_started';
+        if ( my $hook = delete $on{schedule_made} ) { $hook->() }
         return { id => $id };
     };
     local *Registry::Service::Stripe::retrieve_subscription_schedule = sub ( $s, $id ) {
@@ -148,4 +150,51 @@ subtest 'a second cancel does nothing' => sub {
     is scalar( grep { $_->[0] eq 'cancel_subscription_schedule' } @$calls ), 1,
         'Stripe is asked to cancel once';
     is_deeply cancelled($c), [ $c->{entitlement}->id ], 'and the entitlement is recorded once';
+};
+
+subtest 'a cancel before the schedule job runs leaves nothing to schedule' => sub {
+    my $c = instalment_checkout( $db, slug => $seller );
+    my ( $cancelled, $scheduled );
+    my $calls = with_stripe( sub {
+        $cancelled = $c->{payment}->cancel_instalment_schedule( $db, $c->{entitlement} );
+        $scheduled = Registry::DAO::Payment->find( $db, { id => $c->{payment}->id } )
+            ->schedule_instalments_for( $db, $c->{entitlement} );
+    } );
+    is $cancelled, undef, 'the cancel found no schedule';
+    is_deeply cancelled($c), [ $c->{entitlement}->id ], 'but recorded the entitlement';
+    is $scheduled, undef, 'so the schedule job, run after it, schedules nothing';
+    is_deeply $calls, [], 'without asking Stripe';
+    is_deeply rows($c), [], 'and records no instalment';
+};
+
+subtest 'an ended entitlement is not scheduled' => sub {
+    my $c = instalment_checkout( $db, slug => $seller );
+    $c->{entitlement}->end( $db, 'unpaid', 'dropped' );
+    my $scheduled;
+    my $calls = with_stripe( sub {
+        $scheduled = $c->{payment}->schedule_instalments_for( $db, $c->{entitlement} );
+    } );
+    is $scheduled, undef, 'nothing is scheduled';
+    is_deeply $calls, [], 'Stripe is not asked';
+    is_deeply rows($c), [], 'and no instalment is recorded';
+};
+
+subtest 'a cancel waits for a schedule being made, then cancels it' => sub {
+    my $c   = instalment_checkout( $db, slug => $seller );
+    my $db2 = $t_db->db->db;
+    my $waited;
+    my $calls = with_stripe(
+        sub { $c->{payment}->schedule_instalments_for( $db, $c->{entitlement} ) },
+        sub { undef },
+        schedule_made => sub {
+            $db2->query(q{SET lock_timeout = '200ms'});
+            eval { $c->{payment}->cancel_instalment_schedule( $db2, $c->{entitlement} ); 1 } or $waited = $@;
+            $db2->query('RESET lock_timeout');
+        } );
+    like $waited, qr/lock timeout/, 'the cancel waited on the schedule being made';
+
+    my $after = with_stripe( sub {
+        $c->{payment}->cancel_instalment_schedule( $db2, $c->{entitlement} ) } );
+    my ($cancel) = grep { $_->[0] eq 'cancel_subscription_schedule' } @$after;
+    is $cancel->[2], rows($c)->[0]{stripe_schedule_id}, 'and once it was recorded, cancels it';
 };
