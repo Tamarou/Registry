@@ -119,6 +119,15 @@ subtest 'an admin creates a program and a five day camp week' => sub {
     is_deeply $run->{sessions}, [ $week->id ], 'and the session it made';
 };
 
+subtest 'two groups of one program can share a week at the same time' => sub {
+    my $t = on_sessions('Parallel camp');
+    submit_step( $t, 'sessions', %WEEK, name => 'Group A', teacher_id => $user{staff}->id, action => 'add' );
+    submit_step( $t, 'sessions', %WEEK, name => 'Group B', teacher_id => $user{admin}->id, action => 'add' );
+    $t->content_like( qr/Group A/ )->content_like( qr/Group B/, 'both groups are listed' );
+    is scalar $_->[0]->session_days($db)->@*, 5, 'each group has its five days'
+        for map { sessions_named($_) } 'Group A', 'Group B';
+};
+
 subtest 'staff get 403 from session-setup' => sub {
     client( $user{staff} )->get_ok('/session-setup')->status_is(403);
 };

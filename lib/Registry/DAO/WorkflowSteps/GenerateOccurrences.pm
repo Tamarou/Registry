@@ -99,7 +99,7 @@ class Registry::DAO::WorkflowSteps::GenerateOccurrences :isa(Registry::DAO::Work
             my $event_id = $db->query( q{
                 INSERT INTO events (project_id, location_id, teacher_id, time, duration, capacity, status)
                 VALUES (?, ?, ?, ?, ?, ?, 'published')
-                ON CONFLICT (project_id, location_id, time) DO NOTHING
+                ON CONFLICT (project_id, location_id, time) WHERE session_resource_id IS NULL DO NOTHING
                 RETURNING id
             }, $class->id, $location->id, $f{teacher_id}, $slot->{instant}, 0 + $f{duration}, $seats )->array;
 
