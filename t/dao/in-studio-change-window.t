@@ -10,6 +10,7 @@ use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Helpers qw( import_all_workflows );
 use Test::Registry::Offers qw( offer_terms );
+use Test::Registry::Fork qw( forget_inherited_handles reap );
 use Registry::DAO;
 use Registry::DAO::Entitlement;
 use Registry::DAO::Offer;
@@ -298,7 +299,9 @@ subtest 'ended entitlement cannot be changed' => sub {
 
 # Two connections: A, in a transaction, runs $first; B, a child process,
 # runs $second, which must wait on A's lock. Once B waits, A commits.
-# Returns whether B waited and what $second returned.
+# Returns whether B waited and what $second returned. $second runs in the
+# child, so it must use only the handle it is given: build anything it needs
+# from the parent's $db (steps, runs) before calling race.
 sub race ( $first, $second ) {
     my $uri = $test_db->uri;
     pipe( my $parent_reads, my $child_writes ) or die "pipe: $!";
@@ -309,6 +312,7 @@ sub race ( $first, $second ) {
     my $pid    = fork() // die "fork: $!";
     unless ($pid) {
         close $parent_reads;
+        forget_inherited_handles();
         my $out = eval { Mojo::JSON::to_json( $second->( Registry::DAO->new( url => $uri )->db ) ) }
             // Mojo::JSON::to_json( { died => "$@" } );
         print $child_writes $out;
@@ -316,18 +320,19 @@ sub race ( $first, $second ) {
         POSIX::_exit(0);
     }
     close $child_writes;
-    my ( $blocked, $deadline ) = ( 0, time + 30 );
-    until ( $blocked || waitpid( $pid, POSIX::WNOHANG() ) || time > $deadline ) {
+    my ( $blocked, $exited, $deadline ) = ( 0, 0, time + 30 );
+    until ( $blocked || ( $exited = waitpid( $pid, POSIX::WNOHANG() ) ) || time > $deadline ) {
         select undef, undef, undef, 0.05;
         $blocked = $db->query( 'SELECT count(*) FROM pg_stat_activity WHERE ? = ANY (pg_blocking_pids(pid))',
             $holder )->array->[0];
     }
     $tx->commit;
-    waitpid $pid, 0;
+    reap($pid) unless $exited;
     my $status = $?;
     my $out    = do { local $/; readline $parent_reads } // '';
-    # A child that wrote nothing died outside its eval (a signal, or before
-    # it could connect): say how, instead of failing on empty JSON.
+    # A child that wrote nothing died outside its eval (a signal, killed by
+    # reap's bound, or before it could connect): say how, instead of failing
+    # on empty JSON.
     return ( $blocked, $a, { died => sprintf 'child sent nothing; exit %d, signal %d', $status >> 8, $status & 127 } )
         unless length $out;
     return ( $blocked, $a, Mojo::JSON::from_json($out) );
@@ -338,9 +343,10 @@ subtest 'concurrent changes into last seat one wins' => sub {
     booking( $version, $target );
     my ($one) = chosen( booking( $version, $held ) );
     my ($two) = chosen( booking( $version, $held ) );
+    my $hold = step('hold-target');
     my ( $waited, $first, $second ) = race(
-        sub ($adb) { $one->process( $adb, step('hold-target'), { target_occurrence_id => $target->id } ) },
-        sub ($bdb) { $two->process( $bdb, step('hold-target'), { target_occurrence_id => $target->id } ) },
+        sub ($adb) { $one->process( $adb, $hold, { target_occurrence_id => $target->id } ) },
+        sub ($bdb) { $two->process( $bdb, $hold, { target_occurrence_id => $target->id } ) },
     );
     ok $waited, 'the second change waits on the first one\'s hold of the target';
     ok !$first->{errors}, 'the first change holds the last seat' or diag explain $first->{errors};
