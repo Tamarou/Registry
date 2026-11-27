@@ -29,7 +29,7 @@ import_all_workflows($dao);
 my $PAYMENT_PROCESSING = '00000000-0000-0000-0001-000000000001';
 my $SOLO               = '00000000-0000-0000-0002-000000000001';
 my $SOLO_V1            = '00000000-0000-0000-0003-000000000001';
-my $SOLO_V2            = '9bc4069a-f0a7-0026-3a84-aeb0d0732995';    # solo-grants-workflow-set's
+my $SOLO_V3            = '2f570c64-dad4-c0aa-5848-3219eb752c76';    # solo-grants-session-workflows'
 
 my $alex = Test::Registry::Fixtures::create_user( $dao,
     { username => 'alex', name => 'Alex', email => 'alex@registry.test', user_type => 'admin' } );
@@ -89,7 +89,7 @@ subtest 'other tenant admin refused on the registry host' => sub {
 };
 
 subtest 'alex publishes a later solo version' => sub {
-    is_deeply [ map { $_->{id} } solo_current()->@* ], [$SOLO_V2], 'Solo starts at its workflow-set version';
+    is_deeply [ map { $_->{id} } solo_current()->@* ], [$SOLO_V3], 'Solo starts at its session-workflows version';
 
     # Solo's current version buys a set (payment processing and the workflow
     # run rights); offer-basics versions an offer only to sell the one
@@ -105,10 +105,10 @@ subtest 'alex publishes a later solo version' => sub {
 
     my $current = solo_current();
     is scalar @$current, 1, 'Solo has exactly one current version';
-    is $current->[0]{version}, 3, 'the new one, version 3';
+    is $current->[0]{version}, 4, 'the new one, version 4';
     cmp_ok $current->[0]{fraction}, '==', 0.024, 'at 2.4%';
-    ok defined $db->query( 'SELECT superseded_at FROM registry.offer_versions WHERE id = ?', $SOLO_V2 )
-        ->hash->{superseded_at}, 'the workflow-set version is superseded';
+    ok defined $db->query( 'SELECT superseded_at FROM registry.offer_versions WHERE id = ?', $SOLO_V3 )
+        ->hash->{superseded_at}, 'the session-workflows version is superseded';
 };
 
 subtest 'signup resolves one platform offer after alex publishes' => sub {

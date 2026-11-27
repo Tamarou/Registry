@@ -163,7 +163,7 @@ subtest 'probe never edits solo v1' => sub {
     is_deeply $solo->(), $before, "Solo v1's terms and publication are unchanged";
     is $db->query( q{SELECT id FROM registry.offer_versions WHERE offer_id = ? AND published_at IS NOT NULL
                        AND superseded_at IS NULL}, $before->[0]{offer_id} )->array->[0],
-        '9bc4069a-f0a7-0026-3a84-aeb0d0732995', "and Solo's current version is still solo-grants-workflow-set's";
+        '2f570c64-dad4-c0aa-5848-3219eb752c76', "and Solo's current version is still solo-grants-session-workflows'";
 };
 
 subtest 'refund reads the stamped versions policy' => sub {

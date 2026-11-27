@@ -17,7 +17,7 @@ my $dao     = $test_db->db;
 my $db      = $dao->db;
 
 my $SOLO_V1 = '00000000-0000-0000-0003-000000000001';
-my $SOLO_V2 = '9bc4069a-f0a7-0026-3a84-aeb0d0732995';    # current: solo-grants-workflow-set's
+my $SOLO_V3 = '2f570c64-dad4-c0aa-5848-3219eb752c76';    # current: solo-grants-session-workflows'
 my $REFUSED = qr/already holds an active platform entitlement to payment processing/;
 
 my $studio = Test::Registry::Fixtures::create_tenant( $db, {
@@ -75,7 +75,7 @@ subtest 'accepting another platform offer while one is in effect is refused read
         name => 'Third Term Studio', slug => 'third_term_studio',
     } );
     my %accept = ( holder_tenant_id => $third->id, payment_plan_id => 'revenue_share' );
-    Registry::DAO::Entitlement->accept( $db, { %accept, offer_version_id => $SOLO_V2 } );
+    Registry::DAO::Entitlement->accept( $db, { %accept, offer_version_id => $SOLO_V3 } );
     throws_ok { Registry::DAO::Entitlement->accept( $db, { %accept, offer_version_id => $other->id } ) }
         'Registry::DAO::Entitlement::Refused', 'a second, different platform offer is a Refused';
     like "$@", qr/already holds platform terms in effect/, 'saying the tenant already holds terms';

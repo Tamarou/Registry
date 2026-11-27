@@ -572,8 +572,8 @@ subtest 'platform publishes through the same workflow' => sub {
     };
     is_deeply $classes->($rdb), $classes->($tdb), 'through the same steps and step classes as a tenant';
 
-    is platform_solo_offer_version_id($dao), '9bc4069a-f0a7-0026-3a84-aeb0d0732995',
-        'the platform\'s current Solo version is solo-grants-workflow-set\'s';
+    is platform_solo_offer_version_id($dao), '2f570c64-dad4-c0aa-5848-3219eb752c76',
+        'the platform\'s current Solo version is solo-grants-session-workflows\'';
 };
 
 subtest 'publish capacity check refuses missing units without a warning' => sub {
