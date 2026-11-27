@@ -13,6 +13,8 @@ use Test::Registry::Helpers qw( days_from_now );
 use Test::Registry::Sessions qw( make_session session_offer cart_run add_cart_line );
 use Registry::DAO::Entitlement;
 use Registry::DAO::FamilyMember;
+use Registry::DAO::Offer;
+use Test::Registry::Offers qw( offer_terms instalment_plan );
 use Registry::DAO::WorkflowSteps::SessionCart;
 use Registry::Terms;
 
@@ -122,6 +124,47 @@ subtest 'continue asks again when the place was taken after the line' => sub {
         terms_version_shown => Registry::Terms::VERSION } );
     like $result->{errors}[0], qr/^Late already has a place in/, 'continue refuses the line';
     ok !exists $run->data->{agreed_terms_version}, 'and records no agreement';
+};
+
+# A posted price is refused unless the cart would list it for that child now.
+# Each is posted through the step; a refused one never reaches cart_lines.
+sub posted ( $session, $version, $plan = 'pay' ) {
+    my $buyer = child( $parent, 'Buyer' );
+    my ( $run, $step ) = cart_run( $dao, $parent->id, $buyer->id );
+    my $result = add_cart_line( $db, $run, $step, family_member_id => $buyer->id, resource_id => $session->id,
+        choice => $version->id . "/$plan" );
+    is scalar @{ $run->data->{cart_lines} // [] }, $result->{errors} ? 0 : 1,
+        $result->{errors} ? 'nothing reaches the cart' : 'the line is in the cart';
+    return $result->{errors}[0];
+}
+
+subtest 'an early bird price after its deadline is refused' => sub {
+    my $s     = scalar make_session( $db, days => [ map { days_from_now($_) } 30 .. 32 ] );
+    my $early = session_offer( $db, $s, conditions => [ { kind => 'before', at => '2026-01-01T00:00:00Z' } ] );
+    is posted( $s, $early ), 'Choose one of the listed prices', 'refused';
+};
+
+subtest 'a superseded version is refused' => sub {
+    my $s   = scalar make_session( $db, days => [ map { days_from_now($_) } 30 .. 32 ] );
+    my $old = session_offer( $db, $s, price_cents => 20000 );
+    my $new = Registry::DAO::Offer->find( $db, { id => $old->offer_id } )
+        ->draft( $db, offer_terms( $s->id, price_cents => 25000 ) )->publish($db);
+    is posted( $s, $old ), 'Choose one of the listed prices', 'the old price is refused';
+    is posted( $s, $new ), undef, 'the current one is taken';
+};
+
+subtest "a plan id the version does not offer is refused" => sub {
+    my $s = scalar make_session( $db, days => [ map { days_from_now($_) } 30 .. 32 ] );
+    is posted( $s, session_offer( $db, $s ), 'parts' ), 'Choose one of the listed payment plans', 'refused';
+};
+
+subtest 'a posted instalment plan that no longer fits is refused' => sub {
+    # Ten days out: a fourth weekly payment, three weeks away, is after the last day.
+    my $s = scalar make_session( $db, days => [ map { days_from_now($_) } 10 .. 12 ] );
+    my $v = session_offer( $db, $s,
+        payment_plans => [ { id => 'pay', kind => 'one_time' }, instalment_plan( id => 'four', count => 4, cadence => 'weekly' ) ],
+        policies => { refund => { kind => 'none' }, missed_payment => { kind => 'end' } } );
+    is posted( $s, $v, 'four' ), 'Not offered: the last payment would fall after the session ends', 'refused';
 };
 
 done_testing;
