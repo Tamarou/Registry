@@ -1,0 +1,92 @@
+# ABOUTME: Product design for camp and after-school: an admin creates a program and adds its sessions.
+# ABOUTME: Each session is one finite resource whose days are its events; then a price over some of them, published as an offer version.
+
+name: Session Setup
+description: Create a program, add its sessions, and publish a price over some of them
+slug: session-setup
+roles: [admin]
+
+steps:
+  - slug: program
+    label: Program
+    description: Choose one of your programs, or create one, and the location its sessions meet at
+    template: session-setup/program
+    class: Registry::DAO::WorkflowSteps::SessionProgram
+
+  - slug: sessions
+    label: Sessions
+    description: Add the program's sessions, each with its days, start, length, capacity and waitlist
+    template: session-setup/sessions
+    class: Registry::DAO::WorkflowSteps::SessionDays
+
+  - slug: offer-basics
+    label: Offer
+    description: Choose the sessions this price covers and name its offer
+    template: session-setup/offer-basics
+    class: Registry::DAO::WorkflowSteps::OfferBasics
+
+  - slug: offer-price
+    label: Price
+    description: The price, the seats one unit uses, and how many one booking may take
+    template: session-setup/offer-price
+    class: Registry::DAO::WorkflowSteps::OfferPrice
+
+  - slug: conditions
+    label: Who
+    description: Say whether the price is for a sibling, or only until an early-bird date
+    template: session-setup/conditions
+    class: Registry::DAO::WorkflowSteps::OfferConditions
+
+  - slug: one-time-payment
+    label: Payment
+    description: Offer a one-time payment plan
+    template: session-setup/one-time-payment
+    class: Registry::DAO::WorkflowSteps::OneTimePaymentPlan
+
+  - slug: instalment-payment
+    label: Instalments
+    description: Say whether the sessions may be paid in instalments, and how many, how often and at what surcharge
+    template: session-setup/instalment-payment
+    class: Registry::DAO::WorkflowSteps::InstalmentPaymentPlan
+
+  - slug: missed-payment-policy
+    label: Missed payments
+    description: Say what happens when an instalment is missed; asked only when instalments are offered
+    template: session-setup/missed-payment-policy
+    class: Registry::DAO::WorkflowSteps::MissedPaymentPolicy
+
+  - slug: refund-policy
+    label: Refund
+    description: Choose whether money comes back on a refund, and whether an administrator approves it first
+    template: session-setup/refund-policy
+    class: Registry::DAO::WorkflowSteps::RefundPolicy
+
+  - slug: change-policy
+    label: Change
+    description: Choose whether a place may move, where to, how a price difference is paid, and whether an administrator approves it
+    template: session-setup/change-policy
+    class: Registry::DAO::WorkflowSteps::ChangePolicy
+
+  - slug: use-policy
+    label: Use
+    description: Choose what counts as using a place, or that a missed day earns a make-up class
+    template: session-setup/use-policy
+    class: Registry::DAO::WorkflowSteps::UsePolicy
+
+  - slug: expiry-policy
+    label: Expiry
+    description: Choose when a place expires
+    template: session-setup/expiry-policy
+    class: Registry::DAO::WorkflowSteps::ExpiryPolicy
+
+  - slug: publish
+    label: Publish
+    description: Review and publish an immutable offer version
+    template: session-setup/publish
+    class: Registry::DAO::WorkflowSteps::PublishOfferVersion
+
+  - slug: complete
+    label: Done
+    description: The price is published; add another to the same program
+    template: session-setup/complete
+    class: Registry::DAO::WorkflowStep

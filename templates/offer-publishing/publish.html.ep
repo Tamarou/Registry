@@ -16,7 +16,12 @@
 %     keep_fee_with_admin_exception => 'Keep the fee, unless an administrator makes an exception',
 %     window => 'A change window', optional_attendance => 'Optional attendance',
 %     end_of_occurrence => 'At the end of the occurrence', never => 'Never',
+%     makeup => 'Make-ups',
 % );
+% my $use = stash('use_policy') // {};
+% my $reviewed = sub { ( shift->{approval} // '' ) eq 'required' ? '; an administrator approves each one' : '' };
+% my %moves = ( same_program => '; to any offer in the same program', offer_ids => '; to the listed offers' );
+% my %difference = ( charge_only => ', charging any higher price', charge_and_refund => ', charging or refunding any price difference' );
 % my $name = sub { my $kind = shift; defined $kind ? $named{$kind} // $kind : '' };
 
 % if (my @errors = @{ stash('errors') // [] }) {
@@ -45,11 +50,11 @@
     <dt>Percentage of sales</dt>
     <dd><%= $name->( $percentage->{percentage_of_sales} ) %><%= stash('rate_display') ? ', at ' . stash('rate_display') . ' of each sale' : '' %></dd>
     <dt>Refund policy</dt>
-    <dd><%= $name->( $refund->{kind} ) %><%= defined $refund->{cutoff_hours} ? ", until $refund->{cutoff_hours} hours before the start" : '' %></dd>
+    <dd><%= $name->( $refund->{kind} ) %><%= defined $refund->{cutoff_hours} ? ", until $refund->{cutoff_hours} hours before the start" : '' %><%= $reviewed->($refund) %></dd>
     <dt>Change policy</dt>
-    <dd><%= $name->( $change->{kind} ) %><%= defined $change->{window_hours} ? ", up to $change->{window_hours} hours before the start, for a fee of " . stash('change_fee_display') : '' %></dd>
+    <dd><%= $name->( $change->{kind} ) %><%= defined $change->{window_hours} ? ", up to $change->{window_hours} hours before the start, for a fee of " . stash('change_fee_display') : '' %><%= $moves{ ref $change->{targets} ? 'offer_ids' : $change->{targets} // '' } // '' %><%= $difference{ $change->{price_difference} // '' } // '' %><%= $reviewed->($change) %></dd>
     <dt>Use policy</dt>
-    <dd><%= $name->( ( stash('use_policy') // {} )->{use} ) %></dd>
+    <dd><%= $name->( $use->{use} ) %><%= $use->{credit_days} ? ", a missed day earns a make-up class within $use->{credit_days} days" : '' %><%= $use->{max_per_term} ? ", at most $use->{max_per_term} a term" : '' %></dd>
     <dt>Expiry policy</dt>
     <dd><%= $name->( ( stash('expiry_policy') // {} )->{expiry} ) %></dd>
   </dl>

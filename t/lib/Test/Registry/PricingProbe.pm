@@ -161,7 +161,8 @@ sub _probe_version ( $db, $terms ) {
     my $refund = $terms->{refund} // { kind => 'keep_fee_with_admin_exception' };
     my $rate   = eval { rate_fraction( $terms->{rate}, 'a probe' ) };
     return _planted_version( $db, $terms, $refund )
-        unless defined $rate && keys %$refund == 1 && $PUBLISHABLE_REFUND{ $refund->{kind} // '' };
+        unless defined $rate && $PUBLISHABLE_REFUND{ $refund->{kind} // '' }
+        && !grep { !/\A(?:kind|approval)\z/ } keys %$refund;
     die "a publishable probe can't run inside without_rate_check: it would wait on that lock forever\n"
         if $IN_RATE_BYPASS;
 
@@ -180,6 +181,7 @@ sub _probe_version ( $db, $terms ) {
         percentage_of_sales  => 'offered',
         rate_percent         => sprintf( '%d.%02d', int( $basis_points / 100 ), $basis_points % 100 ),
         refund               => $refund->{kind},
+        approval             => $refund->{approval} // 'none',
     } );
     # Retired at once: signup grants the one current platform offer to tenants.
     $db->query( 'UPDATE registry.offer_versions SET superseded_at = now() WHERE id = ?', $version->id );

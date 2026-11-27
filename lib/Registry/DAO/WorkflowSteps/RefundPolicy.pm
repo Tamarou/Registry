@@ -1,12 +1,12 @@
 # ABOUTME: offer-publishing step: whether money comes back on a refund, chosen explicitly with no default.
-# ABOUTME: None; full until a cutoff in hours, on an occurrence or class offer; or keep the fee, on a percentage offer.
+# ABOUTME: None; full until a cutoff in hours, on an occurrence, class or session offer; or keep the fee; each says if approval is needed.
 use 5.42.0;
 use utf8;
 
 use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::RefundPolicy :isa(Registry::DAO::WorkflowStep) {
-    use Registry::DAO::Resource;
+    use Registry::DAO::WorkflowSteps::OfferBasics;
 
     # The refund policies this step offers, OfferVersion's day-one kinds; a
     # cutoff is offered in hours only (cutoff_at is not offered here).
@@ -17,12 +17,14 @@ class Registry::DAO::WorkflowSteps::RefundPolicy :isa(Registry::DAO::WorkflowSte
     # cannot carry a policy past it.
     sub refusal ( $class, $db, $data, $policy ) {
         my $kind = $policy->{kind};
+        return "Say whether a refund needs the studio's approval"
+            unless ( $policy->{approval} // '' ) =~ /\A(?:required|none)\z/;
+        return 'With no refund there is nothing for the studio to approve'
+            if $kind eq 'none' && $policy->{approval} eq 'required';
         if ( $kind eq 'full_until_cutoff' ) {
-            my $basic = ref $data->{offer_basics} eq 'HASH' ? $data->{offer_basics} : {};
-            my $resource = $basic->{resource_id}
-                && Registry::DAO::Resource->find( $db, { id => $basic->{resource_id} } );
-            return 'A refund cutoff needs an offer bound to one occurrence or covering a class'
-                unless $basic->{class_project_id} || ( $resource && $resource->event_id );
+            # A session's cutoff counts from its first day.
+            return 'A refund cutoff needs an offer bound to one occurrence, covering a class, or over sessions'
+                unless Registry::DAO::WorkflowSteps::OfferBasics->bound( $db, $data );
         }
         if ( $kind eq 'keep_fee_with_admin_exception' ) {
             # It names the platform's application fee, which only a
@@ -38,7 +40,13 @@ class Registry::DAO::WorkflowSteps::RefundPolicy :isa(Registry::DAO::WorkflowSte
         return { stay => 1, errors => ['Choose a refund policy: none, full until a cutoff, or keep the fee'] }
             unless defined $kind && !ref $kind && $OFFERED{$kind};
 
-        my %policy = ( kind => $kind );
+        # Unanswered or blank is none, as OfferVersion reads it and the change
+        # step saves it. Approval stays off for in-studio offers (the design's
+        # call), whatever the form says.
+        my $approval = $form_data->{approval};
+        $approval = ref $approval ? '' : $approval // '';
+        $approval = 'none' if !length $approval || $self->workflow($db)->slug eq 'in-studio-class-setup';
+        my %policy = ( kind => $kind, approval => $approval );
         if ( $kind eq 'full_until_cutoff' ) {
             my $hours = $form_data->{cutoff_hours};
             return { stay => 1, errors => ['The cutoff must be a whole number of hours before the start, such as 24'] }

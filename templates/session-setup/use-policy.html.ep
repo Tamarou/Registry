@@ -1,0 +1,62 @@
+%# ABOUTME: session-setup's use-policy step, as offer-publishing asks it, for the offers over a program's sessions.
+%# ABOUTME: Optional attendance, none, or make-ups: a missed day earns a credit to one of the studio's class offers.
+% extends 'layouts/workflow';
+% title 'How it is used';
+% stash description => 'Say what counts as using what this offer buys.';
+% my $policy = stash('use_policy') // {};
+% my $chosen = $policy->{use} // '';
+
+% if (my @errors = @{ stash('errors') // [] }) {
+<div class="alert alert-error" role="alert">
+  <ul>
+  % for my $error (@errors) {
+    <li><%= ref $error ? $error->{message} : $error %></li>
+  % }
+  </ul>
+</div>
+% }
+
+<form method="POST" action="<%= $action %>">
+  <fieldset>
+    <legend>Use policy</legend>
+    <div>
+      <input type="radio" id="use-optional_attendance" name="use" value="optional_attendance" required<%= $chosen eq 'optional_attendance' ? ' checked' : '' %>>
+      <label for="use-optional_attendance">Optional attendance: a booking may be marked attended; nothing depends on it</label>
+    </div>
+    <div>
+      <input type="radio" id="use-none" name="use" value="none" required<%= $chosen eq 'none' ? ' checked' : '' %>>
+      <label for="use-none">None: nothing is tracked as use</label>
+    </div>
+    <div>
+      <input type="radio" id="use-makeup" name="use" value="makeup" required<%= $chosen eq 'makeup' ? ' checked' : '' %>>
+      <label for="use-makeup">Make-ups: a day the teacher marks missed earns a make-up class at the studio</label>
+    </div>
+  </fieldset>
+
+  <p>These apply only to make-ups.</p>
+
+  <div class="form-group">
+    <label class="form-label" for="makeup_offer_id">Make-up class offer</label>
+    <select class="form-select" id="makeup_offer_id" name="makeup_offer_id">
+      <option value="">Choose a class offer</option>
+      % for my $offer ( @{ stash('makeup_offers') // [] } ) {
+      <option value="<%= $offer->{id} %>"<%= ( $policy->{offer_id} // '' ) eq $offer->{id} ? ' selected' : '' %>><%= $offer->{name} %></option>
+      % }
+    </select>
+  </div>
+
+  <div class="form-group">
+    <label class="form-label" for="credit_days">Days a make-up credit lasts</label>
+    <input class="form-input" type="number" id="credit_days" name="credit_days" value="<%= $policy->{credit_days} %>" min="1" max="3650" step="1">
+  </div>
+
+  <div class="form-group">
+    <label class="form-label" for="max_per_term">Most make-ups per term (optional)</label>
+    <input class="form-input" type="number" id="max_per_term" name="max_per_term" value="<%= $policy->{max_per_term} %>" min="1" max="3650" step="1">
+    <p>Leave blank for no limit.</p>
+  </div>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Continue</button>
+  </div>
+</form>

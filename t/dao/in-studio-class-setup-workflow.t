@@ -95,8 +95,8 @@ sub published_count () {
 sub class_named ($name) { Registry::DAO::Project->find( $tdb, { name => $name } ) }
 
 my $SACP_POLICIES = {
-    refund => { kind => 'none' },
-    change => { kind => 'window', window_hours => 48, fee_cents => 1000, targets => 'same_offer' },
+    refund => { kind => 'none', approval => 'none' },
+    change => { kind => 'window', window_hours => 48, fee_cents => 1000, targets => 'same_offer', price_difference => 'same_price_only', approval => 'none' },
     use    => { kind => 'optional_attendance' },
     expiry => { kind => 'end_of_occurrence' },
 };

@@ -1,0 +1,58 @@
+%# ABOUTME: session-setup step: whether the sessions may be paid in instalments, and their count, cadence and surcharge.
+%# ABOUTME: A plan whose last payment would fall after a session's last day is refused, never shortened.
+% extends 'layouts/workflow';
+% title 'Instalments';
+% stash description => 'Say whether the sessions may be paid in instalments.';
+% my $plan   = stash('instalment_payment') // {};
+% my $chosen = %$plan ? 'offered' : '';
+% my $cadence = $plan->{cadence} // '';
+
+% if (my @errors = @{ stash('errors') // [] }) {
+<div class="alert alert-error" role="alert">
+  <ul>
+  % for my $error (@errors) {
+    <li><%= ref $error ? $error->{message} : $error %></li>
+  % }
+  </ul>
+</div>
+% }
+
+<form method="POST" action="<%= $action %>">
+  <fieldset>
+    <legend>Instalments</legend>
+    <div>
+      <input type="radio" id="instalments-offered" name="instalments" value="offered" required<%= $chosen eq 'offered' ? ' checked' : '' %>>
+      <label for="instalments-offered">Offered: the first payment at checkout, the rest on a schedule</label>
+    </div>
+    <div>
+      <input type="radio" id="instalments-declined" name="instalments" value="declined" required>
+      <label for="instalments-declined">Not offered</label>
+    </div>
+  </fieldset>
+
+  <div class="form-group">
+    <label for="count" class="form-label">Number of payments (when offered)</label>
+    <input class="form-input" type="number" id="count" name="count" min="2" max="52" value="<%= $plan->{count} // '' %>">
+  </div>
+
+  <fieldset>
+    <legend>How often (when offered)</legend>
+    % for my $c (qw( weekly monthly quarterly )) {
+    <div>
+      <input type="radio" id="cadence-<%= $c %>" name="cadence" value="<%= $c %>"<%= $cadence eq $c ? ' checked' : '' %>>
+      <label for="cadence-<%= $c %>"><%= ucfirst $c %></label>
+    </div>
+    % }
+  </fieldset>
+
+  <div class="form-group">
+    <label for="surcharge_pct" class="form-label">Surcharge, in percent (optional)</label>
+    <input class="form-input" type="text" id="surcharge_pct" name="surcharge_pct" value="<%= $plan->{surcharge_pct} // '' %>" inputmode="decimal"
+           pattern="[0-9]{1,3}(\.[0-9]{1,2})?" aria-describedby="surcharge_pct-help">
+    <p id="surcharge_pct-help">Added to the price before it is split: 5 means the parts add up to 105% of the price.</p>
+  </div>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Continue</button>
+  </div>
+</form>

@@ -1,10 +1,11 @@
 %# ABOUTME: offer-publishing's refund-policy step: the admin chooses whether money comes back, with no default.
-%# ABOUTME: Cutoff hours count back from the held occurrence's start; keeping the fee fits a percentage-of-sales offer.
+%# ABOUTME: Cutoff hours count back from the held occurrence's start; the studio may review each refund before it is made.
 % extends 'layouts/workflow';
 % title 'Refunds';
 % stash description => 'Say whether money comes back when a customer asks for a refund.';
 % my $policy = stash('refund_policy') // {};
 % my $chosen = $policy->{kind} // '';
+% my $approval = $policy->{approval} // 'none';
 
 % if (my @errors = @{ stash('errors') // [] }) {
 <div class="alert alert-error" role="alert">
@@ -38,6 +39,18 @@
     <input class="form-input" type="number" id="cutoff_hours" name="cutoff_hours" value="<%= $policy->{cutoff_hours} %>" min="0" step="1">
     <p>Only for a full refund until a cutoff. A refund asked for exactly at the cutoff is allowed.</p>
   </div>
+
+  <fieldset>
+    <legend>Approval</legend>
+    <div>
+      <input type="radio" id="approval-none" name="approval" value="none"<%= $approval eq 'none' ? ' checked' : '' %>>
+      <label for="approval-none">None: the policy decides, and refunds are made at once</label>
+    </div>
+    <div>
+      <input type="radio" id="approval-required" name="approval" value="required"<%= $approval eq 'required' ? ' checked' : '' %>>
+      <label for="approval-required">Required: an administrator approves each refund before it is made</label>
+    </div>
+  </fieldset>
 
   <div class="form-actions">
     <button type="submit" class="btn btn-primary">Continue</button>

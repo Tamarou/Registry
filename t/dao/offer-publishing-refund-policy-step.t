@@ -98,7 +98,7 @@ subtest 'refund none is published' => sub {
     ok $result->{'refund-policy'} && !$result->{'refund-policy'}{errors}, 'the refund-policy step accepts none';
     my $version = published_version($run);
     ok $version && $version->is_published, 'the offer publishes';
-    is_deeply $version && $version->policies->{refund}, { kind => 'none' }, 'carrying a none refund policy';
+    is_deeply $version && $version->policies->{refund}, { kind => 'none', approval => 'none' }, 'carrying a none refund policy';
 };
 
 subtest 'refund full until cutoff is published' => sub {
@@ -109,7 +109,7 @@ subtest 'refund full until cutoff is published' => sub {
         or diag explain $result->{'refund-policy'};
     my $version = published_version($run);
     ok $version && $version->is_published, 'the offer publishes';
-    is_deeply $version && $version->policies->{refund}, { kind => 'full_until_cutoff', cutoff_hours => 24 },
+    is_deeply $version && $version->policies->{refund}, { kind => 'full_until_cutoff', cutoff_hours => 24, approval => 'none' },
         'carrying a full refund until 24 hours before';
 
     ( $run, $result ) = walk(
@@ -119,7 +119,7 @@ subtest 'refund full until cutoff is published' => sub {
     $version = published_version($run);
     ok $version && $version->is_published, 'an offer covering a class publishes too'
         or diag explain $result;
-    is_deeply $version && $version->policies->{refund}, { kind => 'full_until_cutoff', cutoff_hours => 0 },
+    is_deeply $version && $version->policies->{refund}, { kind => 'full_until_cutoff', cutoff_hours => 0, approval => 'none' },
         'with a cutoff at the start itself';
 };
 
@@ -130,7 +130,7 @@ subtest 'refund keep fee is published on a percentage offer' => sub {
         or diag explain $result->{'refund-policy'};
     my $version = published_version($run);
     ok $version && $version->is_published, 'the offer publishes';
-    is_deeply $version && $version->policies->{refund}, { kind => 'keep_fee_with_admin_exception' },
+    is_deeply $version && $version->policies->{refund}, { kind => 'keep_fee_with_admin_exception', approval => 'none' },
         'carrying a keep-the-fee refund policy';
 };
 
@@ -202,9 +202,9 @@ subtest 'skipped refund choice publishes nothing' => sub {
 subtest 'cutoff hours ignored with refund none' => sub {
     my ( $run, $result ) = walk( %on_occurrence, 'refund-policy' => { refund => 'none', cutoff_hours => 24 } );
     ok !$result->{'refund-policy'}{errors}, 'refund none with cutoff hours is accepted';
-    is_deeply $run->data->{refund_policy}, { kind => 'none' }, 'the run records no cutoff';
+    is_deeply $run->data->{refund_policy}, { kind => 'none', approval => 'none' }, 'the run records no cutoff';
     my $version = published_version($run);
-    is_deeply $version && $version->policies->{refund}, { kind => 'none' }, 'and the version carries none';
+    is_deeply $version && $version->policies->{refund}, { kind => 'none', approval => 'none' }, 'and the version carries none';
 };
 
 subtest 'refund resubmitted at publish is ignored' => sub {
@@ -216,7 +216,7 @@ subtest 'refund resubmitted at publish is ignored' => sub {
         );
         my $version = published_version($run);
         ok $version && $version->is_published, "publish with refund '$value' in its form still publishes";
-        is_deeply $version && $version->policies->{refund}, { kind => 'none' },
+        is_deeply $version && $version->policies->{refund}, { kind => 'none', approval => 'none' },
             'with the refund policy the refund-policy step recorded';
     }
 };
@@ -232,7 +232,7 @@ subtest 'published refund policy cannot be updated' => sub {
     ok !$ok, 'a direct UPDATE of the refund policy is refused by the database';
     like $@, qr/immutable once published/, 'as immutable';
     is_deeply Registry::DAO::OfferVersion->find( $tdb, { id => $version->id } )->policies->{refund},
-        { kind => 'full_until_cutoff', cutoff_hours => 24 }, 'and the policy is unchanged';
+        { kind => 'full_until_cutoff', cutoff_hours => 24, approval => 'none' }, 'and the policy is unchanged';
 };
 
 done_testing;

@@ -1,0 +1,58 @@
+%# ABOUTME: session-setup's first step: pick one of this tenant's programs, or create one, and the location its sessions meet at.
+%# ABOUTME: Every session added on the next step is in this program at this location.
+% extends 'layouts/workflow';
+% title 'Program';
+% stash description => 'Choose the program these sessions belong to, or create it.';
+
+% if (my @errors = @{ stash('errors') // [] }) {
+<div class="alert alert-error" role="alert">
+  <ul>
+  % for my $error (@errors) {
+    <li><%= ref $error ? $error->{message} : $error %></li>
+  % }
+  </ul>
+</div>
+% }
+
+<form method="POST" action="<%= $action %>">
+  <fieldset>
+    <legend>Program</legend>
+    <div>
+      <input type="radio" id="program_mode-existing" name="program_mode" value="existing" required>
+      <label for="program_mode-existing">One of my programs</label>
+    </div>
+    <div>
+      <input type="radio" id="program_mode-create" name="program_mode" value="create" required>
+      <label for="program_mode-create">Create a new program</label>
+    </div>
+  </fieldset>
+
+  <div class="form-group">
+    <label class="form-label" for="project_id">Existing program</label>
+    <select class="form-select" id="project_id" name="project_id">
+      <option value="">None</option>
+      % for my $program (@{ stash('programs') // [] }) {
+      <option value="<%= $program->id %>"><%= $program->name %></option>
+      % }
+    </select>
+  </div>
+
+  <div class="form-group">
+    <label class="form-label" for="program_name">New program's name</label>
+    <input class="form-input" type="text" id="program_name" name="program_name">
+  </div>
+
+  <div class="form-group">
+    <label class="form-label" for="location_id">Location</label>
+    <select class="form-select" id="location_id" name="location_id" required>
+      <option value="">Choose a location</option>
+      % for my $location (@{ stash('locations') // [] }) {
+      <option value="<%= $location->id %>"><%= $location->name %> (<%= $location->time_zone %>)</option>
+      % }
+    </select>
+  </div>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Continue</button>
+  </div>
+</form>

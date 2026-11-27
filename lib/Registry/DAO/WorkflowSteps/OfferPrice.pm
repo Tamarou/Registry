@@ -34,9 +34,13 @@ class Registry::DAO::WorkflowSteps::OfferPrice :isa(Registry::DAO::WorkflowStep)
                 if defined $smallest && $units > $smallest;
             return;
         }
-        my $resource = $basic->{resource_id} && Registry::DAO::Resource->find( $db, { id => $basic->{resource_id} } );
-        return sprintf 'Units per acceptance cannot exceed %s\'s capacity of %d', $resource->name, $resource->capacity
-            if $resource && $resource->kind eq 'finite' && $units > $resource->capacity;
+        # Each resource the offer names: its one, or each of its sessions.
+        for my $id ( grep { defined && !ref } $basic->{resource_id},
+            ref $basic->{resource_ids} eq 'ARRAY' ? $basic->{resource_ids}->@* : () ) {
+            my $resource = Registry::DAO::Resource->find( $db, { id => $id } ) or next;
+            return sprintf 'Units per acceptance cannot exceed %s\'s capacity of %d', $resource->name, $resource->capacity
+                if $resource->kind eq 'finite' && $units > $resource->capacity;
+        }
         return;
     }
 

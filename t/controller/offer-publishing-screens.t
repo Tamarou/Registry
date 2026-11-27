@@ -141,17 +141,24 @@ subtest 'the review shows the percentage plan, policy names and the change fee i
 };
 
 # The page form's fields as a browser would submit them untouched: checked
-# radios, and every other named input that carries a value.
+# radios and checkboxes, and every other named input that carries a value.
 sub prefilled ($t) {
     my %v;
     for my $in ( $t->tx->res->dom->find('#workflow-content form input[name]')->each ) {
-        next if ( $in->attr('type') // '' ) eq 'radio' && !exists $in->attr->{checked};
+        next if ( $in->attr('type') // '' ) =~ /\A(?:radio|checkbox)\z/ && !exists $in->attr->{checked};
         next if $in->attr('name') eq 'csrf_token';    # the test client sends its own
         my $value = $in->val;
         $v{ $in->attr('name') } = $value if defined $value && length $value;
     }
     return %v;
 }
+
+# The radios a screen checks when unanswered: what an unanswered approval,
+# target or price difference is saved as.
+my %DEFAULTS = (
+    'refund-policy' => { approval => 'none' },
+    'change-policy' => { targets => 'same_offer', price_difference => 'same_price_only', approval => 'none' },
+);
 
 subtest 'a new version pre-fills every payment and policy screen from the current version' => sub {
     my $class = $db->insert( 'projects', { name => 'Clay class', slug => 'clay-class' }, { returning => 'id' } )->hash->{id};
@@ -180,7 +187,8 @@ subtest 'a new version pre-fills every payment and policy screen from the curren
     submit_step( $t, 'offer-basics', offer_id => $offer );
     submit_step( $t, 'offer-price', prefilled($t) );
     for my $screen (@screens) {
-        is_deeply { prefilled($t) }, $v1{$screen}, "$screen is pre-filled with the current version's answer";
+        is_deeply { prefilled($t) }, { ( $DEFAULTS{$screen} // {} )->%*, $v1{$screen}->%* },
+            "$screen is pre-filled with the current version's answer";
         submit_step( $t, $screen, prefilled($t) );
     }
     like submit_step( $t, 'publish', action => 'publish' ), qr{/complete\z}, 'the unchanged version publishes';
@@ -226,12 +234,12 @@ my @TERM_SCREENS = qw( offer-price one-time-payment percentage-of-sales-payment
     refund-policy change-policy use-policy expiry-policy );
 
 # From the price screen, walks every term screen checking it shows
-# $expect->{$screen}, blank by default (the change screen always carries its
-# fixed target); a blank screen is answered from %SOLO to move on.
+# $expect->{$screen} over the radios a screen checks by default (blank
+# otherwise); a blank screen is answered from %SOLO to move on.
 sub walk_terms ( $t, $expect ) {
     for my $screen (@TERM_SCREENS) {
-        my $blank = $screen eq 'change-policy' ? { targets => 'same_offer' } : {};
-        is_deeply { prefilled($t) }, $expect->{$screen} // $blank, "$screen shows the expected answer";
+        is_deeply { prefilled($t) }, { ( $DEFAULTS{$screen} // {} )->%*, ( $expect->{$screen} // {} )->%* },
+            "$screen shows the expected answer";
         submit_step( $t, $screen, %{ $SOLO{$screen} }, %{ $expect->{$screen} // {} } );
     }
 }

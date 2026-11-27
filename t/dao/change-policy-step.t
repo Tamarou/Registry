@@ -131,7 +131,8 @@ subtest 'change window fee and targets are published' => sub {
         my $version = published_version($run);
         ok $version && $version->is_published, 'the offer publishes' or diag explain $result->{publish};
         is_deeply $version && $version->policies->{change},
-            { kind => 'window', window_hours => 48, fee_cents => $fields->{fee_cents}, targets => 'same_offer' },
+            { kind => 'window', window_hours => 48, fee_cents => $fields->{fee_cents}, targets => 'same_offer',
+              price_difference => 'same_price_only', approval => 'none' },
             'carrying exactly those change terms';
     }
 };

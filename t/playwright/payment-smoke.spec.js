@@ -215,8 +215,12 @@ test.describe('Payment happy path', () => {
       // The postal code renders once the card number is recognised, so it needs
       // a wait rather than a visibility probe. Required, not optional: treating
       // it as optional is what let an unfilled field reach Stripe unnoticed.
+      // The Element guesses the country from the browser's location, so a
+      // runner it places in Canada asked for a Canadian postal code and
+      // reformatted '10001' as '100 01'. Choose the country the ZIP belongs to.
       const postalCode = stripeFrame.locator('input[name="postalCode"]');
       await expect(postalCode).toBeVisible({ timeout: 15000 });
+      await stripeFrame.locator('select[name="country"]').selectOption('US');
       await postalCode.fill('10001');
       await expect(postalCode).toHaveValue('10001');
 

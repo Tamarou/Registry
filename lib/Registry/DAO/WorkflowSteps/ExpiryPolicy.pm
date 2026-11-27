@@ -6,6 +6,7 @@ use utf8;
 use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::ExpiryPolicy :isa(Registry::DAO::WorkflowStep) {
+    use Registry::DAO::WorkflowSteps::OfferBasics;
 
     # Why $choice no longer fits the offer the run describes, or nothing; publish
     # asks again, since offer-basics can be answered again after this step. A
@@ -13,11 +14,7 @@ class Registry::DAO::WorkflowSteps::ExpiryPolicy :isa(Registry::DAO::WorkflowSte
     # bound to one only while its events row is still there; a session is
     # bound by its days.
     sub refusal ( $class, $db, $data, $choice ) {
-        my $basic = ref $data->{offer_basics} eq 'HASH' ? $data->{offer_basics} : {};
-        my $bound = $basic->{class_project_id} ? 1 : $basic->{resource_id} ? $db->query( q{
-            SELECT 1 FROM resources r JOIN events e ON e.id = r.event_id OR e.session_resource_id = r.id
-             WHERE r.id = ? LIMIT 1
-        }, $basic->{resource_id} )->rows : 0;
+        my $bound = Registry::DAO::WorkflowSteps::OfferBasics->bound( $db, $data );
         return 'Only an offer for an occurrence or a class can expire at the end of the occurrence'
             if $choice eq 'end_of_occurrence' && !$bound;
         return 'An offer for an occurrence or a class expires at the end of the occurrence, not never'

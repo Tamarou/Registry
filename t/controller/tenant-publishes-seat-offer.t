@@ -171,8 +171,8 @@ subtest 'admin publishes the couples seat offer over http' => sub {
           units_per_acceptance => 2, per_booking_cap => 2 }, 'with the couples price and seats';
     is_deeply $v->{plans}, ['one_time'], 'paid once';
     is_deeply $v->{policies}, {
-        refund => { kind => 'none' },
-        change => { kind => 'window', window_hours => 48, fee_cents => 0, targets => 'same_offer' },
+        refund => { kind => 'none', approval => 'none' },
+        change => { kind => 'window', window_hours => 48, fee_cents => 0, targets => 'same_offer', price_difference => 'same_price_only', approval => 'none' },
         use    => { kind => 'optional_attendance' },
         expiry => { kind => 'end_of_occurrence' },
     }, 'and the couples policies';
@@ -200,8 +200,8 @@ subtest 'admin publishes the single seat offer over http' => sub {
           units_per_acceptance => 1, per_booking_cap => 4 }, 'one seat of the same resource, up to 4 a booking';
     is_deeply $v->{plans}, ['one_time'], 'paid once';
     is_deeply $v->{policies}, {
-        refund => { kind => 'full_until_cutoff', cutoff_hours => 48 },
-        change => { kind => 'window', window_hours => 48, fee_cents => 0, targets => 'same_offer' },
+        refund => { kind => 'full_until_cutoff', cutoff_hours => 48, approval => 'none' },
+        change => { kind => 'window', window_hours => 48, fee_cents => 0, targets => 'same_offer', price_difference => 'same_price_only', approval => 'none' },
         use    => { kind => 'optional_attendance' },
         expiry => { kind => 'end_of_occurrence' },
     }, 'refunded in full until 48 hours before, with the day-one change, use and expiry';

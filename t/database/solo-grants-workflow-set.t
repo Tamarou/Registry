@@ -19,8 +19,11 @@ my $CHANGE  = 'solo-grants-workflow-set';
 my $SOLO    = '00000000-0000-0000-0002-000000000001';
 my $SOLO_V1 = '00000000-0000-0000-0003-000000000001';
 
-# Every non-draft workflow shipped in workflows/, less those never copied to a tenant.
-my @SHIPPED = sort grep { !Registry::WorkflowDivergence::never_copied($_) }
+# Every non-draft workflow shipped in workflows/, less those never copied to a
+# tenant and the four session workflows, which Solo v3
+# (solo-grants-session-workflows) lists after this change, not v2.
+my %V3_ADDS = map { $_ => 1 } qw( session-setup session-checkout entitlement-decision makeup-booking );
+my @SHIPPED = sort grep { !Registry::WorkflowDivergence::never_copied($_) && !$V3_ADDS{$_} }
     map  { $_->{slug} } grep { !$_->{draft} }
     map  { YAML::XS::Load( $_->slurp ) } Mojo::Home->new->child('workflows')->list->grep(qr/\.ya?ml$/)->each;
 

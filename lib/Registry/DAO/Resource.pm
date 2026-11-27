@@ -7,6 +7,7 @@ use Object::Pad;
 
 class Registry::DAO::Resource :isa(Registry::DAO::Object) {
     use Carp qw( croak );
+    use List::Util qw( uniq );
 
     field $id :param :reader;
     field $name :param :reader;
@@ -77,6 +78,30 @@ class Registry::DAO::Resource :isa(Registry::DAO::Object) {
     }
 
     method is_session ($db) { !!$self->session_days($db)->@* }
+
+    # The sessions of program $project_id, by first day, then name.
+    sub sessions_of ( $class, $db, $project_id ) {
+        $db = $db->db if $db isa Registry::DAO;
+        return $db->query( q{
+            SELECT r.* FROM resources r
+              JOIN (SELECT session_resource_id, min(time) AS first FROM events
+                     WHERE project_id = ? AND session_resource_id IS NOT NULL GROUP BY session_resource_id) d
+                ON d.session_resource_id = r.id
+             ORDER BY d.first, r.name
+        }, $project_id )->expand->hashes->map( sub { $class->new(%$_) } )->to_array;
+    }
+
+    # Whether every one of @ids names a resource here with days: an
+    # occurrence's event or a session's. None named is not.
+    sub all_have_days ( $class, $db, @ids ) {
+        $db = $db->db if $db isa Registry::DAO;
+        my @distinct = uniq @ids or return 0;
+        return $db->query( q{
+            SELECT count(DISTINCT r.id) FROM resources r
+              JOIN events e ON e.id = r.event_id OR e.session_resource_id = r.id
+             WHERE r.id::text = ANY(?)
+        }, \@distinct )->array->[0] == @distinct;
+    }
 
     # The events it is: its occurrence's one, or a session's days. The one
     # WHERE every window and sale question reads them through.
