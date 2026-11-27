@@ -1,5 +1,5 @@
 # ABOUTME: Staff day step: marking someone present records one use of the entitlement they hold for the occurrence.
-# ABOUTME: Use is optional attendance: recording it changes no state, units, expiry or money, and repeats are no-ops.
+# ABOUTME: Use is optional attendance: recording it changes no state, units, expiry or money, and a repeat overwrites the earlier mark.
 use 5.42.0;
 use utf8;
 
