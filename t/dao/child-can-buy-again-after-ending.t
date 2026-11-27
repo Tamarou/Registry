@@ -41,9 +41,9 @@ sub add () {
     return ( $result, $run, $step );
 }
 
-subtest 'while the child holds the only seat, the session is full' => sub {
+subtest 'while the child holds its place, the session is refused' => sub {
     my ($result) = add();
-    like $result->{errors}[0], qr/is full/, 'refused';
+    is $result->{errors}[0], sprintf( '%s already has a place in %s', $kid->child_name, $session->name ), 'refused';
 };
 
 subtest 'once it has ended, the child can buy the session again' => sub {

@@ -11,6 +11,7 @@ use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Test::Registry::Helpers qw( days_from_now );
 use Test::Registry::Sessions qw( make_session session_offer cart_run add_cart_line );
+use Registry::DAO::Entitlement;
 use Registry::DAO::FamilyMember;
 use Registry::DAO::WorkflowSteps::SessionCart;
 use Registry::Terms;
@@ -73,6 +74,53 @@ subtest 'checkout asks again' => sub {
     my $result = $run->process( $db, $step, { action => 'checkout', agree_to_terms => 1,
         terms_version_shown => Registry::Terms::VERSION } );
     like $result->{errors}[0], qr/Choose one of your own children/, 'checkout refuses the line';
+    ok !exists $run->data->{agreed_terms_version}, 'and records no agreement';
+};
+
+# A session is bought whole and a child attends it once: a place held now or
+# later, active or past due, is never bought twice.
+sub place ( $child, $session ) {
+    return Registry::DAO::Entitlement->grant( $db, {
+        holder_family_member_id => $child->id, payer_user_id => $parent->id,
+        offer_version_id => $price{ $session->id }->id, payment_plan_id => 'pay',
+        starts_at => '2026-01-01T00:00:00Z', resource_id => $session->id, units => 1,
+    } );
+}
+
+subtest 'a child who already has a place in the session is refused' => sub {
+    my $holder = child( $parent, 'Holder' );
+    my $s      = scalar make_session( $db, days => [ map { days_from_now($_) } 30 .. 32 ] );
+    $price{ $s->id } = session_offer( $db, $s );
+    place( $holder, $s );
+
+    my ( $run, $step ) = cart_run( $dao, $parent->id, $holder->id );
+    my $result = add_cart_line( $db, $run, $step, family_member_id => $holder->id, resource_id => $s->id,
+        choice => $price{ $s->id }->id . '/pay' );
+    is $result->{errors}[0], sprintf( '%s already has a place in %s', $holder->child_name, $s->name ),
+        'refused at add to cart, naming the child and the session';
+    ok !$run->data->{cart_lines}, 'and nothing reaches the cart';
+    is refusal( line( $holder, $s1 ) ), undef, 'another session is still open to the child';
+};
+
+subtest 'a past due place still counts' => sub {
+    my $holder = child( $parent, 'Owing' );
+    my $s      = scalar make_session( $db, days => [ map { days_from_now($_) } 30 .. 32 ] );
+    $price{ $s->id } = session_offer( $db, $s );
+    place( $holder, $s )->mark_past_due( $db, 'in_cart_past_due' );
+    like refusal( line( $holder, $s ) ), qr/already has a place in/, 'refused';
+};
+
+subtest 'continue asks again when the place was taken after the line' => sub {
+    my $late = child( $parent, 'Late' );
+    my $s    = scalar make_session( $db, days => [ map { days_from_now($_) } 30 .. 32 ] );
+    $price{ $s->id } = session_offer( $db, $s );
+    my ( $run, $step ) = cart_run( $dao, $parent->id, $late->id );
+    ok !add_cart_line( $db, $run, $step, family_member_id => $late->id, resource_id => $s->id,
+        choice => $price{ $s->id }->id . '/pay' )->{errors}, 'a line is added';
+    place( $late, $s );
+    my $result = $run->process( $db, $step, { action => 'checkout', agree_to_terms => 1,
+        terms_version_shown => Registry::Terms::VERSION } );
+    like $result->{errors}[0], qr/^Late already has a place in/, 'continue refuses the line';
     ok !exists $run->data->{agreed_terms_version}, 'and records no agreement';
 };
 

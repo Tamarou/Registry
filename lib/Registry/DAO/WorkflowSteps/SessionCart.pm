@@ -78,21 +78,23 @@ class Registry::DAO::WorkflowSteps::SessionCart :isa(Registry::DAO::WorkflowStep
     # or nothing. Each line's child is the payer's, its session is on sale with
     # room for the cart's lines in it, its version is choosable for that child
     # given the earlier lines, its plan is one of that version's and fits, and
-    # a child is in a session at most once.
+    # a child is in a session at most once, never one it already has a place in.
     sub refusal ( $class, $db, $data, $lines ) {
         my $payer = $data->{user_id};
         return 'Sign in to book' unless defined $payer && !ref $payer && $payer =~ $UUID;
-        my %mine = map { $_->id => 1 } Registry::DAO::Family->list_children( $db, $payer )->@*;
+        my %mine = map { $_->id => $_->child_name } Registry::DAO::Family->list_children( $db, $payer )->@*;
         my $at   = $class->now_instant;
         my ( @earlier, %seen, %taking );
         for my $line (@$lines) {
             return 'Choose one of the listed prices'
                 if ref $line ne 'HASH' || grep { !defined || ref } $line->@{@FIELDS};
             my ( $child, $resource_id, $version_id, $plan_id ) = $line->@{@FIELDS};
-            return 'Choose one of your own children' unless $mine{$child};
+            return 'Choose one of your own children' unless exists $mine{$child};
             my $session = $class->session_on_sale( $db, $resource_id )
                 or return 'Choose one of the listed sessions';
             return 'A child can be in a session only once' if $seen{"$child $resource_id"}++;
+            return sprintf '%s already has a place in %s', $mine{$child}, $session->name
+                if $class->has_place( $db, $child, $resource_id );
             return sprintf '%s is full', $session->name if ++$taking{$resource_id} > $session->free_units($db);
             my ($version) = grep { $_->id eq $version_id }
                 $class->choosable( $db, $resource_id, $child, \@earlier, $at )->@*
@@ -103,6 +105,17 @@ class Registry::DAO::WorkflowSteps::SessionCart :isa(Registry::DAO::WorkflowStep
             push @earlier, $line;
         }
         return;
+    }
+
+    # Whether child $child holds a seat in session $resource_id now or later:
+    # active, past due included. Ended entitlements have freed theirs.
+    sub has_place ( $class, $db, $child, $resource_id ) {
+        require Registry::DAO::Entitlement;
+        my $in_effect = Registry::DAO::Entitlement->in_effect_sql( 'e', 'tstzrange(now(), NULL)' );
+        return $db->query( qq{
+            SELECT EXISTS (SELECT 1 FROM entitlement_units u JOIN entitlements e ON e.id = u.entitlement_id
+                            WHERE u.resource_id = ? AND e.holder_family_member_id = ? AND $in_effect)
+        }, $resource_id, $child )->array->[0];
     }
 
     sub policy_words ( $class, $version ) {
