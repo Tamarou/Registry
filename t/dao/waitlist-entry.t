@@ -145,4 +145,15 @@ subtest 'an entry that is not waiting has no position' => sub {
     is Registry::DAO::WaitlistEntry->position( $db, $left->id ),    undef, 'nor has one that left';
 };
 
+subtest 'an offer is refused unless its hold is on the entry\'s session for its run' => sub {
+    my $session = queue();
+    my $entry   = join_queue( $session, child() );
+    my ( $elsewhere, $its_run ) = held_seat( queue() );
+    throws_ok { $entry->offer( $db, $elsewhere, $its_run ) } $REFUSED, 'a hold on another session is refused';
+    my ($hold) = held_seat($session);
+    my ( undef, $other_run ) = held_seat($session);
+    throws_ok { $entry->offer( $db, $hold, $other_run ) } $REFUSED, 'and so is a hold placed for another run';
+    is Registry::DAO::WaitlistEntry->find( $db, { id => $entry->id }, 'id' )->state, 'waiting', 'it still waits';
+};
+
 done_testing;

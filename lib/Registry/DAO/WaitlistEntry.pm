@@ -70,20 +70,23 @@ class Registry::DAO::WaitlistEntry :isa(Registry::DAO::Object) {
             $resource_id )->array->[0];
     }
 
-    # Moves it to $to, with %set, only from one of @from: a stale or repeated
-    # move changes nothing and is refused.
-    method move ( $db, $to, $from, %set ) {
+    # Moves it to $to, setting %$set, only from one of @$from and where %$where
+    # also holds: a stale or repeated move changes nothing and is refused.
+    method move ( $db, $to, $from, $set = {}, $where = {} ) {
         $db = $db->db if $db isa Registry::DAO;
-        my $row = $db->update( 'waitlist_entries', { %set, state => $to },
-            { id => $id, state => { -in => $from } }, { returning => '*' } )->hash;
-        refuse("waitlist entry $id is not @$from, so it cannot become $to") unless $row;
+        my $row = $db->update( 'waitlist_entries', { %$set, state => $to },
+            { %$where, id => $id, state => { -in => $from } }, { returning => '*' } )->hash;
+        refuse("waitlist entry $id is not @$from, or not as asked, so it cannot become $to") unless $row;
         return blessed($self)->new(%$row);
     }
 
-    # A seat held by $hold_id for checkout run $run_id is offered to it.
+    # A seat held by $hold for checkout run $run is offered to it: refused
+    # unless that hold is on its session and was placed for that run.
     method offer ( $db, $hold, $run ) {
         return $self->move( $db, 'offered', ['waiting'],
-            hold_id => $hold, workflow_run_id => $run, offered_at => \'clock_timestamp()' );
+            { hold_id => $hold, workflow_run_id => $run, offered_at => \'clock_timestamp()' },
+            { -bool => \[ q{EXISTS (SELECT 1 FROM holds h WHERE h.id = ? AND h.workflow_run_id = ?
+                                AND h.resource_id = waitlist_entries.resource_id)}, $hold, $run ] } );
     }
 
     method accept ($db) { $self->move( $db, 'accepted', ['offered'] ) }
