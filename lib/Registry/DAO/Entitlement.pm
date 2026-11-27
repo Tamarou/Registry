@@ -385,25 +385,54 @@ their failures. It keeps its units and stays in effect while past due.
         return \@expired;
     }
 
-    # Records that it was used at occurrence $occurrence_id, marked by
-    # $recorded_by. Use is optional attendance: nothing requires a use, and
-    # recording one changes no state, units, period or money. Throws
-    # Registry::DAO::Entitlement::Refused, recording nothing, unless it is in
-    # effect now, its stamped use policy is optional attendance, and it holds
-    # units of that occurrence. A second record of the pair keeps the first.
-    method record_use ( $db, $occurrence_id, $recorded_by = undef ) {
+    # Marks day $event_id $mark (present or absent), by $recorded_by: a day is
+    # its occurrence's event or one of its session's days. Marking changes no
+    # state, units, period or money; a second mark of the day replaces the
+    # first. Throws Registry::DAO::Entitlement::Refused, marking nothing,
+    # unless it is in effect now, its stamped use policy is optional
+    # attendance or makeup, and it holds units of that day's occurrence or
+    # session.
+    method mark_day ( $db, $event_id, $mark, $recorded_by = undef ) {
         $db = $db->db if $db isa Registry::DAO;
         my $refuse = sub ($why) { Registry::DAO::Entitlement::Refused->throw("$why\n") };
+        $refuse->('A day is marked present or absent.')
+            unless defined $mark && !ref $mark && ( $mark eq 'present' || $mark eq 'absent' );
         $refuse->('This booking is not in effect: it has ended or been refunded.')
             unless $self->is_in_effect($db);
+        my $use = ( $self->offer_version($db)->policies->{use} // {} )->{kind} // '';
         $refuse->("This booking's offer does not record attendance.")
-            unless ( ( $self->offer_version($db)->policies->{use} // {} )->{kind} // '' ) eq 'optional_attendance';
-        $refuse->('This booking holds no place in that occurrence.')
-            unless $self->units( $db, $occurrence_id )->@*;
-        $db->insert( 'entitlement_uses',
-            { entitlement_id => $id, occurrence_id => $occurrence_id, recorded_by => $recorded_by },
-            { on_conflict => undef } );
+            unless $use eq 'optional_attendance' || $use eq 'makeup';
+        my $held = $db->query( q{
+            SELECT u.resource_id FROM entitlement_units u
+              JOIN resources r ON r.id = u.resource_id
+              JOIN events ev ON ev.id = r.event_id OR ev.session_resource_id = r.id
+             WHERE u.entitlement_id = ? AND ev.id::text = ? LIMIT 1
+        }, $id, $event_id // '' )->array;
+        $refuse->('This booking holds no place in that occurrence or session.') unless $held;
+        $db->query( q{
+            INSERT INTO entitlement_uses (entitlement_id, occurrence_id, event_id, mark, recorded_by)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (entitlement_id, event_id) DO UPDATE
+               SET mark = EXCLUDED.mark, recorded_by = EXCLUDED.recorded_by, recorded_at = now()
+        }, $id, $held->[0], $event_id, $mark, $recorded_by );
         return $self;
+    }
+
+    # Its marks so far, as { event_id => present or absent }.
+    method day_marks ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        return { map { @$_ } $db->select( 'entitlement_uses', [qw( event_id mark )],
+            { entitlement_id => $id } )->arrays->each };
+    }
+
+    # Marks it present at in-studio occurrence $occurrence_id (a resource):
+    # mark_day on the occurrence's event.
+    method record_use ( $db, $occurrence_id, $recorded_by = undef ) {
+        $db = $db->db if $db isa Registry::DAO;
+        my $event = $db->query( 'SELECT event_id FROM resources WHERE id::text = ?', $occurrence_id // '' )->array;
+        Registry::DAO::Entitlement::Refused->throw("This booking holds no place in that occurrence.\n")
+            unless $event && $event->[0];
+        return $self->mark_day( $db, $event->[0], 'present', $recorded_by );
     }
 
     # Entitlements $payment_id created: what its refunds and disputes match.
