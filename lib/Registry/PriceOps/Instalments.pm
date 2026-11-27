@@ -6,25 +6,20 @@ use utf8;
 
 use Exporter 'import';
 use DateTime;
-use Registry::DAO::PricingPlan;
 
 our @EXPORT_OK = qw( due_dates parts fits );
 
 my %MONTHS = ( monthly => 1, quarterly => 3 );
 
 # $plan's count due dates from $first_date: weekly every seven days; monthly
-# and quarterly each from the one before, clamped to the end of the month
-# as PricingPlan's schedule is (2027-01-31, 2027-02-28, 2027-03-28).
+# and quarterly a whole number of months from the first, clamped to the end
+# of the month, as Stripe bills a schedule (2027-01-31, 02-28, 03-31, 04-30).
 sub due_dates ( $plan, $first_date ) {
     my ( $count, $cadence ) = $plan->@{qw( count cadence )};
     die "unknown cadence '$cadence'\n" unless $cadence eq 'weekly' || $MONTHS{$cadence};
-    my @dates = ($first_date);
-    while ( @dates < $count ) {
-        push @dates, $cadence eq 'weekly'
-            ? _plus_days( $dates[-1], 7 )
-            : Registry::DAO::PricingPlan::_add_months( $dates[-1], $MONTHS{$cadence} );
-    }
-    return \@dates;
+    return [ map {
+        $cadence eq 'weekly' ? _plus_days( $first_date, 7 * $_ ) : _plus_months( $first_date, $MONTHS{$cadence} * $_ )
+    } 0 .. $count - 1 ];
 }
 
 # $total_cents as [ { amount_cents, due_date } ]: the surcharge first, then an
@@ -49,9 +44,14 @@ sub fits ( $plan, $first_date, $last_day ) {
     return due_dates( $plan, $first_date )->[-1] le $last_day;
 }
 
-sub _plus_days ( $date, $days ) {
+sub _date ($date) {
     my ( $y, $m, $d ) = $date =~ /\A([0-9]{4})-([0-9]{2})-([0-9]{2})\z/a or die "not a date: $date\n";
-    return DateTime->new( year => $y, month => $m, day => $d )->add( days => $days )->ymd;
+    return DateTime->new( year => $y, month => $m, day => $d );
 }
+
+sub _plus_days ( $date, $days ) { _date($date)->add( days => $days )->ymd }
+
+# 'limit' keeps the day, or the month's last day when it has fewer.
+sub _plus_months ( $date, $months ) { _date($date)->add( months => $months, end_of_month => 'limit' )->ymd }
 
 1;

@@ -15,12 +15,19 @@ subtest 'quarterly due dates clamp to the end of the month' => sub {
     is_deeply due_dates( { count => 2, cadence => 'quarterly' }, '2027-11-30' ), [qw( 2027-11-30 2028-02-29 )];
 };
 
+subtest 'monthly due dates anchor to the first, not the one before' => sub {
+    is_deeply due_dates( { count => 4, cadence => 'monthly' }, '2027-01-31' ),
+        [qw( 2027-01-31 2027-02-28 2027-03-31 2027-04-30 )], 'as Stripe bills a schedule anchored on the 31st';
+    is_deeply due_dates( { count => 3, cadence => 'quarterly' }, '2027-08-31' ),
+        [qw( 2027-08-31 2027-11-30 2028-02-29 )], 'quarterly across a year end and a leap day';
+};
+
 subtest 'parts split evenly with the remainder on the last' => sub {
     is_deeply parts( 10000, { count => 3, cadence => 'monthly' }, '2027-01-31' ), [
         { amount_cents => 3333, due_date => '2027-01-31' },
         { amount_cents => 3333, due_date => '2027-02-28' },
-        { amount_cents => 3334, due_date => '2027-03-28' },
-    ], 'each part with its due date, chained month by month as PricingPlan does';
+        { amount_cents => 3334, due_date => '2027-03-31' },
+    ], 'each part with its due date, each a whole number of months from the first';
 };
 
 subtest 'a surcharge is added before the split' => sub {
