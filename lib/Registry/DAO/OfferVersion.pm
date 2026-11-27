@@ -9,6 +9,7 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
     use Carp qw( croak );
     use Scalar::Util qw( blessed );
     use Mojo::JSON qw( to_json );
+    use DateTime;
     use Registry::DAO::Resource;
 
     field $id :param :reader;
@@ -149,10 +150,21 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
     # check accepts its absence. A new kind arrives as a new entry here and the
     # workflow step that applies it.
     my $whole    = sub ($v) { defined $v && !ref $v && $v =~ /\A[0-9]+\z/ };
-    my $positive = sub ($v) { $whole->($v) && $v > 0 };
-    my $instant  = sub ($v) {
-        defined $v && !ref $v
-            && $v =~ /\A\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d)?(?:Z|[+-]\d\d:\d\d)\z/;
+    # Day and hour counts stop at ten years' worth, so no later cast overflows.
+    my $capped   = sub ($v) { $whole->($v) && length $v <= 4 && $v <= 3650 };
+    my $positive = sub ($v) { $capped->($v) && $v > 0 };
+    # An ISO 8601 instant with its offset that names a real date and time, as
+    # Postgres will read it: DateTime refuses 2027-02-30 and 25:00, and Postgres
+    # refuses offsets beyond 15:59.
+    my $instant = sub ($v) {
+        return !!0 unless defined $v && !ref $v && $v =~ /\A
+            ([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2})(?::([0-9]{2}))?
+            (?:Z|[+-]([0-9]{2}):([0-9]{2}))\z/x;
+        my ( $y, $mo, $d, $h, $mi, $sec, $oh, $om ) = ( $1, $2, $3, $4, $5, $6 // 0, $7 // 0, $8 // 0 );
+        return !!0 if $oh > 15 || $om > 59;
+        return !!eval {
+            DateTime->new( year => $y, month => $mo, day => $d, hour => $h, minute => $mi, second => $sec );
+        };
     };
     my $uuid = sub ($v) {
         defined $v && !ref $v && $v =~ /\A[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\z/i;
@@ -164,7 +176,7 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
     my %POLICY = (
         refund => {
             none                          => [ { approval => $approval } ],
-            full_until_cutoff             => [ { cutoff_hours => $whole,   approval => $approval },
+            full_until_cutoff             => [ { cutoff_hours => $capped,  approval => $approval },
                                                { cutoff_at    => $instant, approval => $approval } ],
             keep_fee_with_admin_exception => [ { approval => $approval } ],
         },
@@ -290,6 +302,10 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
                 unless @{ $self->payment_plans($db) };
             croak "offer $offer_id version $version has no refund policy"
                 unless exists $policies->{refund};
+            # A draft stored by raw SQL or before a shape was retired never
+            # passed draft's checks; nothing is published unchecked.
+            _check_policies($policies);
+            _check_conditions($conditions);
 
             # Retired first, or the one-current index refuses the publish. Only
             # an older version is retired, so publishing a stale draft over a

@@ -23,10 +23,13 @@ my $o1   = Registry::DAO::Offer->create( $db, { name => 'Autumn term' } )->id;
 my $o2   = Registry::DAO::Offer->create( $db, { name => 'Make-up class' } )->id;
 
 # Whether a draft declaring %terms is accepted, through the real draft path.
+# A refusal must be the vocabulary's; any other error is rethrown, not counted.
 my $n = 0;
 sub accepted (%terms) {
     my $offer = Registry::DAO::Offer->create( $db, { name => 'Vocabulary ' . ++$n } );
-    return eval { $offer->draft( $db, offer_terms( $seat->id, %terms ) ); 1 };
+    return 1 if eval { $offer->draft( $db, offer_terms( $seat->id, %terms ) ); 1 };
+    die $@ unless $@ =~ /malformed|unknown/;
+    return 0;
 }
 sub ok_policy ( $name, $policy ) { accepted( policies => { $name => $policy } ) }
 sub ok_condition ($condition)    { accepted( conditions => [$condition] ) }
@@ -131,6 +134,21 @@ subtest 'each policy refuses an unknown field, a wrong type and a missing requir
     ok !ok_condition( { kind => 'before', at => 'March' } ), 'before an instant that is not one is refused';
     ok !ok_condition( { kind => 'before', at => '2027-03-01T00:00:00Z', until => 1 } ),
         'before with an unknown field is refused';
+    ok !ok_condition( { kind => 'before', at => '2027-02-30T00:00:00Z' } ), 'before at 2027-02-30T00:00:00Z is refused';
+    ok !ok_condition( { kind => 'before', at => '2027-13-45T99:99Z' } ), 'before at 2027-13-45T99:99Z is refused';
+    ok !ok_policy( refund => { kind => 'full_until_cutoff', cutoff_at => '2027-02-30T00:00:00Z' } ),
+        'a refund cutoff_at on 2027-02-30 is refused';
+    ok !ok_condition( { kind => 'before', at => '2027-03-01T00:00:00+99:00' } ), 'an offset of 99 hours is refused';
+    ok ok_condition( { kind => 'before', at => '2028-02-29T23:59:59-05:00' } ), 'a leap day is an instant';
+
+    # Day and hour counts are capped at 3650, so no later cast can overflow.
+    ok ok_policy( refund => { %$cutoff, cutoff_hours => 3650 } ), 'cutoff_hours of 3650 is accepted';
+    ok !ok_policy( refund => { %$cutoff, cutoff_hours => 3651 } ), 'cutoff_hours of 3651 is refused';
+    ok ok_policy( use => { %$makeup, credit_days => 3650 } ), 'credit_days of 3650 is accepted';
+    ok !ok_policy( use => { %$makeup, credit_days => 3651 } ), 'credit_days of 3651 is refused';
+    ok ok_policy( missed_payment => { kind => 'grace', days => 3650 } ), 'grace of 3650 days is accepted';
+    ok !ok_policy( missed_payment => { kind => 'grace', days => 3651 } ), 'grace of 3651 days is refused';
+    ok !ok_policy( missed_payment => { kind => 'grace', days => '9' x 30 } ), 'an absurd grace is refused';
 
     my $draft = Registry::DAO::Offer->create( $db, { name => 'Raw missed payment' } )
         ->draft( $db, offer_terms( $seat->id ) );
@@ -178,6 +196,28 @@ subtest 'the migration refuses a published version carrying offer_id' => sub {
         qr/carry a condition with offer_id.*offer \Q@{[ $offer->id ]}\E version 1/s,
         'it refuses to deploy, naming the published version';
     undef $tx;
+};
+
+subtest 'publish refuses a draft whose stored shapes the vocabulary refuses' => sub {
+    # A draft written before the migration, or by raw SQL, never passed draft's checks.
+    my $raw = sub ( $name, $policies, $conditions ) {
+        my $offer = Registry::DAO::Offer->create( $db, { name => $name } );
+        my $row = $db->query( q{INSERT INTO offer_versions (offer_id, version, resource_id, price_cents,
+                units_per_acceptance, per_booking_cap, policies, conditions)
+            VALUES (?, 1, ?, 1500, 1, 1, ?::jsonb, ?::jsonb) RETURNING *},
+            $offer->id, $seat->id, $policies, $conditions )->expand->hash;
+        $db->insert( 'offer_version_payment_plans', { offer_version_id => $row->{id}, id => 'pay', kind => 'one_time' } );
+        return Registry::DAO::OfferVersion->new(%$row);
+    };
+    my $sibling = $raw->( 'Retired sibling', '{"refund":{"kind":"none"}}',
+        qq{[{"kind":"family_holds_entitlement","offer_id":"$o1"}]} );
+    throws_ok { $sibling->publish($db) } qr/malformed condition 'family_holds_entitlement'/,
+        'a draft with the retired sibling shape is refused at publish';
+    ok !Registry::DAO::OfferVersion->find( $db, { id => $sibling->id } )->is_published, 'and stays a draft';
+
+    my $grace = $raw->( 'Graceless', '{"refund":{"kind":"none"},"missed_payment":{"kind":"grace"}}', '[]' );
+    throws_ok { $grace->publish($db) } qr/malformed missed_payment policy 'grace'/,
+        'a draft with a malformed policy is refused at publish';
 };
 
 done_testing;
