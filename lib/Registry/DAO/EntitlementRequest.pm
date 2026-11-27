@@ -47,6 +47,7 @@ class Registry::DAO::EntitlementRequest :isa(Registry::DAO::Object) {
     # True when this decision is the one taken; false when the request was
     # already decided, so two admins deciding at once get one true between them.
     method decide ( $db, $to, $admin_id, $why = undef ) {
+        croak "unknown decision state '$to': a request is approved or declined" unless $to =~ /\A(?:approved|declined)\z/;
         $db = $db->db if $db isa Registry::DAO;
         return !!$db->update( 'entitlement_requests',
             { state => $to, decided_by => $admin_id, decided_at => \'clock_timestamp()', note => $why },

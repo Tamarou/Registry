@@ -83,4 +83,23 @@ subtest 'pending lists only pending requests oldest first' => sub {
     is_deeply $mine[0]{outcome}, $old->outcome, 'and the outcome';
 };
 
+subtest 'a second decision is refused and the state stays approved' => sub {
+    my $r = request();
+    ok $r->decide( $db, 'approved', $admin->id, 'yes' ), 'the first admin decides';
+    my $other = Test::Registry::Fixtures::create_user( $db, { username => 'er-admin-2' } );
+    ok !$r->decide( $db, 'declined', $other->id, 'no' ), 'the second is told no';
+    my $now = Registry::DAO::EntitlementRequest->for_run( $db, $r->workflow_run_id );
+    is $now->state,      'approved', 'it stays approved';
+    is $now->decided_by, $admin->id, 'by the first admin';
+    is $now->note,       'yes',      'with the first note';
+};
+
+subtest 'an unknown decision state croaks' => sub {
+    my $r = request();
+    throws_ok { $r->decide( $db, $_, $admin->id ) } qr/unknown decision state '\Q$_\E'/, "$_ croaks"
+        for qw( maybe pending );
+    is Registry::DAO::EntitlementRequest->for_run( $db, $r->workflow_run_id )->state, 'pending',
+        'and the request stays pending';
+};
+
 done_testing;
