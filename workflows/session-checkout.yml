@@ -26,3 +26,11 @@ steps:
     label: Cart
     description: Choose a session, a price and a payment plan for each child
     class: Registry::DAO::WorkflowSteps::SessionCart
+
+  # Asks the cart again at this instant, the purchase moment, then holds one
+  # seat per line for the run and writes owed_payment: the cart's one charge,
+  # each child's first charge summed, with each line's share and hold.
+  - slug: hold
+    label: Hold
+    description: Hold the seats while you pay
+    class: Registry::DAO::WorkflowSteps::HoldSessionSeats

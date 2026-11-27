@@ -53,13 +53,14 @@ class Registry::DAO::WorkflowSteps::SessionCart :isa(Registry::DAO::WorkflowStep
     }
 
     # The versions buying session $resource_id that child $child may choose at
-    # $at, given the cart's earlier $lines, cheapest first.
+    # $at, given the cart's earlier $lines, cheapest first. A line holds one
+    # seat, so a version granting more per acceptance is not offered.
     sub choosable ( $class, $db, $resource_id, $child, $lines, $at ) {
         my @earlier = map { {
             family_member_id => $_->{family_member_id},
             offer_id => Registry::DAO::OfferVersion->find( $db, { id => $_->{offer_version_id} } )->offer_id,
         } } @$lines;
-        return [ map { $_->{version} } grep { !$_->{unmet}->@* }
+        return [ map { $_->{version} } grep { !$_->{unmet}->@* && $_->{version}->units_per_acceptance == 1 }
                 Registry::DAO::OfferVersion->choosable_for( $db, $resource_id,
                 { holder_family_member_id => $child, at => $at, cart_lines => \@earlier } )->@* ];
     }
@@ -79,11 +80,13 @@ class Registry::DAO::WorkflowSteps::SessionCart :isa(Registry::DAO::WorkflowStep
     # room for the cart's lines in it, its version is choosable for that child
     # given the earlier lines, its plan is one of that version's and fits, and
     # a child is in a session at most once, never one it already has a place in.
+    # Seats the run already holds for its lines (cart_holds) count as room.
     sub refusal ( $class, $db, $data, $lines ) {
         my $payer = $data->{user_id};
         return 'Sign in to book' unless defined $payer && !ref $payer && $payer =~ $UUID;
         my %mine = map { $_->id => $_->child_name } Registry::DAO::Family->list_children( $db, $payer )->@*;
         my $at   = $class->now_instant;
+        my %own = $class->own_holds( $db, $data );
         my ( @earlier, %seen, %taking );
         for my $line (@$lines) {
             return 'Choose one of the listed prices'
@@ -95,7 +98,8 @@ class Registry::DAO::WorkflowSteps::SessionCart :isa(Registry::DAO::WorkflowStep
             return 'A child can be in a session only once' if $seen{"$child $resource_id"}++;
             return sprintf '%s already has a place in %s', $mine{$child}, $session->name
                 if $class->has_place( $db, $child, $resource_id );
-            return sprintf '%s is full', $session->name if ++$taking{$resource_id} > $session->free_units($db);
+            return sprintf '%s is full', $session->name
+                if ++$taking{$resource_id} > $session->free_units($db) + ( $own{$resource_id} // 0 );
             my ($version) = grep { $_->id eq $version_id }
                 $class->choosable( $db, $resource_id, $child, \@earlier, $at )->@*
                 or return 'Choose one of the listed prices';
@@ -105,6 +109,17 @@ class Registry::DAO::WorkflowSteps::SessionCart :isa(Registry::DAO::WorkflowStep
             push @earlier, $line;
         }
         return;
+    }
+
+    # Per session, how many of the run's cart_holds are live.
+    sub own_holds ( $class, $db, $data ) {
+        my $held = ref $data->{cart_holds} eq 'HASH' ? $data->{cart_holds} : {};
+        my @ids  = grep { defined && !ref && $_ =~ $UUID } values %$held or return;
+        require Registry::PriceOps::Hold;
+        my $live = Registry::PriceOps::Hold->live_sql('holds');
+        return map {@$_} $db->query( qq{
+            SELECT resource_id, count(*) FROM holds WHERE id = ANY(?::uuid[]) AND $live GROUP BY resource_id
+        }, \@ids )->arrays->@*;
     }
 
     # Whether child $child holds a seat in session $resource_id now or later:
@@ -130,6 +145,22 @@ class Registry::DAO::WorkflowSteps::SessionCart :isa(Registry::DAO::WorkflowStep
         return $UNFIT unless $plan->{fits};
         return sprintf 'Pay in %d %s payments of $%s', $plan->@{qw( count cadence )},
             dollars( parts( $version->price_cents, $plan, '2000-01-01' )->[0]{amount_cents} );
+    }
+
+    # Each of the cart $lines in words: child (named by %$name), session,
+    # offer, price and plan.
+    sub summary ( $class, $db, $lines, $name ) {
+        return [ map {
+            my $version = Registry::DAO::OfferVersion->find( $db, { id => $_->{offer_version_id} } );
+            my $line    = $_;
+            my ($plan)  = grep { $_->{id} eq $line->{payment_plan_id} }
+                $class->plans( $db, $version, $line->{resource_id} )->@*;
+            { child   => $name->{ $line->{family_member_id} } // '',
+              session => Registry::DAO::Resource->find( $db, { id => $line->{resource_id} } )->name,
+              offer   => Registry::DAO::Offer->find( $db, { id => $version->offer_id } )->name,
+              price   => dollars( $version->price_cents ),
+              plan    => $plan ? plan_words( $plan, $version ) : '' }
+        } @$lines ];
     }
 
     # The payer's chosen children, eldest first, each with every session on
@@ -174,16 +205,7 @@ class Registry::DAO::WorkflowSteps::SessionCart :isa(Registry::DAO::WorkflowStep
 
         return {
             children => \@shown,
-            lines    => [ map {
-                my $version = Registry::DAO::OfferVersion->find( $db, { id => $_->{offer_version_id} } );
-                my $line    = $_;
-                my ($plan)  = grep { $_->{id} eq $line->{payment_plan_id} }
-                    __PACKAGE__->plans( $db, $version, $line->{resource_id} )->@*;
-                { child   => $name{ $line->{family_member_id} } // '',
-                  session => Registry::DAO::Resource->find( $db, { id => $line->{resource_id} } )->name,
-                  offer   => offer_name($version), price => dollars( $version->price_cents ),
-                  plan    => $plan ? plan_words( $plan, $version ) : '' }
-            } @$lines ],
+            lines    => __PACKAGE__->summary( $db, $lines, \%name ),
         };
     }
 }

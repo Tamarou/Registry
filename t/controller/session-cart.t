@@ -223,4 +223,18 @@ subtest 'a weekly plan past the session end is not listed' => sub {
     refused_with( $t, $cart, qr/Not offered: the last payment would fall after the session ends/ );
 };
 
+subtest 'checkout goes on to the hold screen, which holds each seat' => sub {
+    my $p = priced_session( capacity => 5 );
+    my ( $parent, $kid ) = family('Hal');
+    my ( $t, $cart ) = at_cart( $parent, $kid );
+    add_line( $t, $cart, $kid, $p->{session}, $p->{regular} );
+    $t->post_ok( $cart => form => { action => 'checkout', agree_to_terms => 1,
+        terms_version_shown => Registry::Terms::VERSION } )->status_is(302);
+    like my $hold = $t->tx->res->headers->location, qr{/hold\z}, 'on to the hold';
+    $t->get_ok($hold)->status_is(200)->content_like( qr/\Q${\ $kid->child_name }\E/, 'the cart is listed' );
+    check_screen( $t, 'hold' );
+    $t->post_ok( $t->tx->res->dom->at('#workflow-content form')->attr('action') );
+    is $p->{session}->free_units($db), 4, 'the seat is held';
+};
+
 done_testing;

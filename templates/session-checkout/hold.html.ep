@@ -1,0 +1,25 @@
+%# ABOUTME: session-checkout step: the cart's lines; posting asks the cart again and holds a seat for each child while the parent pays.
+%# ABOUTME: The holds are time-limited; a refusal names what changed and links back to the cart to choose again.
+% extends 'layouts/workflow';
+% title 'Hold your seats';
+% stash description => 'Each child\'s seat is held for a few minutes while you pay.';
+% my $lines = stash('lines') // [];
+%= include 'in-studio-booking/_errors'
+
+% if (stash('errors') && @{ stash('errors') }) {
+<p><a href="<%= url_for('workflow_step', workflow => $workflow, run => $run->id, step => 'cart') %>">Back to your cart to choose again</a></p>
+% }
+
+<section class="card">
+  <h2>Your cart</h2>
+  <ul>
+    % for my $line (@$lines) {
+    <li><%= $line->{child} %>: <%= $line->{session} %>, <%= $line->{offer} %>, $<%= $line->{price} %>. <%= $line->{plan} %></li>
+    % }
+  </ul>
+</section>
+<form method="POST" action="<%= $action %>">
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Hold the seats and continue to payment</button>
+  </div>
+</form>
