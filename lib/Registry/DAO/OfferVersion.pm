@@ -145,52 +145,79 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
 
     # The declared policy shapes: policy => kind => the field sets that kind
     # may carry, each field with its check. A policy must match one field set
-    # exactly; anything else is refused, never guessed at. A new kind arrives
-    # as a new entry here and the workflow step that applies it.
-    my $whole   = sub ($v) { defined $v && !ref $v && $v =~ /\A[0-9]+\z/ };
-    my $instant = sub ($v) {
+    # exactly; anything else is refused, never guessed at. An optional field's
+    # check accepts its absence. A new kind arrives as a new entry here and the
+    # workflow step that applies it.
+    my $whole    = sub ($v) { defined $v && !ref $v && $v =~ /\A[0-9]+\z/ };
+    my $positive = sub ($v) { $whole->($v) && $v > 0 };
+    my $instant  = sub ($v) {
         defined $v && !ref $v
             && $v =~ /\A\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d)?(?:Z|[+-]\d\d:\d\d)\z/;
     };
+    my $uuid = sub ($v) {
+        defined $v && !ref $v && $v =~ /\A[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\z/i;
+    };
+    my $offer_ids = sub ($v) { ref $v eq 'ARRAY' && @$v && !grep { !$uuid->($_) } @$v };
+    my $one_of    = sub (@ok) { sub ($v) { defined $v && !ref $v && grep { $_ eq $v } @ok } };
+    my $optional  = sub ($check) { sub ($v) { !defined $v || $check->($v) } };
+    my $approval  = $optional->( $one_of->(qw( required none )) );
     my %POLICY = (
         refund => {
-            none                          => [ {} ],
-            full_until_cutoff             => [ { cutoff_hours => $whole }, { cutoff_at => $instant } ],
-            keep_fee_with_admin_exception => [ {} ],
+            none                          => [ { approval => $approval } ],
+            full_until_cutoff             => [ { cutoff_hours => $whole,   approval => $approval },
+                                               { cutoff_at    => $instant, approval => $approval } ],
+            keep_fee_with_admin_exception => [ { approval => $approval } ],
         },
         change => {
             none   => [ {} ],
             window => [ {
                 window_hours => $whole,
                 fee_cents    => $whole,
-                # shortcut: only the same offer's occurrences, the day-one rule;
-                # other targets are a new value here when a product needs them.
-                targets => sub ($v) { ( $v // '' ) eq 'same_offer' },
+                targets      => sub ($v) {
+                    ref $v eq 'HASH'
+                        ? keys %$v == 1 && $offer_ids->( $v->{offer_ids} )
+                        : $one_of->(qw( same_offer same_program ))->($v);
+                },
+                price_difference => $optional->( $one_of->(qw( charge_and_refund charge_only same_price_only )) ),
+                approval         => $approval,
             } ],
         },
-        use    => { optional_attendance => [ {} ], none  => [ {} ] },
-        expiry => { end_of_occurrence   => [ {} ], never => [ {} ] },
+        use => {
+            optional_attendance => [ {} ],
+            none                => [ {} ],
+            makeup => [ { offer_id => $uuid, credit_days => $positive, max_per_term => $optional->($positive) } ],
+        },
+        missed_payment => { keep_and_owe => [ {} ], end => [ {} ], grace => [ { days => $positive } ] },
+        expiry         => { end_of_occurrence => [ {} ], never => [ {} ] },
     );
 
-    # True when $data, less its kind, has exactly $shape's fields, each passing.
+    # True when every field of $data, less its kind, is one of $shape's and
+    # present (never null), and each of $shape's checks passes.
     my $fits = sub ( $data, $shape ) {
         my %fields = %$data;
         delete $fields{kind};
-        keys %fields == keys %$shape
-            && !grep { !$shape->{$_} || !$shape->{$_}->( $fields{$_} ) } keys %fields;
+        !grep( { !$shape->{$_} || !defined $fields{$_} } keys %fields )
+            && !grep { !$shape->{$_}->( $fields{$_} ) } keys %$shape;
     };
 
     # Conditions are declared the same way: kind => its fields' checks.
-    my $uuid = sub ($v) {
-        defined $v && !ref $v && $v =~ /\A[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\z/i;
-    };
     my %CONDITION = (
-        # The sibling rate: the holder's family holds an entitlement to offer_id.
-        family_holds_entitlement => { offer_id => $uuid },
+        # The sibling rate: the holder's family holds an entitlement to one of
+        # offer_ids, or to any offer when it is absent.
+        family_holds_entitlement => { offer_ids => $optional->($offer_ids) },
+        # The early-bird rate: chosen only until at.
+        before => { at => $instant },
         # The platform's offer to itself: only the offerer may hold it, so it
         # is not offered to tenants.
         holder_is_offerer => {},
     );
+
+    # What a refund or change policy says about approval: absent is none,
+    # since a published version cannot gain the field.
+    sub approval_for ( $class, $policy ) { $policy->{approval} // 'none' }
+
+    # How a change policy treats a price difference: absent is same_price_only.
+    sub price_difference_for ( $class, $change ) { $change->{price_difference} // 'same_price_only' }
 
     sub _check_conditions ($conditions) {
         croak 'conditions must be a list' unless ref $conditions eq 'ARRAY';
