@@ -1,9 +1,8 @@
 %# ABOUTME: session-setup's expiry-policy screen: when a place in the sessions expires.
-%# ABOUTME: An offer over sessions expires at the end of its session, as an occurrence's does; never is refused.
+%# ABOUTME: An offer over sessions expires at the end of its session, as an occurrence's does; never is not offered.
 % extends 'layouts/workflow';
 % title 'When it expires';
 % stash description => 'Say when what this offer buys stops being usable.';
-% my $chosen = ( stash('expiry_policy') // {} )->{expiry} // '';
 
 % if (my @errors = @{ stash('errors') // [] }) {
 <div class="alert alert-error" role="alert">
@@ -19,12 +18,8 @@
   <fieldset>
     <legend>Expiry policy</legend>
     <div>
-      <input type="radio" id="expiry-end_of_occurrence" name="expiry" value="end_of_occurrence" required<%= $chosen eq 'end_of_occurrence' ? ' checked' : '' %>>
+      <input type="radio" id="expiry-end_of_occurrence" name="expiry" value="end_of_occurrence" required checked>
       <label for="expiry-end_of_occurrence">At the end of the session</label>
-    </div>
-    <div>
-      <input type="radio" id="expiry-never" name="expiry" value="never" required<%= $chosen eq 'never' ? ' checked' : '' %>>
-      <label for="expiry-never">Never: for an offer with no days</label>
     </div>
   </fieldset>
 

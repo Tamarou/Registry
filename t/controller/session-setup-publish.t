@@ -89,6 +89,7 @@ sub publish_version ( $name, $cents, %conditions ) {
     like submit_step( 'change-policy', change => 'window', window_hours => 48, fee_cents => 0, targets => 'same_program',
         price_difference => 'charge_and_refund', approval => 'required' ), qr{/use-policy\z}, 'a change within the program';
     like submit_step( 'use-policy', use => 'optional_attendance' ), qr{/expiry-policy\z}, 'use';
+    $t->element_exists_not( '#workflow-content input[name="expiry"][value="never"]', 'never is not offered over sessions' );
     like submit_step( 'expiry-policy', expiry => 'end_of_occurrence' ), qr{/publish\z}, 'expiry';
     $t->content_like( qr/Week 1/, 'the review names the sessions' );
     if ( my $local = $conditions{early_bird_until} ) {
