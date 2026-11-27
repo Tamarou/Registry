@@ -66,7 +66,8 @@ class Registry::DAO::WorkflowSteps::OfferConditions :isa(Registry::DAO::Workflow
         if ( length $until ) {
             my @at = $until =~ /\A([0-9]{4})-([0-9]{2})-([0-9]{2})[T ]([0-9]{2}):([0-9]{2})\z/;
             return { stay => 1, errors => ['The early-bird time is a date and time like 2027-03-01T00:00'] }
-                unless @at && eval {
+                # Postgres has no year 0; four digits keep it within its range.
+                unless @at && $at[0] > 0 && eval {
                     DateTime->new( year => $at[0], month => $at[1], day => $at[2], hour => $at[3], minute => $at[4] );
                 };
             # The local time in the program location's zone, as an instant, by

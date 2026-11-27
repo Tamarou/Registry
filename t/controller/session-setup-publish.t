@@ -271,6 +271,12 @@ subtest 'an unparseable early-bird time is refused' => sub {
     $t->content_like( qr/The early-bird time is a date and time like 2027-03-01T00:00/, 'and says why' );
 };
 
+subtest 'an early-bird time in year 0 is refused' => sub {
+    to_conditions('Camp year zero');
+    like submit_step( 'conditions', sibling => 'none', early_bird_until => '0000-03-01T00:00' ), qr{/conditions\z}, 'the step stays';
+    $t->content_like( qr/The early-bird time is a date and time like 2027-03-01T00:00/, 'and says why' );
+};
+
 subtest 'a sibling offer retired after the conditions step is refused at publish' => sub {
     my $counted = current('Camp sibling');
     to_conditions('Camp late sibling');
