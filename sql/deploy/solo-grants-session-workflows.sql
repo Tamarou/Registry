@@ -2,7 +2,8 @@
 -- ABOUTME: Each active v2 holder moves onto v3 at the same instant on the same plan; refuses if v3's terms differ from v2's.
 
 -- Deploy registry:solo-grants-session-workflows to pg
--- requires: solo-grants-workflow-set
+-- requires: template-editor-admin-only
+-- (logically it needs solo-grants-workflow-set, which publishes Solo v2)
 
 BEGIN;
 
@@ -19,11 +20,22 @@ INSERT INTO solo_session_workflows (slug) VALUES
     ('session-setup');
 
 DO $$
+DECLARE
+    paid text;
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM registry.offer_versions
                     WHERE id = md5('solo-grants-workflow-set/version')::uuid
                       AND published_at IS NOT NULL AND superseded_at IS NULL) THEN
         RAISE EXCEPTION 'cannot supersede Solo v2: it is not Solo''s current version';
+    END IF;
+    -- The payment link is set only at insert, so a moved holder would lose it.
+    SELECT string_agg(DISTINCT coalesce(t.slug, coalesce(e.holder_user_id, e.holder_family_member_id)::text), ', ')
+      INTO paid
+      FROM registry.entitlements e LEFT JOIN registry.tenants t ON t.id = e.holder_tenant_id
+     WHERE e.offer_version_id = md5('solo-grants-workflow-set/version')::uuid
+       AND e.state = 'active' AND e.payment_id IS NOT NULL;
+    IF paid IS NOT NULL THEN
+        RAISE EXCEPTION 'cannot move Solo v2 holders [%] to v3: their entitlements link a payment', paid;
     END IF;
     IF EXISTS (SELECT 1 FROM registry.resources r JOIN solo_session_workflows w ON r.name = 'run:' || w.slug
                 GROUP BY r.name HAVING count(*) > 1) THEN

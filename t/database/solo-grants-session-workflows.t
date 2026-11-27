@@ -133,4 +133,24 @@ subtest 'refuses when v2 and v3 fees differ' => sub {
     undef $db;
 };
 
+subtest 'refuses to move a v2 holder with a payment link' => sub {
+    my ( $pg, $db ) = at_parent();
+    my $v2     = solo_current($db);
+    my $tenant = $db->query( q{INSERT INTO registry.tenants (name, slug) VALUES ('T paid_v2', 'paid_v2') RETURNING id} )
+        ->array->[0];
+    my $user = $db->query( q{INSERT INTO registry.users (username) VALUES ('paid_v2_payer') RETURNING id} )->array->[0];
+    my $payment = $db->query( 'INSERT INTO registry.payments (user_id) VALUES (?) RETURNING id', $user )->array->[0];
+    $db->query( q{INSERT INTO registry.entitlements
+                      (holder_tenant_id, offer_version_id, payment_plan_id, in_effect, payment_id, payment_share_cents)
+                  VALUES (?, ?, 'revenue_share', tstzrange(now() - interval '1 day', NULL, '[)'), ?, 0)},
+        $tenant, $v2->{id}, $payment );
+    my $err = capture_stderr { dies_ok { deploy($pg) } 'the deploy fails' };
+    like $err, qr/cannot move Solo v2 holders \[paid_v2\] to v3: their entitlements link a payment/, 'naming why';
+    is solo_current($db)->{id}, $v2->{id}, 'Solo v2 is still current';
+    is $db->query( q{SELECT count(*) FROM registry.entitlements
+                      WHERE holder_tenant_id = ? AND state = 'active' AND offer_version_id = ?}, $tenant, $v2->{id} )
+        ->array->[0], 1, 'its holder still holds v2';
+    undef $db;
+};
+
 done_testing;
