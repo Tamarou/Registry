@@ -152,6 +152,7 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
     my $whole    = sub ($v) { defined $v && !ref $v && $v =~ /\A[0-9]+\z/ };
     # Day and hour counts stop at ten years' worth, so no later cast overflows.
     my $capped   = sub ($v) { $whole->($v) && length $v <= 4 && $v <= 3650 };
+    my $hours    = sub ($v) { $whole->($v) && length $v <= 5 && $v <= 87600 };
     my $positive = sub ($v) { $capped->($v) && $v > 0 };
     # An ISO 8601 instant with its offset that names a real date and time, as
     # Postgres will read it: DateTime refuses 2027-02-30 and 25:00, and Postgres
@@ -176,14 +177,14 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
     my %POLICY = (
         refund => {
             none                          => [ { approval => $approval } ],
-            full_until_cutoff             => [ { cutoff_hours => $capped,  approval => $approval },
+            full_until_cutoff             => [ { cutoff_hours => $hours,   approval => $approval },
                                                { cutoff_at    => $instant, approval => $approval } ],
             keep_fee_with_admin_exception => [ { approval => $approval } ],
         },
         change => {
             none   => [ {} ],
             window => [ {
-                window_hours => $whole,
+                window_hours => $hours,
                 fee_cents    => $whole,
                 targets      => sub ($v) {
                     ref $v eq 'HASH'

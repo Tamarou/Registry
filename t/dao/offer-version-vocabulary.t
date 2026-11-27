@@ -141,9 +141,12 @@ subtest 'each policy refuses an unknown field, a wrong type and a missing requir
     ok !ok_condition( { kind => 'before', at => '2027-03-01T00:00:00+99:00' } ), 'an offset of 99 hours is refused';
     ok ok_condition( { kind => 'before', at => '2028-02-29T23:59:59-05:00' } ), 'a leap day is an instant';
 
-    # Day and hour counts are capped at 3650, so no later cast can overflow.
-    ok ok_policy( refund => { %$cutoff, cutoff_hours => 3650 } ), 'cutoff_hours of 3650 is accepted';
-    ok !ok_policy( refund => { %$cutoff, cutoff_hours => 3651 } ), 'cutoff_hours of 3651 is refused';
+    # Day counts are capped at 3650 and hour counts at 87600: ten years, so no later cast can overflow.
+    ok ok_policy( refund => { %$cutoff, cutoff_hours => 4400 } ), 'cutoff_hours of 4400 (about 6 months) is accepted';
+    ok ok_policy( refund => { %$cutoff, cutoff_hours => 87600 } ), 'cutoff_hours of 87600 (10 years) is accepted';
+    ok !ok_policy( refund => { %$cutoff, cutoff_hours => 87601 } ), 'cutoff_hours of 87601 is refused';
+    ok ok_policy( change => { %$window, window_hours => 87600 } ), 'window_hours of 87600 is accepted';
+    ok !ok_policy( change => { %$window, window_hours => 87601 } ), 'window_hours of 87601 is refused';
     ok ok_policy( use => { %$makeup, credit_days => 3650 } ), 'credit_days of 3650 is accepted';
     ok !ok_policy( use => { %$makeup, credit_days => 3651 } ), 'credit_days of 3651 is refused';
     ok ok_policy( missed_payment => { kind => 'grace', days => 3650 } ), 'grace of 3650 days is accepted';
