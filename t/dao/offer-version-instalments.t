@@ -13,6 +13,7 @@ use Test::Registry::Offers qw( offer_terms instalment_plan );
 use Registry::DAO::Resource;
 use Registry::DAO::Offer;
 use Registry::DAO::OfferVersion;
+use Registry::DAO::Entitlement;
 
 my $test_db = Test::Registry::DB->new;
 my $db      = $test_db->db->db;
@@ -76,6 +77,26 @@ subtest 'the database refuses publishing instalments without missed_payment' => 
     my $bare = draft_without_missed_payment();
     throws_ok { $db->query( 'UPDATE offer_versions SET published_at = now() WHERE id = ?', $bare->id ) }
         qr/missed_payment/;
+};
+
+subtest 'a child holds two sessions of one offer on instalments' => sub {
+    my $parent = $db->insert( 'users', { username => 'instalment_parent' }, { returning => 'id' } )->hash->{id};
+    my $kid    = $db->insert( 'family_members',
+        { family_id => $parent, child_name => 'Kit', birth_date => '2018-05-01' }, { returning => 'id' } )->hash->{id};
+    my @sessions = map { Registry::DAO::Resource->create( $db, { name => "Camp week $_", kind => 'finite', capacity => 20 } ) } 1, 2;
+    my $v = Registry::DAO::OfferVersion->draft( $db, new_offer(), offer_terms( undef,
+        resource_ids  => [ map { $_->id } @sessions ],
+        payment_plans => [ instalment_plan() ],
+        policies      => { refund => { kind => 'none' }, missed_payment => { kind => 'keep_and_owe' } } ) )->publish($db);
+    my $buy = sub ($session) {
+        Registry::DAO::Entitlement->grant( $db, {
+            holder_family_member_id => $kid,  payer_user_id   => $parent,
+            offer_version_id        => $v->id, payment_plan_id => 'parts',
+            starts_at => '2027-06-01T00:00:00Z', resource_id => $session->id, units => 1,
+        } );
+    };
+    lives_ok { $buy->( $sessions[0] ) } 'the first session';
+    lives_ok { $buy->( $sessions[1] ) } 'and the second, both in effect at once';
 };
 
 done_testing;

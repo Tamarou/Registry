@@ -1,5 +1,5 @@
 -- ABOUTME: Instalments are a payment plan kind beside one_time: a count, a cadence and an optional surcharge.
--- ABOUTME: A version offering them is published only with a missed_payment policy; registry and every tenant schema.
+-- ABOUTME: Published only with a missed_payment policy, and discrete like one_time; registry and every tenant schema.
 
 -- Deploy registry:instalment-payment-plans to pg
 -- requires: waitlist-entries
@@ -69,6 +69,21 @@ BEGIN
                 AFTER INSERT OR UPDATE OF published_at ON %I.offer_versions
                 DEFERRABLE INITIALLY DEFERRED
                 FOR EACH ROW EXECUTE FUNCTION registry.offer_version_instalments_need_missed_payment()
+        $f$, s);
+
+        -- Instalments buy seats, as one_time does: a child may hold two
+        -- sessions of one offer on instalments at once, so they are not
+        -- schedule phases. priceops-entitlement-one-phase's exclusion,
+        -- default-named as clone_schema names it.
+        CONTINUE WHEN to_regclass(format('%I.entitlements', s)) IS NULL;
+        EXECUTE format($f$
+            ALTER TABLE %1$I.entitlements
+                DROP CONSTRAINT entitlements_coalesce_offer_id_in_effect_excl,
+                ADD CONSTRAINT entitlements_coalesce_offer_id_in_effect_excl EXCLUDE USING gist (
+                    (coalesce(holder_user_id, holder_family_member_id, holder_tenant_id)) WITH =,
+                    offer_id WITH =,
+                    in_effect WITH &&
+                ) WHERE (plan_kind NOT IN ('one_time', 'instalments'))
         $f$, s);
     END LOOP;
 END $$;

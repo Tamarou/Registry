@@ -1,5 +1,5 @@
 -- ABOUTME: Verify every schema's payment plans carry count, cadence and surcharge_pct, and its offer versions
--- ABOUTME: have the trigger refusing to publish instalments without a missed_payment policy.
+-- ABOUTME: have the missed_payment trigger, and the one-phase exclusion leaves instalments out.
 
 -- Verify registry:instalment-payment-plans on pg
 
@@ -20,6 +20,13 @@ BEGIN
                         WHERE tgname = 'offer_versions_instalments_need_missed_payment'
                           AND tgrelid = format('%I.offer_versions', s)::regclass) THEN
             RAISE EXCEPTION 'schema % lacks offer_versions_instalments_need_missed_payment', s;
+        END IF;
+        IF to_regclass(format('%I.entitlements', s)) IS NOT NULL AND NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+             WHERE conrelid = format('%I.entitlements', s)::regclass
+               AND conname = 'entitlements_coalesce_offer_id_in_effect_excl'
+               AND pg_get_constraintdef(oid) LIKE '%instalments%') THEN
+            RAISE EXCEPTION 'schema % still holds instalment entitlements to one phase per offer', s;
         END IF;
     END LOOP;
 END $$;
