@@ -1,0 +1,26 @@
+# ABOUTME: Product design for camp and after-school: an admin creates a program and adds its sessions.
+# ABOUTME: Each session is one finite resource whose days are its events; pricing and policy steps come later.
+
+name: Session Setup
+description: Create a program and add its sessions, each with its days, capacity and waitlist
+slug: session-setup
+roles: [admin]
+
+steps:
+  - slug: program
+    label: Program
+    description: Choose one of your programs, or create one, and the location its sessions meet at
+    template: session-setup/program
+    class: Registry::DAO::WorkflowSteps::SessionProgram
+
+  - slug: sessions
+    label: Sessions
+    description: Add the program's sessions, each with its days, start, length, capacity and waitlist
+    template: session-setup/sessions
+    class: Registry::DAO::WorkflowSteps::SessionDays
+
+  - slug: complete
+    label: Done
+    description: The program's sessions are set up
+    template: session-setup/complete
+    class: Registry::DAO::WorkflowStep

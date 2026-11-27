@@ -1,0 +1,12 @@
+%# ABOUTME: session-setup's last screen: the program's sessions are set up, each a resource with its days.
+%# ABOUTME: Starts another run to set up more sessions; pricing them comes in later steps.
+% extends 'layouts/workflow';
+% title 'Sessions set up';
+
+<section class="card">
+  <h2>The sessions are set up</h2>
+  <p>Each session has its days, capacity and waitlist.</p>
+  <div class="form-actions">
+    <a class="btn btn-secondary" href="<%= url_for('workflow_index', workflow => 'session-setup') %>">Set up more sessions</a>
+  </div>
+</section>

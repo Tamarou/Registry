@@ -1,0 +1,105 @@
+%# ABOUTME: session-setup's sessions step: add a session (days, start, length, capacity, teacher, waitlist) to the program.
+%# ABOUTME: Lists the sessions added so far; Continue moves on once there is at least one.
+% extends 'layouts/workflow';
+% title 'Sessions';
+% stash description => 'Add the sessions of ' . (stash('program_name') // 'the program') . '.';
+
+% if (my @errors = @{ stash('errors') // [] }) {
+<div class="alert alert-error" role="alert">
+  <ul>
+  % for my $error (@errors) {
+    <li><%= ref $error ? $error->{message} : $error %></li>
+  % }
+  </ul>
+</div>
+% }
+
+% my @sessions = @{ stash('session_list') // [] };
+% if (@sessions) {
+<section class="card">
+  <h2>Sessions in <%= stash('program_name') %></h2>
+  <ul>
+  % for my $session (@sessions) {
+    <li>
+      <strong><%= $session->{name} %></strong>:
+      <%= $session->{first_day} %> to <%= $session->{last_day} %>, <%= $session->{days} %> days,
+      <%= $session->{capacity} %> seats,
+      % if ($session->{waitlist}{kind} eq 'queue') {
+      a waitlist holding a freed seat <%= $session->{waitlist}{offer_hold_hours} %> hours
+      % } else {
+      no waitlist
+      % }
+    </li>
+  % }
+  </ul>
+</section>
+% }
+
+<form method="POST" action="<%= $action %>">
+  <div class="form-group">
+    <label class="form-label" for="name">Session name</label>
+    <input class="form-input" type="text" id="name" name="name" required>
+  </div>
+  <div class="form-group">
+    <label class="form-label" for="first_day">First day</label>
+    <input class="form-input" type="date" id="first_day" name="first_day" required>
+  </div>
+  <div class="form-group">
+    <label class="form-label" for="last_day">Last day</label>
+    <input class="form-input" type="date" id="last_day" name="last_day" required>
+  </div>
+
+  <fieldset>
+    <legend>Weekdays it meets</legend>
+    % my @names = qw( Monday Tuesday Wednesday Thursday Friday Saturday Sunday );
+    % for my $day (1 .. 7) {
+    <div>
+      <input type="checkbox" id="weekday-<%= $day %>" name="weekdays" value="<%= $day %>">
+      <label for="weekday-<%= $day %>"><%= $names[$day - 1] %></label>
+    </div>
+    % }
+  </fieldset>
+
+  <div class="form-group">
+    <label class="form-label" for="start">Local start time</label>
+    <input class="form-input" type="time" id="start" name="start" required>
+  </div>
+  <div class="form-group">
+    <label class="form-label" for="minutes">Minutes each day</label>
+    <input class="form-input" type="number" id="minutes" name="minutes" min="1" max="1440" step="1" required>
+  </div>
+  <div class="form-group">
+    <label class="form-label" for="capacity">Capacity (children)</label>
+    <input class="form-input" type="number" id="capacity" name="capacity" min="1" step="1" required>
+  </div>
+  <div class="form-group">
+    <label class="form-label" for="teacher_id">Teacher</label>
+    <select class="form-select" id="teacher_id" name="teacher_id" required>
+      <option value="">Choose a teacher</option>
+      % for my $teacher (@{ stash('teachers') // [] }) {
+      <option value="<%= $teacher->{id} %>"><%= $teacher->{name} %></option>
+      % }
+    </select>
+  </div>
+
+  <fieldset>
+    <legend>Waitlist</legend>
+    <div>
+      <input type="radio" id="waitlist-none" name="waitlist" value="none" required>
+      <label for="waitlist-none">No waitlist</label>
+    </div>
+    <div>
+      <input type="radio" id="waitlist-queue" name="waitlist" value="queue" required>
+      <label for="waitlist-queue">A first-come queue</label>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="offer_hold_hours">Hours a freed seat is held for the next child</label>
+      <input class="form-input" type="number" id="offer_hold_hours" name="offer_hold_hours" min="1" max="9999" step="1">
+    </div>
+  </fieldset>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary" name="action" value="add">Add this session</button>
+    <button type="submit" class="btn btn-secondary" name="action" value="continue" formnovalidate>Continue</button>
+  </div>
+</form>
