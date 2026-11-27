@@ -255,8 +255,7 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
     }
 
     # A payment plan's fields; the database checks each against its kind.
-    # Only those a plan names are written, so a schema migrated before a
-    # kind's columns existed still takes the plans it knows.
+    # draft writes only those a plan names; NULL is the column default.
     my @PLAN_FIELDS = qw( id kind fraction count cadence surcharge_pct );
 
     # Appends the offer's next version number as a draft. $terms names one
@@ -376,9 +375,8 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
     # cadence, surcharge_pct }; a field its kind does not carry is undef.
     method payment_plans ($db) {
         $db = $db->db if $db isa Registry::DAO;
-        return $db->select( 'offer_version_payment_plans', undef,
-            { offer_version_id => $id }, { -asc => 'id' } )->hashes
-            ->map( sub { delete $_->{offer_version_id}; $_ } )->to_array;
+        return $db->select( 'offer_version_payment_plans', [@PLAN_FIELDS],
+            { offer_version_id => $id }, { -asc => 'id' } )->hashes->to_array;
     }
 
     # Publishes this draft and supersedes the offer's current version, in one

@@ -9,9 +9,8 @@ use App::Sqitch;
 use Test::PostgreSQL;
 use Mojo::Pg;
 use Test::Registry::DB ();
-use Test::Registry::Offers qw( offer_terms );
+use Test::Registry::Offers qw( published_as_migrated );
 use Registry::DAO;
-use Registry::DAO::Offer;
 use Registry::DAO::Entitlement;
 
 # Changes graded here.  A leg that ships a migration appends its change name in
@@ -264,11 +263,11 @@ subtest 'entitlement-terms-version revert restores the guard in tenants cloned a
     my $tenant = Registry::DAO->new( url => $to, schema => 'symmetric' )->db;
     my $class  = $tenant->insert( 'projects', { name => 'Class', slug => 'class' }, { returning => 'id' } )
         ->hash->{id};
-    my $version = Registry::DAO::Offer->create( $tenant, { name => 'Wheel class' } )
-        ->draft( $tenant, offer_terms( undef, class_project_id => $class ) )->publish($tenant);
+    # Written as this partial deploy stands; OfferVersion follows the head schema.
+    my $version = published_as_migrated( $tenant, 'Wheel class', class_project_id => $class );
     my $booking = Registry::DAO::Entitlement->create( $tenant, {
         holder_user_id   => $tenant->insert( 'users', { username => 'booker' }, { returning => 'id' } )->hash->{id},
-        offer_version_id => $version->id,
+        offer_version_id => $version,
         payment_plan_id  => 'pay',
         starts_at        => '2020-01-01T00:00:00Z',
         terms_version    => 'draft',
