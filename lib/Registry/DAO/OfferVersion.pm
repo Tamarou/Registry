@@ -255,6 +255,8 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
     }
 
     # A payment plan's fields; the database checks each against its kind.
+    # Only those a plan names are written, so a schema migrated before a
+    # kind's columns existed still takes the plans it knows.
     my @PLAN_FIELDS = qw( id kind fraction count cadence surcharge_pct );
 
     # Appends the offer's next version number as a draft. $terms names one
@@ -276,9 +278,10 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
                 $terms->{currency} // 'usd',
                 $terms->@{qw( units_per_acceptance per_booking_cap )},
                 to_json($policies), to_json($conditions), $offer_id )->expand->hash;
-            $db->insert( 'offer_version_payment_plans',
-                { offer_version_id => $row->{id}, $_->%{@PLAN_FIELDS} } )
-                for ( $terms->{payment_plans} // [] )->@*;
+            for my $plan ( ( $terms->{payment_plans} // [] )->@* ) {
+                $db->insert( 'offer_version_payment_plans', { offer_version_id => $row->{id},
+                    $plan->%{ grep { exists $plan->{$_} } @PLAN_FIELDS } } );
+            }
             $db->insert( 'offer_version_resources', { offer_version_id => $row->{id}, resource_id => $_ } )
                 for ( $terms->{resource_ids} // [] )->@*;
             $row;
@@ -370,8 +373,9 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
     # cadence, surcharge_pct }; a field its kind does not carry is undef.
     method payment_plans ($db) {
         $db = $db->db if $db isa Registry::DAO;
-        return $db->select( 'offer_version_payment_plans', [@PLAN_FIELDS],
-            { offer_version_id => $id }, { -asc => 'id' } )->hashes->to_array;
+        return $db->select( 'offer_version_payment_plans', undef,
+            { offer_version_id => $id }, { -asc => 'id' } )->hashes
+            ->map( sub { delete $_->{offer_version_id}; $_ } )->to_array;
     }
 
     # Publishes this draft and supersedes the offer's current version, in one
