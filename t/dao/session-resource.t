@@ -103,4 +103,34 @@ subtest 'a session entitlement expires at its last day end' => sub {
         'the session still ahead stays active';
 };
 
+subtest 'started sessions are not on sale' => sub {
+    my ($yesterday) = $db->query(q{SELECT ((now() AT TIME ZONE 'America/New_York')::date - 1)::text})->array->@*;
+    ok !make_session( $db, days => [$yesterday] )->on_sale($db), 'its first day was yesterday: not on sale';
+};
+
+subtest 'a queue waitlist without offer hours is refused' => sub {
+    my $made = eval { make_session( $db, waitlist => { kind => 'queue' } ) };
+    like $@, qr/waitlist/, 'a queue with no offer_hold_hours is refused';
+    ok !$made, 'and no session is made';
+    is_deeply make_session( $db, waitlist => { kind => 'queue', offer_hold_hours => 24 } )->waitlist,
+        { kind => 'queue', offer_hold_hours => 24 }, 'with whole hours it is kept';
+};
+
+subtest 'refund cutoff counts back from the first day' => sub {
+    my $s       = make_session($db);
+    my $version = version( $s, { refund => { kind => 'full_until_cutoff', cutoff_hours => 24 } } );
+    my $paid    = Registry::DAO::Payment->create( $db, {
+        user_id => person(), amount_cents => 5000, status => 'completed',
+        stripe_payment_intent_id => 'pi_sr_' . ++$made, metadata => {} } );
+    my $e     = booking( $version, $s, $paid, 5000 );
+    my $first = ( $s->occurrence_window($db) )[0];
+    my $before = sub ($hours) {
+        $db->query( 'SELECT ?::timestamptz - make_interval(hours => ?)', $first, $hours )->array->[0];
+    };
+    my $refusal = sub ($at) { Registry::DAO::WorkflowSteps::ApplyRefundPolicy->refusal( $db, $e, $at ) };
+
+    is $refusal->( $before->(25) ), undef, '25 hours before the first day it is refunded';
+    like $refusal->( $before->(23) ), qr/only until/, '23 hours before the first day it is refused';
+};
+
 done_testing;
