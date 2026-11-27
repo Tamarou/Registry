@@ -81,4 +81,34 @@ subtest 'in-studio record_use records present on the occurrence event' => sub {
     is_deeply marks($e), { $o->event_id => 'present' }, "present on the occurrence's event";
 };
 
+subtest 'a day outside the entitlement is refused' => sub {
+    my $session = make_session($db);
+    my ($other_day) = make_session($db)->session_days($db)->@*;
+    my $e = booking($session);
+    throws_ok { $e->mark_day( $db, $other_day->{id}, 'present', $teacher ) } 'Registry::DAO::Entitlement::Refused',
+        "another session's day is refused";
+    throws_ok { $e->mark_day( $db, occurrence()->event_id, 'present', $teacher ) }
+        'Registry::DAO::Entitlement::Refused', "and so is an occurrence's event it holds no seat in";
+    is_deeply marks($e), {}, 'and nothing is marked';
+};
+
+subtest 'a mark other than present or absent is refused' => sub {
+    my $session = make_session($db);
+    my ($day1) = $session->session_days($db)->@*;
+    my $e = booking($session);
+    throws_ok { $e->mark_day( $db, $day1->{id}, 'late', $teacher ) } qr/present or absent/, 'late is refused';
+    isa_ok $@, 'Registry::DAO::Entitlement::Refused', 'as a refusal';
+    is_deeply marks($e), {}, 'and nothing is marked';
+};
+
+subtest 'an entitlement whose use policy is none cannot be marked' => sub {
+    my $session = make_session($db);
+    my ($day1) = $session->session_days($db)->@*;
+    my $e = booking( $session, { kind => 'none' } );
+    throws_ok { $e->mark_day( $db, $day1->{id}, 'present', $teacher ) } qr/does not record attendance/,
+        'use policy none is refused';
+    isa_ok $@, 'Registry::DAO::Entitlement::Refused', 'as a refusal';
+    is_deeply marks($e), {}, 'and nothing is marked';
+};
+
 done_testing;
