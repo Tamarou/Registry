@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 # ABOUTME: session-setup's step classes called directly: each refuses a run whose user is not an admin here,
-# ABOUTME: so a workflow reusing them without roles: [admin] is still closed.
+# ABOUTME: so a workflow reusing them without roles: [admin] is still closed; a new program clears the run's sessions.
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
 use 5.42.0;
@@ -27,6 +27,7 @@ for my $role (qw( admin staff )) {
     join_tenant( $dao, $user{$role}, $role );
 }
 my $field = Test::Registry::Fixtures::create_location( $db, { name => 'Steps field', slug => 'steps-field' } );
+my $hall  = Test::Registry::Fixtures::create_location( $db, { name => 'Steps hall',  slug => 'steps-hall' } );
 
 my $workflow = $dao->find( Workflow => { slug => 'session-setup' } );
 sub step ($slug) { $workflow->get_step( $db, { slug => $slug } ) }
@@ -53,6 +54,25 @@ subtest 'each step refuses a staff user on the run' => sub {
     my $days = step('sessions')->process( $db, { %WEEK, name => 'Staff week' }, $run );
     like join( ' ', ( $days->{errors} // [] )->@* ), qr/Only an administrator/, 'the sessions step refuses';
     is_deeply [ Registry::DAO::Resource->find( $db, { name => 'Staff week' } ) ], [], 'and makes no session';
+};
+
+subtest 'choosing another program or location starts the run\'s session list afresh' => sub {
+    my $run = start('admin');
+    $run->process( $db, step('program'), { program_mode => 'create', program_name => 'First camp', location_id => $field->id } );
+    $run->process( $db, step('sessions'), {%WEEK} );
+    is scalar $run->data->{sessions}->@*, 1, 'the run lists its first session';
+
+    my $first = $run->data->{session_program}{project_id};
+    $run->process( $db, step('program'), { program_mode => 'existing', project_id => $first, location_id => $field->id } );
+    is scalar $run->data->{sessions}->@*, 1, 'answering the same program again keeps it';
+
+    $run->process( $db, step('program'), { program_mode => 'existing', project_id => $first, location_id => $hall->id } );
+    is_deeply $run->data->{sessions}, [], 'another location starts the list afresh';
+
+    $run->process( $db, step('sessions'), { %WEEK, name => 'Hall week' } );
+    my $other = Test::Registry::Fixtures::create_project( $db, { name => 'Other camp' } );
+    $run->process( $db, step('program'), { program_mode => 'existing', project_id => $other->id, location_id => $hall->id } );
+    is_deeply $run->data->{sessions}, [], 'and so does another program';
 };
 
 done_testing;

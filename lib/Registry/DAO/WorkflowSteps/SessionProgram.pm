@@ -45,7 +45,7 @@ class Registry::DAO::WorkflowSteps::SessionProgram :isa(Registry::DAO::WorkflowS
             my ($program) = $f{project_id} =~ $UUID && grep { $_->id eq $f{project_id} } __PACKAGE__->programs($db);
             push @errors, 'Choose one of your programs' unless $program;
             return { stay => 1, errors => \@errors } if @errors;
-            return { session_program => { project_id => $program->id, location_id => $f{location_id} } };
+            return $self->chosen( $run, $program->id, $f{location_id} );
         }
 
         my $name = $f{program_name} =~ s/\A\s+|\s+\z//gr;
@@ -70,7 +70,15 @@ class Registry::DAO::WorkflowSteps::SessionProgram :isa(Registry::DAO::WorkflowS
         }
         $tx->commit if $tx;
 
-        return { session_program => { project_id => $created, location_id => $f{location_id} } };
+        return $self->chosen( $run, $created, $f{location_id} );
+    }
+
+    # The run's program and location; another than before starts the run's
+    # session list afresh, so the sessions step lists only this program's.
+    method chosen ( $run, $project_id, $location_id ) {
+        my $before = $run->data->{session_program} // {};
+        my $same   = ( $before->{project_id} // '' ) eq $project_id && ( $before->{location_id} // '' ) eq $location_id;
+        return { session_program => { project_id => $project_id, location_id => $location_id }, $same ? () : ( sessions => [] ) };
     }
 
     method prepare_template_data ( $db, $run, $params = {} ) {
