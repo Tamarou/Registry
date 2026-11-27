@@ -302,6 +302,22 @@ subtest 'a booking refund cannot be planted by a client' => sub {
     ok !exists data_for($run_id)->{booking_refund}, 'nor at run creation';
 };
 
+subtest 'a session cart and its owed charge cannot be planted by a client' => sub {
+    # SessionCart writes cart_lines, each line one it would offer the payer;
+    # owed_payment is the amount and lines the payment step charges. Planted,
+    # either is a child, a price or an amount of the client's choosing.
+    for my $key (qw( cart_lines owed_payment )) {
+        for my $form ( { $key => 'planted' }, { "${key}[amount_cents]" => 1 }, { "${key}[0][offer_version_id]" => 'planted' } ) {
+            my $run = run_on_second_step();
+            $t->post_ok("/run-data-test/${\ $run->id}/complete" => form => $form)->status_is(201);
+            ok !exists data_for($run->id)->{$key}, "a posted $key is not stored";
+        }
+        $t->post_ok('/run-data-test' => form => { $key => 'planted' })->status_is(302);
+        my ($run_id) = $t->tx->res->headers->location =~ m{/run-data-test/([^/]+)/};
+        ok !exists data_for($run_id)->{$key}, 'nor at run creation';
+    }
+};
+
 subtest 'a stored Stripe event cannot be named by a client' => sub {
     # stripe_event_id names the stored Connect event an entitlement-stripe-move
     # run applies; only the Connect endpoint sets it, when it creates the run.

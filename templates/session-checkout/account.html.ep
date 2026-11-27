@@ -1,0 +1,43 @@
+%# ABOUTME: session-checkout step: the parent continues as the signed-in person, signs in, or creates an account.
+%# ABOUTME: AccountCheck as in other public workflows; a new account is sent a sign-in link by email.
+% extends 'layouts/workflow';
+% title 'Your account';
+% stash description => 'Sign in or create an account to book your children.';
+% my $data = $run ? $run->data // {} : {};
+%= include 'in-studio-booking/_errors'
+
+% if ($data->{user_id}) {
+<p>Signed in as <%= $data->{user_name} // '' %>.</p>
+<form method="POST" action="<%= $action %>">
+  <input type="hidden" name="action" value="continue_logged_in">
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Continue</button>
+  </div>
+</form>
+% } else {
+<form method="POST" action="<%= $action %>">
+  <input type="hidden" name="action" value="login">
+  <div class="form-actions">
+    <button type="submit" class="btn btn-secondary">Sign in</button>
+  </div>
+</form>
+
+<form method="POST" action="<%= $action %>">
+  <input type="hidden" name="action" value="create_account">
+  <div class="form-group">
+    <label class="form-label" for="name">Full name</label>
+    <input class="form-input" type="text" id="name" name="name" required>
+  </div>
+  <div class="form-group">
+    <label class="form-label" for="email">Email</label>
+    <input class="form-input" type="email" id="email" name="email" required>
+  </div>
+  <div class="form-group">
+    <label class="form-label" for="username">Username</label>
+    <input class="form-input" type="text" id="username" name="username" required>
+  </div>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Create an account</button>
+  </div>
+</form>
+% }

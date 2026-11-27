@@ -144,9 +144,11 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # agreed_terms_version is the /terms version a booking is stamped with;
         # only Registry::Terms::record_agreement writes it.
         # booking_refund names the payment CompleteBooking refunds; only it writes it.
+        # cart_lines is a session cart's children, sessions, prices and plans;
+        # only SessionCart writes it, once every line is one it would offer.
         for my $key ( keys %$data ) {
             delete $data->{$key}
-                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_offer_version|__remote_address|stripe_account_id|tenant|change_hold|change_entitlement_id|change_targets|change_needs_admin|owed_payment|owed_payment_id|__driver|retry|stripe_event_id|refund_entitlement_id|booking_hold|agreed_terms_version|booking_refund)(?:\[|\z)/;
+                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_offer_version|__remote_address|stripe_account_id|tenant|change_hold|change_entitlement_id|change_targets|change_needs_admin|owed_payment|owed_payment_id|__driver|retry|stripe_event_id|refund_entitlement_id|booking_hold|agreed_terms_version|booking_refund|cart_lines)(?:\[|\z)/;
         }
 
         # Mojolicious fills remote_address from X-Forwarded-For only in
@@ -194,6 +196,23 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
           if $run && $data->{__tenant_slug};
 
         return $data;
+    }
+
+    method _record_signed_in_user ( $run, $step ) {
+        # If the authenticated user is not yet recorded in this run's data,
+        # store them now so that the account-check step can render the
+        # "already logged in" branch.
+        #
+        # This mutates run data on a GET. It is safe: idempotent (guarded by
+        # !$run->data->{user_id}), scoped to an AccountCheck step (by class, not
+        # slug: in-studio-booking's is `account`), and merely records the
+        # already-authenticated session user — no external effect.
+        return $run unless $step && $step isa Registry::DAO::WorkflowSteps::AccountCheck;
+        my $current_user = $self->stash('current_user');
+        return $run unless ref $current_user && $current_user->{id} && !$run->data->{user_id};
+        $run->update_data( $self->dao->db, { user_id => $current_user->{id},
+            user_name => $current_user->{name} || '', user_email => $current_user->{email} || '' } );
+        return $run;
     }
 
     method index() {
@@ -244,6 +263,8 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
             || $workflow->first_step($dao->db);
 
         return unless $step;
+        # session-checkout starts at its account step.
+        $run = $self->_record_signed_in_user( $run, $step );
 
         my $data_json = Mojo::JSON::encode_json($run->data || {});
         my $errors_json = Mojo::JSON::encode_json($self->flash('validation_errors') || []);
@@ -447,31 +468,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
                 { payment_intent_id => $intent } );
         }
 
-        # If the authenticated user is not yet recorded in this run's data,
-        # store them now so that the account-check step can render the
-        # "already logged in" branch.
-        #
-        # This mutates run data on a GET. It is safe: idempotent (guarded by
-        # !$run->data->{user_id}), scoped to an AccountCheck step (by class, not
-        # slug: in-studio-booking's is `account`), and merely records the
-        # already-authenticated session user — no external effect.
-        if ($step && $step isa Registry::DAO::WorkflowSteps::AccountCheck) {
-            my $current_user = $self->stash('current_user');
-            if ($current_user && !$run->data->{user_id}) {
-                my $uid  = ref $current_user ? $current_user->{id} : undef;
-                my $name = ref $current_user ? ($current_user->{name} || '') : '';
-                my $email = ref $current_user ? ($current_user->{email} || '') : '';
-                if ($uid) {
-                    $dao->db->query(
-                        q{UPDATE workflow_runs SET data = COALESCE(data,'{}') || ?::jsonb WHERE id = ?},
-                        Mojo::JSON::encode_json({ user_id => $uid, user_name => $name, user_email => $email }),
-                        $run->id,
-                    );
-                    # Reload run so $run->data is fresh for template rendering.
-                    ($run) = $dao->find(WorkflowRun => { id => $run->id });
-                }
-            }
-        }
+        $run = $self->_record_signed_in_user( $run, $step );
 
         # Get data for rendering.
         #

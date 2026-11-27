@@ -1,0 +1,28 @@
+# ABOUTME: Public session checkout: a parent signs in, chooses children, and puts each child in a session at a price they qualify for.
+# ABOUTME: One cart line per child and session; holding the seats, the one charge and completion follow the cart.
+
+name: Session Checkout
+description: Book children into camp and after-school sessions
+slug: session-checkout
+# Anyone may walk into this workflow, deliberately: the gate admits anyone to a
+# workflow with the public mark. t/security/workflow-roles-cover-every-workflow.t
+# enforces that every workflow declares roles or this mark.
+public: true
+
+steps:
+  - slug: account
+    label: Your account
+    description: Sign in or create an account
+    class: Registry::DAO::WorkflowSteps::AccountCheck
+
+  - slug: children
+    label: Children
+    description: Choose the children to book
+    class: Registry::DAO::WorkflowSteps::SelectChildren
+
+  # Writes cart_lines, one per child and session, in the order shown, and
+  # records the /terms agreement before the run moves on.
+  - slug: cart
+    label: Cart
+    description: Choose a session, a price and a payment plan for each child
+    class: Registry::DAO::WorkflowSteps::SessionCart

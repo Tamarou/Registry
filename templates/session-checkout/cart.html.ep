@@ -1,0 +1,78 @@
+%# ABOUTME: session-checkout step: the cart's lines, and for each chosen child every session on sale with the prices it qualifies for.
+%# ABOUTME: The cheapest price's first fitting plan is preselected; a full session offers the waitlist; checkout agrees to /terms.
+% extends 'layouts/workflow';
+% title 'Your cart';
+% stash description => 'Choose a session, a price and a payment plan for each child.';
+% my $children = stash('children') // [];
+% my $lines = stash('lines') // [];
+%= include 'in-studio-booking/_errors'
+
+% if (@$lines) {
+<section class="card">
+  <h2>In your cart</h2>
+  <ul>
+    % for my $line (@$lines) {
+    <li><%= $line->{child} %>: <%= $line->{session} %>, <%= $line->{offer} %>, $<%= $line->{price} %>. <%= $line->{plan} %></li>
+    % }
+  </ul>
+  <form method="POST" action="<%= $action %>">
+    <input type="hidden" name="action" value="checkout">
+    <div>
+      <input type="checkbox" id="agree_to_terms" name="agree_to_terms" value="1" required>
+      <label for="agree_to_terms">I agree to the <a href="/terms">terms of service</a> and each price's policies.</label>
+      <input type="hidden" name="terms_version_shown" value="<%= Registry::Terms::VERSION %>">
+    </div>
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">Continue</button>
+    </div>
+  </form>
+</section>
+% } else {
+<p>Read the <a href="/terms">terms of service</a>; you agree to them before you continue.</p>
+% }
+
+% for my $child (@$children) {
+<section class="card">
+  <h2><%= $child->{name} %></h2>
+  % for my $session (@{ $child->{sessions} }) {
+  <h3><%= $session->{name} %></h3>
+  % if ($session->{full}) {
+  <p>This session is full.</p>
+  <button type="button" class="btn btn-secondary" disabled>Join the waitlist</button>
+  % } else {
+  <form method="POST" action="<%= $action %>" id="line-<%= $child->{id} %>-<%= $session->{id} %>">
+    <input type="hidden" name="action" value="add_line">
+    <input type="hidden" name="family_member_id" value="<%= $child->{id} %>">
+    <input type="hidden" name="resource_id" value="<%= $session->{id} %>">
+    <fieldset>
+      <legend>Prices you qualify for</legend>
+      % for my $price (@{ $session->{prices} }) {
+      <div class="card">
+        <p><%= $price->{name} %>: $<%= $price->{price} %></p>
+        % for my $plan (@{ $price->{plans} }) {
+        % my $value = "$price->{id}/$plan->{id}";
+        % if ($plan->{fits}) {
+        <div>
+          <input type="radio" id="choice-<%= $child->{id} %>-<%= $value %>" name="choice" value="<%= $value %>" required <%= $value eq $session->{preselected} ? 'checked' : '' %>>
+          <label for="choice-<%= $child->{id} %>-<%= $value %>"><%= $plan->{words} %></label>
+        </div>
+        % } else {
+        <p><%= $plan->{words} %></p>
+        % }
+        % }
+        <ul>
+          % for my $words (@{ $price->{policy} }) {
+          <li><%= $words %></li>
+          % }
+        </ul>
+      </div>
+      % }
+    </fieldset>
+    <div class="form-actions">
+      <button type="submit" class="btn btn-secondary">Add to cart</button>
+    </div>
+  </form>
+  % }
+  % }
+</section>
+% }
