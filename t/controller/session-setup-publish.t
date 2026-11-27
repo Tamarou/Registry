@@ -16,8 +16,13 @@ use Test::Registry::Helpers qw( authenticate_as import_all_workflows join_tenant
 use Registry;
 use Registry::DAO;
 use Registry::DAO::Offer;
+use Registry::DAO::Project;
 use Registry::DAO::Resource;
 use Registry::DAO::WorkflowRun;
+
+# Many screens from one client in a minute: lift the per-IP limit, as
+# signup-lists-platform-offers.t does.
+$Registry::Middleware::RateLimit::GENERAL_LIMIT = $Registry::Middleware::RateLimit::AUTH_LIMIT = 10_000;
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -97,6 +102,24 @@ sub another_price () {
     $t->content_like( qr/Week 1/ )->content_like( qr/Week 2/, 'offer-basics lists the program\'s sessions' );
 }
 
+# The run the client is on, read from its URL.
+sub this_run () {
+    my ($id) = $t->tx->req->url->path =~ m{/([0-9a-f-]{36})/};
+    return scalar Registry::DAO::WorkflowRun->find( $db, { id => $id } );
+}
+
+# A new run on Lake camp, to its conditions step, for a price named $name.
+sub to_conditions ($name) {
+    my ($program) = Registry::DAO::Project->find( $db, { name => 'Lake camp' } );
+    $t->get_ok('/session-setup')->status_is(200);
+    like submit_step( 'program', program_mode => 'existing', project_id => $program->id, location_id => $site->id ),
+        qr{/sessions\z}, 'a run on Lake camp';
+    like submit_step( 'sessions', action => 'continue' ), qr{/offer-basics\z}, 'past its sessions';
+    like submit_step( 'offer-basics', resource_ids => [ map { $_->id } @sessions ], offer_name => $name ), qr{/offer-price\z};
+    like submit_step( 'offer-price', price_cents => 20000, currency => 'USD', units_per_acceptance => 1, per_booking_cap => 1 ),
+        qr{/conditions\z}, "$name is at its conditions";
+}
+
 sub current ($name) {
     my ($offer) = Registry::DAO::Offer->find( $db, { name => $name } );
     return $offer && $offer->current_version($db);
@@ -162,6 +185,24 @@ subtest 'a version with no sessions chosen is refused' => sub {
     my $result = $publish->process( $db, { action => 'publish' }, $run );
     like join( ' ', ( $result->{errors} // [] )->@* ), qr/Choose at least one of the program's sessions/, 'publish refuses it too';
     ok !Registry::DAO::Offer->find( $db, { name => 'Camp nothing' } ), 'and no offer is made';
+};
+
+subtest 'an early bird in the fall-back hour is its earlier instant' => sub {
+    to_conditions('Camp fall back');
+    like submit_step( 'conditions', sibling => 'none', early_bird_until => '2027-11-07T01:30' ), qr{/one-time-payment\z};
+    is_deeply this_run()->data->{conditions}, [ { kind => 'before', at => '2027-11-07T05:30:00Z' } ],
+        '01:30 on 2027-11-07 in New York is first 01:30 EDT, 05:30 UTC';
+};
+
+subtest 'an early bird in the spring-forward gap is shown as moved' => sub {
+    to_conditions('Camp spring');
+    like submit_step( 'conditions', sibling => 'none', early_bird_until => '2027-03-14T02:30' ), qr{/conditions\z},
+        'the step stays to show the move';
+    $t->content_like( qr/2027-03-14 02:30 does not exist .* it ends at 2027-03-14 03:30/s, 'the moved time is shown' );
+    is_deeply this_run()->data->{conditions}, [ { kind => 'before', at => '2027-03-14T07:30:00Z' } ], 'and recorded';
+    $t->element_exists( '#workflow-content input[name="early_bird_until"][value="2027-03-14T03:30"]', 'and refilled' );
+    like submit_step( 'conditions', sibling => 'none', early_bird_until => '2027-03-14T03:30' ), qr{/one-time-payment\z},
+        'continuing with it goes on';
 };
 
 done_testing;

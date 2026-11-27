@@ -16,6 +16,12 @@
 </div>
 % }
 
+% if (my $shifted = stash('shifted')) {
+<section class="card" role="status">
+  <p><%= $shifted->{asked} %> does not exist in the location's time: the clocks go forward then, so it ends at <%= $shifted->{local_start} %>. Continue to keep it, or change it.</p>
+</section>
+% }
+
 <form method="POST" action="<%= $action %>">
   <fieldset>
     <legend>Sibling price</legend>
