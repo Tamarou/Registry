@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
-# ABOUTME: Tests for SelectChildren workflow step using real production interfaces
-# ABOUTME: Validates child selection, addition, and workflow progression functionality
+# ABOUTME: Tests for session-checkout's children step (SelectChildren) using real production interfaces
+# ABOUTME: Validates child selection from the payer's own family, addition, and moving on to the cart
 use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
@@ -27,23 +27,9 @@ my $tenant = Test::Registry::Fixtures::create_tenant($dao->db, {
 $dao = Registry::DAO->new(url => $test_db->uri, schema => 'test_select_children');
 my $db = $dao->db;
 
-# Create workflow
-my $workflow = Registry::DAO::Workflow->create($db, {
-    name => 'Test Multi-Child Workflow',
-    slug => 'test-multi-child-workflow',
-    description => 'Test workflow for multi-child enrollment'
-});
-
-# Add select children workflow step
-my $select_children_step_data = Registry::DAO::WorkflowStep->create($db, {
-    workflow_id => $workflow->id,
-    slug => 'select-children',
-    class => 'Registry::DAO::WorkflowSteps::SelectChildren',
-    description => 'Child selection step'
-});
-
-# Update workflow to set first step
-$workflow->update($db, { first_step => 'select-children' }, { id => $workflow->id });
+# session-checkout, as shipped: its children step comes before the cart.
+$dao->import_workflows(['workflows/session-checkout.yml']);
+my $workflow = $dao->find( Workflow => { slug => 'session-checkout' } );
 
 # Create test parent user
 my $parent = Registry::DAO::User->create($db, {
@@ -87,7 +73,7 @@ subtest 'Initial page load without user_id' => sub {
     my $run = $workflow->new_run($db);
 
     # Get the actual step from database
-    my $step = $workflow->get_step($db, { slug => 'select-children' });
+    my $step = $workflow->get_step($db, { slug => 'children' });
 
     # Process step without user_id in run data
     my $result = $step->process($db, {});
@@ -106,7 +92,7 @@ subtest 'Initial page load with user_id' => sub {
     });
 
     # Get the actual step from database
-    my $step = $workflow->get_step($db, { slug => 'select-children' });
+    my $step = $workflow->get_step($db, { slug => 'children' });
 
     # Process step without action (first visit)
     my $result = $step->process($db, {});
@@ -119,7 +105,7 @@ subtest 'Add new child validation errors' => sub {
     my $run = $workflow->new_run($db);
     $run->update_data($db, { user_id => $parent->id });
 
-    my $step = $workflow->get_step($db, { slug => 'select-children' });
+    my $step = $workflow->get_step($db, { slug => 'children' });
 
     # Test missing required fields
     my $result = $step->process($db, {
@@ -145,7 +131,7 @@ subtest 'Add new child with invalid birth date format' => sub {
     my $run = $workflow->new_run($db);
     $run->update_data($db, { user_id => $parent->id });
 
-    my $step = $workflow->get_step($db, { slug => 'select-children' });
+    my $step = $workflow->get_step($db, { slug => 'children' });
 
     my $result = $step->process($db, {
         action => 'add_child',
@@ -164,7 +150,7 @@ subtest 'Successfully add new child' => sub {
     my $run = $workflow->new_run($db);
     $run->update_data($db, { user_id => $parent->id });
 
-    my $step = $workflow->get_step($db, { slug => 'select-children' });
+    my $step = $workflow->get_step($db, { slug => 'children' });
 
     my $result = $step->process($db, {
         action => 'add_child',
@@ -208,7 +194,7 @@ subtest 'Continue without selecting children' => sub {
     my $run = $workflow->new_run($db);
     $run->update_data($db, { user_id => $parent->id });
 
-    my $step = $workflow->get_step($db, { slug => 'select-children' });
+    my $step = $workflow->get_step($db, { slug => 'children' });
 
     my $result = $step->process($db, {
         action => 'continue',
@@ -224,9 +210,9 @@ subtest 'Continue with selected children' => sub {
     my $run = $workflow->new_run($db);
     $run->update_data($db, { user_id => $parent->id });
 
-    my $step = $workflow->get_step($db, { slug => 'select-children' });
+    my $step = $workflow->get_step($db, { slug => 'children' });
 
-    my $result = $step->process($db, {
+    my $result = $run->process($db, $step, {
         action => 'continue',
         "child_" . $child1->id => 1,
         "child_" . $child2->id => 1,
@@ -234,11 +220,10 @@ subtest 'Continue with selected children' => sub {
 
     ok !$result->{stay}, 'Moves to next step';
     ok !$result->{errors}, 'No errors';
-    is $result->{next_step}, 'session-selection', 'Moves to session-selection step';
+    is $run->next_step($db)->slug, 'cart', 'Moves on to the cart';
 
     # Check run data was updated
-    my $updated_run = $workflow->latest_run($db);
-    my $data = $updated_run->data;
+    my $data = $run->data;
 
     ok $data->{selected_child_ids}, 'Selected child IDs stored';
     is scalar(@{$data->{selected_child_ids}}), 2, 'Two children selected';
@@ -254,7 +239,7 @@ subtest 'Validation method tests' => sub {
     my $run = $workflow->new_run($db);
     $run->update_data($db, { user_id => $parent->id });
 
-    my $step = $workflow->get_step($db, { slug => 'select-children' });
+    my $step = $workflow->get_step($db, { slug => 'children' });
 
     # Test add_child validation
     my $errors = $step->validate($db, {
@@ -290,7 +275,7 @@ subtest 'HTMX response for add child' => sub {
     my $run = $workflow->new_run($db);
     $run->update_data($db, { user_id => $parent->id });
 
-    my $step = $workflow->get_step($db, { slug => 'select-children' });
+    my $step = $workflow->get_step($db, { slug => 'children' });
 
     my $result = $step->process($db, {
         action => 'add_child',
@@ -330,7 +315,7 @@ subtest 'the step supplies the run family children, not the template' => sub {
     my $run = $workflow->new_run($db);
     $run->update_data($db, { user_id => $parent->id });
 
-    my $step = $workflow->get_step($db, { slug => 'select-children' });
+    my $step = $workflow->get_step($db, { slug => 'children' });
     my $data = $step->prepare_template_data($db, $run);
 
     ok $data->{children}, 'the step hands the template a children list';
@@ -338,5 +323,25 @@ subtest 'the step supplies the run family children, not the template' => sub {
         "and it holds no other family's child";
 };
 
+# The checkboxes name ids; only the payer's own children may be chosen, and a
+# choice naming any other family's child is refused entire.
+subtest "another family's child cannot be chosen" => sub {
+    my $other = Registry::DAO::User->create($db, {
+        email => 'sc-stranger@example.com', username => 'scstranger',
+        password => 'password123', name => 'Stranger Parent', user_type => 'parent' });
+    my $theirs = Registry::DAO::Family->add_child($db, $other->id, {
+        child_name => 'Their Child', birth_date => '2015-06-15', grade => '3',
+        medical_info => {}, emergency_contact => { name => 'x', phone => '5' } });
+
+    my $run = $workflow->new_run($db);
+    $run->update_data($db, { user_id => $parent->id });
+    my $step = $workflow->get_step($db, { slug => 'children' });
+
+    my $result = $run->process($db, $step, {
+        action => 'continue', 'child_' . $child1->id => 1, 'child_' . $theirs->id => 1 });
+    like $result->{errors}[0], qr/not in your family/, 'refused';
+    ok !exists $run->data->{selected_child_ids}, 'and nothing is chosen';
+    isnt $run->next_step($db)->slug, 'cart', 'the run does not move on to the cart';
+};
 
 done_testing;

@@ -6,7 +6,7 @@ use warnings;
 package Test::Registry::Sessions;
 
 use Exporter 'import';
-our @EXPORT_OK = qw( make_session session_offer );
+our @EXPORT_OK = qw( make_session session_offer cart_run add_cart_line );
 
 use Test::Registry::Fixtures;
 use Test::Registry::Offers qw( offer_terms );
@@ -43,6 +43,24 @@ sub session_offer ( $db, $session, %terms ) {
     my $n = ++$made;
     return Registry::DAO::Offer->create( $db, { name => "Session offer $n" } )
         ->draft( $db, offer_terms( $session->id, %terms ) )->publish($db);
+}
+
+# cart_run($dao, $payer_id, @child_ids): a session-checkout run whose signed-in
+# payer is $payer_id with @child_ids chosen, and its cart step. Imports the
+# workflow into $dao's schema.
+sub cart_run ( $dao, $payer_id, @child_ids ) {
+    $dao->import_workflows( ['workflows/session-checkout.yml'] );
+    my $db       = $dao->db;
+    my $workflow = $dao->find( Workflow => { slug => 'session-checkout' } );
+    my $run      = $workflow->new_run($db);
+    $run->update_data( $db, { user_id => $payer_id, selected_child_ids => \@child_ids } );
+    return ( $run, $workflow->get_step( $db, { slug => 'cart' } ) );
+}
+
+# add_cart_line($db, $run, $step, %line): posts a line to the cart as its page
+# does (family_member_id, resource_id, choice); returns the step's result.
+sub add_cart_line ( $db, $run, $step, %line ) {
+    return $run->process( $db, $step, { action => 'add_line', %line } );
 }
 
 1;
