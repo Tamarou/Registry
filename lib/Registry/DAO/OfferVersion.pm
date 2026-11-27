@@ -357,7 +357,7 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
                        AND ( v.resource_id = ?
                           OR v.id IN (SELECT offer_version_id FROM offer_version_resources WHERE resource_id = ?)
                           OR v.class_project_id IN (SELECT e.project_id FROM resources r
-                                                      JOIN events e ON e.id = r.event_id OR e.session_resource_id = r.id
+                                                      JOIN events e ON e.id = r.event_id
                                                      WHERE r.id = ?) )
                      ORDER BY v.price_cents, o.name, v.id
                 }, ($resource_id) x 3 )->expand->hashes->map( sub { $class->new(%$_) } )->each ];
