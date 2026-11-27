@@ -121,3 +121,31 @@ subtest 'cancelling records the entitlement before asking stripe' => sub {
         'under a key named for the entitlement';
     is_deeply cancelled($c), [ $c->{entitlement}->id ], 'and the record stays';
 };
+
+subtest 'a second job run inserts nothing' => sub {
+    my $c = instalment_checkout( $db, slug => $seller );
+    my ( $first, $second );
+    with_stripe( sub { $first = $c->{payment}->schedule_instalments_for( $db, $c->{entitlement} ) } );
+    my $before = rows($c);
+
+    # A retried job loads the charge afresh.
+    my $calls = with_stripe( sub {
+        $second = Registry::DAO::Payment->find( $db, { id => $c->{payment}->id } )
+            ->schedule_instalments_for( $db, $c->{entitlement} );
+    } );
+    is $second, $first, 'it returns the recorded schedule';
+    is_deeply rows($c), $before, 'and inserts no row';
+    is_deeply $calls, [], 'without asking Stripe';
+};
+
+subtest 'a second cancel does nothing' => sub {
+    my $c = instalment_checkout( $db, slug => $seller );
+    my $calls = with_stripe( sub {
+        $c->{payment}->schedule_instalments_for( $db, $c->{entitlement} );
+        Registry::DAO::Payment->find( $db, { id => $c->{payment}->id } )
+            ->cancel_instalment_schedule( $db, $c->{entitlement} ) for 1 .. 2;
+    } );
+    is scalar( grep { $_->[0] eq 'cancel_subscription_schedule' } @$calls ), 1,
+        'Stripe is asked to cancel once';
+    is_deeply cancelled($c), [ $c->{entitlement}->id ], 'and the entitlement is recorded once';
+};

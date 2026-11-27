@@ -183,4 +183,44 @@ subtest 'a cancel that fails once is retried until Stripe cancels' => sub {
         "the child's schedule is cancelled once, on the studio's account";
 };
 
+subtest 'the last failed attempt alerts admins' => sub {
+    my ( $c, $job ) = queued('instalment_schedule');
+    @logs = ();
+    my $ran = run_against_replayed_500( $job, 'Stripe api_error: An unknown error occurred', [] );
+
+    is $ran->{info}{state}, 'failed', 'the job ends failed';
+    is scalar @{ $ran->{keys} }, 10, 'after ten attempts';
+    is_deeply [ sort keys %{ { map { $_ => 1 } @{ $ran->{keys} } } } ],
+        [ 'instalment_schedule:' . $c->{entitlement}->id . ':schedule' ],
+        'every one under the same key: never a new key';
+    is scalar @{ $ran->{lists} }, 10, 'each attempt first looked for a schedule Stripe made';
+    is_deeply scheduled($c), [], 'nothing is recorded';
+
+    my $alerts = alerts_for($c);
+    is scalar @$alerts, 1, "the tenant's admin is alerted once, at the last attempt";
+    like $alerts->[0]{message}, qr/\Q$slug\E/, 'naming the tenant';
+    my @errors = grep { $_->[0] eq 'error' && $_->[1] =~ /\Q${\ $c->{entitlement}->id }\E/ } @logs;
+    is scalar @errors, 1, 'and the platform log says so once at error';
+    like $errors[0][1] // '', qr/\Q$slug\E/, 'naming the tenant';
+};
+
+subtest 'the last failed cancel attempt alerts admins' => sub {
+    my ( $c, $job ) = queued('cancel_instalment_schedule');
+    $tdb->insert( 'payments', { user_id => $c->{parent}, amount_cents => 3333, status => 'pending',
+        instalment_seq => 2, instalment_count => 3, stripe_schedule_id => 'sub_sched_stuck',
+        entitlement_id => $c->{entitlement}->id } );
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::retrieve_subscription_schedule = sub ( $s, $id ) {
+        return { id => $id, status => 'active' };
+    };
+    local *Registry::Service::Stripe::cancel_subscription_schedule = sub ( $s, $id, $p = {} ) {
+        die "Stripe api_error: An unknown error occurred\n";
+    };
+
+    is run($job)->{state}, 'failed', 'the job ends failed';
+    my $alerts = alerts_for($c);
+    is scalar @$alerts, 1, "the tenant's admin is alerted once";
+    like $alerts->[0]{subject}, qr/could not be cancelled/, 'that the instalments were not cancelled';
+};
+
 done_testing;
