@@ -95,4 +95,46 @@ subtest 'positions close up after a child leaves' => sub {
     is Registry::DAO::WaitlistEntry->waiting_count( $db, $session->id ), 2, 'two wait';
 };
 
+my $REFUSED = 'Registry::DAO::Entitlement::Refused';
+
+subtest 'joining a session without a queue is refused' => sub {
+    my $session = make_session($db);
+    throws_ok { join_queue( $session, child() ) } $REFUSED, 'refused';
+    like $@, qr/keeps no waitlist/, 'because it keeps no waitlist';
+    is Registry::DAO::WaitlistEntry->waiting_count( $db, $session->id ), 0, 'nobody joined';
+};
+
+subtest 'a second join for the same child is refused' => sub {
+    my $session = queue();
+    my $child   = child();
+    my $entry   = join_queue( $session, $child );
+    throws_ok { join_queue( $session, $child ) } $REFUSED, 'refused while waiting';
+    like $@, qr/already in line/, 'because the child is already in line';
+    $entry->offer( $db, held_seat($session) );
+    throws_ok { join_queue( $session, $child ) } $REFUSED, 'and while offered';
+    is Registry::DAO::WaitlistEntry->waiting_count( $db, $session->id ), 0, 'no second entry';
+};
+
+subtest 'offer is refused unless the entry is waiting' => sub {
+    my $session = queue();
+    my $entry   = join_queue( $session, child() );
+    my $offered = $entry->offer( $db, held_seat($session) );
+    throws_ok { $entry->offer( $db, held_seat($session) ) } $REFUSED, 'an offered entry is not offered again';
+    like $@, qr/is not waiting/, 'because it is not waiting';
+    my $left = join_queue( $session, child() )->leave($db);
+    throws_ok { $left->offer( $db, held_seat($session) ) } $REFUSED, 'nor is one that left';
+    is Registry::DAO::WaitlistEntry->find( $db, { id => $entry->id }, 'id' )->hold_id, $offered->hold_id,
+        'the first offer stands';
+};
+
+subtest 'accept is refused unless the entry is offered' => sub {
+    my $session = queue();
+    my $entry   = join_queue( $session, child() );
+    throws_ok { $entry->accept($db) } $REFUSED, 'a waiting entry cannot accept';
+    like $@, qr/is not offered/, 'because it is not offered';
+    my $lapsed = $entry->offer( $db, held_seat($session) )->lapse($db);
+    throws_ok { $lapsed->accept($db) } $REFUSED, 'nor can a lapsed one';
+    is Registry::DAO::WaitlistEntry->find( $db, { id => $entry->id }, 'id' )->state, 'lapsed', 'it stays lapsed';
+};
+
 done_testing;
