@@ -1,0 +1,120 @@
+#!/usr/bin/env perl
+# ABOUTME: Sibling and early-bird conditions on offer versions, and the versions a child may choose.
+# ABOUTME: Sibling, early-bird and regular prices are separate published versions, against real Postgres.
+BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
+
+use 5.42.0;
+use warnings;
+use lib qw(lib t/lib);
+use Test::More;
+use Test::Registry::DB;
+use Test::Registry::Fixtures;
+use Test::Registry::Sessions qw( make_session session_offer );
+use Registry::DAO::Entitlement;
+use Registry::DAO::FamilyMember;
+use Registry::DAO::OfferVersion;
+
+my $test_db = Test::Registry::DB->new;
+my $db      = $test_db->db->db;
+
+my $AT    = '2027-02-01T00:00:00Z';
+my $EARLY = '2027-03-01T00:00:00Z';
+
+my $made = 0;
+
+# A parent and two children in its family: ($parent_id, $kid1_id, $kid2_id).
+sub family () {
+    my $parent = Test::Registry::Fixtures::create_user( $db, { username => 'oc-parent-' . ++$made } )->id;
+    return ( $parent, map {
+        Registry::DAO::FamilyMember->create( $db,
+            { family_id => $parent, child_name => "Kid $_ of $made", birth_date => '2018-05-01' } )->id
+    } 1, 2 );
+}
+
+# An active entitlement to $version held by child $kid, paid for by $parent.
+sub hold ( $version, $kid, $parent ) {
+    return Registry::DAO::Entitlement->create( $db, {
+        holder_family_member_id => $kid,
+        payer_user_id           => $parent,
+        offer_version_id        => $version->id,
+        payment_plan_id         => 'pay',
+        starts_at               => '2026-09-01T00:00:00Z',
+    } );
+}
+
+# A session sold at regular $300, sibling $270 and early-bird $250.
+sub priced_session () {
+    my $s = make_session($db);
+    my ( $regular, $sibling, $early ) = map { session_offer( $db, $s, %$_ ) }
+        { price_cents => 30000 },
+        { price_cents => 27000, conditions => [ { kind => 'family_holds_entitlement' } ] },
+        { price_cents => 25000, conditions => [ { kind => 'before', at => $EARLY } ] };
+    return ( $s, $regular, $sibling, $early );
+}
+
+# The ids of the versions of $s a child may choose under %ctx, in order.
+sub choosable ( $s, %ctx ) {
+    return [ map { $_->{version}->id } grep { !$_->{unmet}->@* }
+            Registry::DAO::OfferVersion->choosable_for( $db, $s->id, { at => $AT, %ctx } )->@* ];
+}
+
+# Another offer's version, on another session.
+sub other_version () { session_offer( $db, scalar make_session($db) ) }
+
+subtest 'the first child chooses early bird or regular' => sub {
+    my ( $s, $regular, $sibling, $early ) = priced_session();
+    my ( $parent, $kid1 ) = family();
+    is_deeply choosable( $s, holder_family_member_id => $kid1 ), [ $early->id, $regular->id ],
+        'early bird then regular, cheapest first';
+
+    my @all = Registry::DAO::OfferVersion->choosable_for( $db, $s->id,
+        { at => $AT, holder_family_member_id => $kid1 } )->@*;
+    is_deeply [ map { $_->{version}->id } @all ], [ $early->id, $sibling->id, $regular->id ],
+        'every current version is listed, by price';
+    is scalar $all[1]{unmet}->@*, 1, 'the sibling rate says why it is not choosable';
+    like $all[1]{unmet}[0], qr/\w/, 'in a sentence';
+};
+
+subtest 'a sibling earlier in the cart qualifies' => sub {
+    my ( $s, $regular, $sibling, $early ) = priced_session();
+    my ( $parent, $kid1, $kid2 ) = family();
+    is_deeply choosable( $s, holder_family_member_id => $kid2, cart_offer_ids => [ $regular->offer_id ] ),
+        [ $early->id, $sibling->id, $regular->id ], 'kid 2 may choose the sibling rate too';
+};
+
+subtest 'a sibling bought earlier qualifies' => sub {
+    my ( $s, $regular, $sibling ) = priced_session();
+    my ( $parent, $kid1, $kid2 ) = family();
+    hold( other_version(), $kid1, $parent );
+    is_deeply $sibling->unmet_conditions( $db, { holder_family_member_id => $kid2, at => $AT } ), [],
+        'kid 2 meets the sibling condition';
+};
+
+subtest 'a past due sibling entitlement still qualifies' => sub {
+    my ( $s, $regular, $sibling ) = priced_session();
+    my ( $parent, $kid1, $kid2 ) = family();
+    hold( other_version(), $kid1, $parent )->mark_past_due( $db, 'in_oc_past_due' );
+    is_deeply $sibling->unmet_conditions( $db, { holder_family_member_id => $kid2, at => $AT } ), [],
+        'kid 2 still meets the sibling condition';
+};
+
+subtest 'offer_ids limits which offers count' => sub {
+    my $s     = make_session($db);
+    my $club  = other_version();
+    my $other = other_version();
+    my $sibling = session_offer( $db, $s, price_cents => 27000,
+        conditions => [ { kind => 'family_holds_entitlement', offer_ids => [ $club->offer_id ] } ] );
+    my ( $parent, $kid1, $kid2 ) = family();
+    my $unmet = sub (%ctx) {
+        $sibling->unmet_conditions( $db, { holder_family_member_id => $kid2, at => $AT, %ctx } );
+    };
+
+    hold( $other, $kid1, $parent );
+    is scalar $unmet->()->@*, 1, 'a sibling holding another offer does not count';
+    is scalar $unmet->( cart_offer_ids => [ $other->offer_id ] )->@*, 1, 'nor does a cart line for another offer';
+    is_deeply $unmet->( cart_offer_ids => [ $club->offer_id ] ), [], 'a cart line for a listed offer does';
+    hold( $club, $kid1, $parent );
+    is_deeply $unmet->(), [], 'and so does a sibling holding a listed offer';
+};
+
+done_testing;

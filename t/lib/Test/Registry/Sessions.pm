@@ -1,4 +1,4 @@
-# ABOUTME: Test helper making a session: one finite resource whose days are its events.
+# ABOUTME: Test helper making a session, one finite resource whose days are its events, and offers selling it.
 # ABOUTME: Makes the project, location and teacher it needs; tests override only what they are about.
 use 5.42.0;
 use warnings;
@@ -6,10 +6,12 @@ use warnings;
 package Test::Registry::Sessions;
 
 use Exporter 'import';
-our @EXPORT_OK = qw( make_session );
+our @EXPORT_OK = qw( make_session session_offer );
 
 use Test::Registry::Fixtures;
+use Test::Registry::Offers qw( offer_terms );
 use Registry::DAO::Resource;
+use Registry::DAO::Offer;
 
 my $made = 0;
 
@@ -33,6 +35,14 @@ sub make_session ( $db, %o ) {
         minutes  => 420,
         %o,
     } );
+}
+
+# session_offer($db, $session, %terms): a published version of a new offer
+# selling $session, its terms offer_terms' overridden by %terms.
+sub session_offer ( $db, $session, %terms ) {
+    my $n = ++$made;
+    return Registry::DAO::Offer->create( $db, { name => "Session offer $n" } )
+        ->draft( $db, offer_terms( $session->id, %terms ) )->publish($db);
 }
 
 1;

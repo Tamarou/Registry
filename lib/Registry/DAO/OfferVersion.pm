@@ -283,6 +283,63 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
         return $class->new(%$row);
     }
 
+    # Whether a condition is met for $ctx at instant $at, by kind; and the
+    # sentence saying it is not. Instants are compared in Postgres, never as
+    # local dates.
+    my %MET = (
+        family_holds_entitlement => sub ( $db, $condition, $ctx, $at ) {
+            my $offer_ids = $condition->{offer_ids};
+            my %counts    = map { $_ => 1 } ( $offer_ids // [] )->@*;
+            return 1 if grep { !$offer_ids || $counts{$_} } ( $ctx->{cart_offer_ids} // [] )->@*;
+            require Registry::DAO::Entitlement;
+            my $in_effect = Registry::DAO::Entitlement->in_effect_sql( 'e',
+                q{tstzrange(?::timestamptz, ?::timestamptz, '[]')} );
+            return $db->query( qq{
+                SELECT EXISTS (SELECT 1 FROM family_members holder
+                    JOIN family_members sibling
+                      ON sibling.family_id = holder.family_id AND sibling.id <> holder.id
+                    JOIN entitlements e ON e.holder_family_member_id = sibling.id
+                   WHERE holder.id = ? AND $in_effect
+                     AND (?::uuid[] IS NULL OR e.offer_id = ANY (?::uuid[])))
+            }, $ctx->{holder_family_member_id}, $at, $at, $offer_ids, $offer_ids )->array->[0];
+        },
+        before => sub ( $db, $condition, $ctx, $at ) {
+            $db->query( 'SELECT ?::timestamptz < ?::timestamptz', $at, $condition->{at} )->array->[0];
+        },
+        # Only the platform's offer to itself carries it; no checkout meets it.
+        holder_is_offerer => sub { 0 },
+    );
+    my %UNMET = (
+        family_holds_entitlement => sub ($c) { 'This price is for a child whose brother or sister already holds a place here.' },
+        before                   => sub ($c) { "This price could be chosen only until $c->{at}." },
+        holder_is_offerer        => sub ($c) { 'This offer is held only by the one who offers it.' },
+    );
+
+    # A sentence for each of its conditions the child in $ctx does not meet at
+    # $ctx->{at}; none when it may choose this version. $ctx names
+    # holder_family_member_id, at (an instant) and cart_offer_ids: the offers
+    # of earlier cart lines for the family's other children.
+    method unmet_conditions ( $db, $ctx ) {
+        $db = $db->db if $db isa Registry::DAO;
+        my $at = $ctx->{at} // croak 'conditions are met or not at an instant: no at given';
+        return [ map { $UNMET{ $_->{kind} }->($_) }
+                grep { !$MET{ $_->{kind} }->( $db, $_, $ctx, $at ) } @$conditions ];
+    }
+
+    # Every current version buying $resource_id, each { version, unmet }, by
+    # price, offer name, then id: the child in $ctx may choose those with no
+    # unmet conditions, and the first of them is preselected.
+    sub choosable_for ( $class, $db, $resource_id, $ctx ) {
+        $db = $db->db if $db isa Registry::DAO;
+        return [ map { { version => $_, unmet => $_->unmet_conditions( $db, $ctx ) } }
+                grep { $_->buys( $db, $resource_id ) }
+                $db->query( q{
+                    SELECT v.* FROM offer_versions v JOIN offers o ON o.id = v.offer_id
+                     WHERE v.published_at IS NOT NULL AND v.superseded_at IS NULL
+                     ORDER BY v.price_cents, o.name, v.id
+                } )->expand->hashes->map( sub { $class->new(%$_) } )->each ];
+    }
+
     # The plans a customer chooses between, each { id, kind, fraction }.
     method payment_plans ($db) {
         $db = $db->db if $db isa Registry::DAO;
