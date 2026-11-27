@@ -105,6 +105,7 @@ sub plant_queued_email () {
     return ( $note->id, $parent->email );
 }
 
+# Each planted event starts at its own second: events are unique on (project, location, start).
 sub plant_unmarked_event () {
     my $teacher = user('staff');
     $db->insert( 'user_profiles', { user_id => $teacher->id, email => $teacher->email, name => 'Sweep Teacher' },
@@ -116,7 +117,7 @@ sub plant_unmarked_event () {
         session_id => $session->id, student_id => user('student')->id, status => 'active' } );
     my $event = Registry::DAO::Event->create( $db, {
         location_id => $location->id, project_id => $project->id, teacher_id => $teacher->id,
-        start_time => DateTime->now->subtract( minutes => 10 ), end_time => DateTime->now->add( minutes => 50 ),
+        start_time => DateTime->now->subtract( minutes => 10, seconds => ++$n ), end_time => DateTime->now->add( minutes => 50 ),
         metadata => { title => 'Sweep Event' } } );
     $db->insert( 'session_events', { session_id => $session->id, event_id => $event->id } );
     return $event->id;
