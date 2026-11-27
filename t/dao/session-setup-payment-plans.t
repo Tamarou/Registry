@@ -155,4 +155,18 @@ subtest 'publish refuses a malformed missed-payment policy' => sub {
     is versions_of('Malformed term'), 0, 'and no version is written';
 };
 
+subtest 'a price too small for every part to be a cent is refused' => sub {
+    my $run = session_run( 'Penny term', days_from_now(7), days_from_now(70) );
+    $run->update_data( $db, { offer_price => { price_cents => 1, currency => 'usd', units_per_acceptance => 1, per_booking_cap => 1 } } );
+    my $why = 'A price of 1 cent cannot be split into 52 payments of at least a cent each';
+    is errors_of( $run->process( $db, step('instalment-payment'), { instalments => 'offered', count => 52, cadence => 'weekly' } ) ),
+        $why, 'the step refuses 52 parts of a 1 cent price';
+    $run->update_data( $db, {
+        instalment_payment    => { id => 'parts', count => 52, cadence => 'weekly', surcharge_pct => undef },
+        missed_payment_policy => { kind => 'end' },
+    } );
+    is errors_of( $publish->process( $db, { action => 'publish' }, $run ) ), $why, 'and so does publish';
+    is versions_of('Penny term'), 0, 'which writes no version';
+};
+
 done_testing;

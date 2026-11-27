@@ -6,13 +6,20 @@ use utf8;
 use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::InstalmentPaymentPlan :isa(Registry::DAO::WorkflowStep) {
-    use Registry::PriceOps::Instalments qw( fits );
+    use Registry::PriceOps::Instalments qw( fits parts );
 
     my %CADENCE = map { $_ => 1 } qw( weekly monthly quarterly );
 
     # Why $plan cannot be offered on the offer's resources, or nothing.
     # Publish asks again, since the offer's resources can be chosen after this step.
     sub refusal ( $class, $db, $data, $plan ) {
+        # Every part is a charge, so none may be zero: the price with its
+        # surcharge must be at least a cent per part.
+        my $cents = ( ref $data->{offer_price} eq 'HASH' ? $data->{offer_price} : {} )->{price_cents};
+        return sprintf 'A price of %d cent%s cannot be split into %d payments of at least a cent each',
+            $cents, $cents == 1 ? '' : 's', $plan->{count}
+            if defined $cents && !ref $cents && $cents =~ /\A[0-9]+\z/
+            && !parts( $cents, $plan, '2000-01-01' )->[0]{amount_cents};    # the first part is the smallest
         my $basic = ref $data->{offer_basics} eq 'HASH' ? $data->{offer_basics} : {};
         my @ids   = grep { defined && !ref } $basic->{resource_id},
             ref $basic->{resource_ids} eq 'ARRAY' ? $basic->{resource_ids}->@* : ();
