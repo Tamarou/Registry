@@ -60,6 +60,19 @@ my $occurrence = id( resources => name => 'Per day occurrence', kind => 'finite'
     event_id => $occurrence_day );
 $db->insert( 'registry.entitlement_uses', { entitlement_id => $entitlement, occurrence_id => $occurrence } );
 
+my $session = id( resources => name => 'Per day session', kind => 'finite', capacity => 4 );
+my @days    = map { $event->($_) } 2 .. 4;
+$db->update( 'registry.events', { session_resource_id => $session }, { id => \@days } );
+
+subtest 'a use with no day to backfill refuses the deploy by name' => sub {
+    # The old record_use took a session resource as its occurrence; such a
+    # use names no single day.
+    $db->insert( 'registry.entitlement_uses', { entitlement_id => $entitlement, occurrence_id => $session } );
+    throws_ok { sqitch( 'deploy', '-t', $uri, '--to', $CHANGE ) }
+        qr/entitlement_uses in registry name no day.*\Q$entitlement\E/s, 'the deploy names the entitlement';
+    $db->delete( 'registry.entitlement_uses', { occurrence_id => $session } );
+};
+
 provision('early');
 lives_ok { sqitch( 'deploy', '-t', $uri, '--to', $CHANGE ) } 'deploy to the change succeeds';
 provision('late');
@@ -69,9 +82,6 @@ is_deeply $db->select( 'registry.entitlement_uses', [qw( event_id mark )] )->has
 is_deeply keys_by_schema(), { map { $_ => 'entitlement_id,event_id' } qw( registry early late ) },
     'every schema is keyed per day, the tenant cloned after deploy too';
 
-my $session = id( resources => name => 'Per day session', kind => 'finite', capacity => 4 );
-my @days    = map { $event->($_) } 2 .. 4;
-$db->update( 'registry.events', { session_resource_id => $session }, { id => \@days } );
 $db->insert( 'registry.entitlement_uses', {
     entitlement_id => $entitlement, occurrence_id => $session, event_id => $days[$_], mark => $_ ? 'present' : 'absent',
 } ) for 0 .. 2;

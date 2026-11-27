@@ -19,7 +19,8 @@ BEGIN
         CONTINUE WHEN to_regclass(format('%I.entitlement_uses', s)) IS NULL;
         -- Before this change a row meant present at an occurrence: absences
         -- go, and so do a session's days, which that key cannot tell apart
-        -- and whose backfill on redeploy would have no day to find.
+        -- and whose backfill on redeploy would have no day to find. This loses
+        -- marks on purpose: a revert is for development only.
         EXECUTE format($f$
             DELETE FROM %1$I.entitlement_uses u
              WHERE u.mark = 'absent'

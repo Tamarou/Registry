@@ -10,7 +10,8 @@ SET client_min_messages = 'warning';
 
 DO $$
 DECLARE
-    s name;
+    s       name;
+    dayless text;
 BEGIN
     FOR s IN
         SELECT 'registry'::name
@@ -32,6 +33,14 @@ BEGIN
             UPDATE %1$I.entitlement_uses u SET event_id = r.event_id
               FROM %1$I.resources r WHERE r.id = u.occurrence_id
         $f$, s);
+        -- A use of a session resource, which the old record_use allowed,
+        -- names no single day: refuse by name rather than guess one.
+        EXECUTE format('SELECT string_agg(DISTINCT entitlement_id::text, '', '') FROM %I.entitlement_uses'
+                       ' WHERE event_id IS NULL', s) INTO dayless;
+        IF dayless IS NOT NULL THEN
+            RAISE EXCEPTION 'entitlement_uses in % name no day (their occurrence is not an occurrence''s resource), for entitlements: %',
+                s, dayless;
+        END IF;
         EXECUTE format($f$
             ALTER TABLE %1$I.entitlement_uses
                 ALTER COLUMN event_id SET NOT NULL,
