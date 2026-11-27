@@ -131,6 +131,13 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
         }, $basic->@{qw( resource_id class_project_id )}, $basic->{resource_ids} // [] );
         $why = Registry::DAO::WorkflowSteps::OfferPrice->refusal( $db, $data, $price->{units_per_acceptance} );
         return $release->( { stay => 1, errors => [$why] } ) if $why;
+        # The sessions asked again under their locks too, so one gone since the
+        # check above is seen. Not raced in a test: nothing can run between the
+        # two checks from one connection, and a second would block on the lock.
+        if ( $data->{session_program} ) {
+            $why = Registry::DAO::WorkflowSteps::OfferBasics->session_refusal( $db, $data, $basic->{resource_ids} );
+            return $release->( { stay => 1, errors => [$why] } ) if $why;
+        }
 
         my ( $stale, $at_guard );
         my $version = eval {
