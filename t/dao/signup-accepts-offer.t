@@ -19,7 +19,7 @@ use Registry::DAO::OfferVersion;
 use Registry::DAO::User;
 use Registry::Utility::WorkflowProcessor;
 use Registry::PriceOps::RevenueShare qw( revenue_share_fraction_for_tenant );
-use Test::Registry::Offers qw( offer_terms );
+use Test::Registry::Offers qw( offer_terms instalment_plan );
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -236,6 +236,19 @@ subtest 'one time plan without payment creates nothing' => sub {
     my $err    = refusal_of( sub { Registry::DAO::Entitlement->accept( $db, solo( $t->id, 'pay', $fee->id ) ) } );
     isa_ok $err, 'Registry::DAO::Entitlement::Refused';
     like $err && $err->message, qr/one-time/, 'as a one-time plan';
+    is entitlement_count(), $before, 'no entitlement';
+};
+
+subtest 'instalments plan without payment creates nothing' => sub {
+    my $offer = Registry::DAO::Offer->create( $db, { name => 'Setup In Parts' } );
+    my $parts = $offer->draft( $db, offer_terms( $PAYMENT_PROCESSING,
+        payment_plans => [ instalment_plan() ],
+        policies      => { refund => { kind => 'none' }, missed_payment => { kind => 'keep_and_owe' } } ) )->publish($db);
+    my $t      = bare_tenant('instalments_holder');
+    my $before = entitlement_count();
+    my $err    = refusal_of( sub { Registry::DAO::Entitlement->accept( $db, solo( $t->id, 'parts', $parts->id ) ) } );
+    isa_ok $err, 'Registry::DAO::Entitlement::Refused';
+    like $err && $err->message, qr/accepted by paying for it/, 'as a paid-for plan';
     is entitlement_count(), $before, 'no entitlement';
 };
 

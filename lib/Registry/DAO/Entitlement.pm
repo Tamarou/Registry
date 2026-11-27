@@ -62,8 +62,8 @@ their failures. It keeps its units and stays in effect while past due.
     # starts_at (default now): the one way a schedule-type offer is accepted.
     # Throws Registry::DAO::Entitlement::Refused, creating nothing, when the
     # version is not published and current at this moment, does not offer the
-    # plan, the plan is one-time (an entitlement follows its payment, not an
-    # accept), the holder already has this offer in effect, or a tenant
+    # plan, the plan is one-time or instalments (an entitlement follows its
+    # payment, not an accept), the holder already has this offer in effect, or a tenant
     # holder already has platform terms for payment processing. Joins the
     # caller's transaction.
     sub accept ( $class, $db, $data ) {
@@ -86,8 +86,9 @@ their failures. It keeps its units and stays in effect while past due.
             { offer_version_id => $version_id, id => $plan_id // '' } )->array;
         $refuse->( sprintf "Offer version %s does not offer payment plan '%s'.", $version_id, $plan_id // '' )
             unless $kind;
-        $refuse->("Payment plan '$plan_id' is one-time: it is accepted by paying for it.")
-            if $kind->[0] eq 'one_time';
+        my %paid_for = ( one_time => 'one-time', instalments => 'instalments' );
+        $refuse->("Payment plan '$plan_id' is $paid_for{ $kind->[0] }: it is accepted by paying for it.")
+            if $paid_for{ $kind->[0] };
 
         # One phase of a schedule offer per holder at a time, as the exclusion
         # constraint has it; two accepts for one holder and offer take turns,
@@ -98,7 +99,7 @@ their failures. It keeps its units and stays in effect while past due.
             if $db->query( q{
                 SELECT EXISTS (SELECT 1 FROM entitlements
                     WHERE coalesce(holder_user_id, holder_family_member_id, holder_tenant_id) = ?
-                      AND offer_id = ? AND plan_kind <> 'one_time'
+                      AND offer_id = ? AND plan_kind NOT IN ('one_time', 'instalments')
                       AND in_effect && tstzrange(?::timestamptz, ?::timestamptz, '[)'))
             }, $holder, $offer_id, @row{qw( starts_at ends_at )} )->array->[0];
 
