@@ -1,0 +1,58 @@
+%# ABOUTME: session-setup's refund-policy step, as offer-publishing asks it, for the offers over a program's sessions.
+%# ABOUTME: Cutoff hours count back from the held occurrence's start; the studio may review each refund before it is made.
+% extends 'layouts/workflow';
+% title 'Refunds';
+% stash description => 'Say whether money comes back when a customer asks for a refund.';
+% my $policy = stash('refund_policy') // {};
+% my $chosen = $policy->{kind} // '';
+% my $approval = $policy->{approval} // 'none';
+
+% if (my @errors = @{ stash('errors') // [] }) {
+<div class="alert alert-error" role="alert">
+  <ul>
+  % for my $error (@errors) {
+    <li><%= ref $error ? $error->{message} : $error %></li>
+  % }
+  </ul>
+</div>
+% }
+
+<form method="POST" action="<%= $action %>">
+  <fieldset>
+    <legend>Refund policy</legend>
+    <div>
+      <input type="radio" id="refund-none" name="refund" value="none" required<%= $chosen eq 'none' ? ' checked' : '' %>>
+      <label for="refund-none">None: all sales are final</label>
+    </div>
+    <div>
+      <input type="radio" id="refund-full_until_cutoff" name="refund" value="full_until_cutoff" required<%= $chosen eq 'full_until_cutoff' ? ' checked' : '' %>>
+      <label for="refund-full_until_cutoff">Full refund until a cutoff before the occurrence starts (an offer for one occurrence or a class)</label>
+    </div>
+    <div>
+      <input type="radio" id="refund-keep_fee_with_admin_exception" name="refund" value="keep_fee_with_admin_exception" required<%= $chosen eq 'keep_fee_with_admin_exception' ? ' checked' : '' %>>
+      <label for="refund-keep_fee_with_admin_exception">Keep the fee, unless an administrator makes an exception (an offer with a percentage-of-sales plan)</label>
+    </div>
+  </fieldset>
+
+  <div class="form-group">
+    <label class="form-label" for="cutoff_hours">Cutoff, in hours before the start</label>
+    <input class="form-input" type="number" id="cutoff_hours" name="cutoff_hours" value="<%= $policy->{cutoff_hours} %>" min="0" step="1">
+    <p>Only for a full refund until a cutoff. A refund asked for exactly at the cutoff is allowed.</p>
+  </div>
+
+  <fieldset>
+    <legend>Approval</legend>
+    <div>
+      <input type="radio" id="approval-none" name="approval" value="none"<%= $approval eq 'none' ? ' checked' : '' %>>
+      <label for="approval-none">None: the policy decides, and refunds are made at once</label>
+    </div>
+    <div>
+      <input type="radio" id="approval-required" name="approval" value="required"<%= $approval eq 'required' ? ' checked' : '' %>>
+      <label for="approval-required">Required: an administrator approves each refund before it is made</label>
+    </div>
+  </fieldset>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Continue</button>
+  </div>
+</form>

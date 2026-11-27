@@ -40,19 +40,19 @@ steps:
 
   - slug: refund-policy
     label: Refund
-    description: Choose whether money comes back on a refund
+    description: Choose whether money comes back on a refund, and whether an administrator approves it first
     template: offer-publishing/refund-policy
     class: Registry::DAO::WorkflowSteps::RefundPolicy
 
   - slug: change-policy
     label: Change
-    description: Choose whether and how a booking may move to another occurrence
+    description: Choose whether a booking may move, where to, how a price difference is paid, and whether an administrator approves it
     template: offer-publishing/change-policy
     class: Registry::DAO::WorkflowSteps::ChangePolicy
 
   - slug: use-policy
     label: Use
-    description: Choose what counts as using the offer
+    description: Choose what counts as using the offer, or that a missed day earns a make-up class
     template: offer-publishing/use-policy
     class: Registry::DAO::WorkflowSteps::UsePolicy
 

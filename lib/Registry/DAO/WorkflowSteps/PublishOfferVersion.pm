@@ -16,6 +16,7 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
     use Registry::DAO::WorkflowSteps::MissedPaymentPolicy;
     use Registry::DAO::WorkflowSteps::OfferPrice;
     use Registry::DAO::WorkflowSteps::RefundPolicy;
+    use Registry::DAO::WorkflowSteps::UsePolicy;
     use Registry::Utility::PriceFormat qw( format_price );
 
     # A stored fraction (at most 4 places, 0..1) as a percent, by moving the
@@ -64,9 +65,11 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
         return { stay => 1, errors => [$why] } if $why;
 
         # From the run, as the use-policy step recorded it, never this form.
-        my $use = ( ref $data->{use_policy} eq 'HASH' ? $data->{use_policy} : {} )->{use};
+        my %use = ( ref $data->{use_policy} eq 'HASH' ? $data->{use_policy} : {} )->%*;
         return { stay => 1, errors => ['Choose a use policy before publishing'] }
-            unless defined $use && !ref $use;
+            unless defined $use{use} && !ref $use{use};
+        $why = Registry::DAO::WorkflowSteps::UsePolicy->refusal( $db, $data, \%use );
+        return { stay => 1, errors => [$why] } if $why;
         my $expiry = ( ref $data->{expiry_policy} eq 'HASH' ? $data->{expiry_policy} : {} )->{expiry};
         return { stay => 1, errors => ['Choose an expiry policy before publishing'] }
             unless defined $expiry && !ref $expiry;
@@ -140,7 +143,7 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
                 conditions => $current ? $current->conditions : [],    # who may hold it carries over
                 $price->%{qw( price_cents currency units_per_acceptance per_booking_cap )},
                 payment_plans => \@plans,
-                policies => { refund => $refund, change => $change, use => { kind => $use }, expiry => { kind => $expiry },
+                policies => { refund => $refund, change => $change, use => { kind => delete $use{use}, %use }, expiry => { kind => $expiry },
                     $parts ? ( missed_payment => $missed ) : () },
             } )->publish($db);
             # The platform-offer guard runs now, so its refusal is this step's error

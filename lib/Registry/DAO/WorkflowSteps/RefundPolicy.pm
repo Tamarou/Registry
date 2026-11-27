@@ -1,5 +1,5 @@
 # ABOUTME: offer-publishing step: whether money comes back on a refund, chosen explicitly with no default.
-# ABOUTME: None; full until a cutoff in hours, on an occurrence or class offer; or keep the fee, on a percentage offer.
+# ABOUTME: None; full until a cutoff in hours, on an occurrence or class offer; or keep the fee; each says if approval is needed.
 use 5.42.0;
 use utf8;
 
@@ -17,6 +17,8 @@ class Registry::DAO::WorkflowSteps::RefundPolicy :isa(Registry::DAO::WorkflowSte
     # cannot carry a policy past it.
     sub refusal ( $class, $db, $data, $policy ) {
         my $kind = $policy->{kind};
+        return "Say whether a refund needs the studio's approval"
+            unless ( $policy->{approval} // '' ) =~ /\A(?:required|none)\z/;
         if ( $kind eq 'full_until_cutoff' ) {
             my $basic = ref $data->{offer_basics} eq 'HASH' ? $data->{offer_basics} : {};
             my $resource = $basic->{resource_id}
@@ -38,7 +40,10 @@ class Registry::DAO::WorkflowSteps::RefundPolicy :isa(Registry::DAO::WorkflowSte
         return { stay => 1, errors => ['Choose a refund policy: none, full until a cutoff, or keep the fee'] }
             unless defined $kind && !ref $kind && $OFFERED{$kind};
 
-        my %policy = ( kind => $kind );
+        # Unanswered is none, as OfferVersion reads it. Approval stays off for
+        # in-studio offers (the design's call), whatever the form says.
+        my $approval = $self->workflow($db)->slug eq 'in-studio-class-setup' ? 'none' : $form_data->{approval} // 'none';
+        my %policy = ( kind => $kind, approval => ref $approval ? '' : $approval );
         if ( $kind eq 'full_until_cutoff' ) {
             my $hours = $form_data->{cutoff_hours};
             return { stay => 1, errors => ['The cutoff must be a whole number of hours before the start, such as 24'] }

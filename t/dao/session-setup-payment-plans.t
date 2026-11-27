@@ -48,7 +48,7 @@ sub session_run ( $name, $first, $last ) {
     $run->update_data( $db, {
         offer_basics  => { resource_id => $run->data->{sessions}[0], offer_name => "$name offer" },
         offer_price   => { price_cents => 30000, currency => 'usd', units_per_acceptance => 1, per_booking_cap => 1 },
-        refund_policy => { kind => 'none' },
+        refund_policy => { kind => 'none', approval => 'none' },
         change_policy => { kind => 'none' },
         use_policy    => { use => 'optional_attendance' },
         expiry_policy => { expiry => 'end_of_occurrence' },

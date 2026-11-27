@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-# ABOUTME: The session-setup screens over HTTP: an admin creates a program, adds its sessions, and says how they may be paid.
+# ABOUTME: The session-setup screens over HTTP: an admin creates a program, adds its sessions, says how they may be paid, and its policies.
 # ABOUTME: Staff are refused; a week with no chosen weekday, a last day before the first, or a queue without hours stays on the step.
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
@@ -112,14 +112,20 @@ subtest 'an admin creates a program and a five day camp week' => sub {
 
     like submit_step( $t, 'sessions', action => 'continue' ), qr{/instalment-payment\z}, 'continuing asks about instalments';
     check_screen( $t, 'instalment-payment' );
-    like submit_step( $t, 'instalment-payment', instalments => 'declined' ), qr{/complete\z},
-        'declining them passes the missed-payment step and lands on the complete page';
+    like submit_step( $t, 'instalment-payment', instalments => 'declined' ), qr{/refund-policy\z},
+        'declining them passes the missed-payment step and asks about refunds';
+    like submit_step( $t, 'refund-policy', refund => 'none', approval => 'required' ), qr{/change-policy\z},
+        'refunds reviewed by an administrator, then changes';
+    $t->element_exists( '#workflow-content input[name="price_difference"]', 'the change screen asks about a price difference' );
+    like submit_step( $t, 'change-policy', change => 'none' ), qr{/use-policy\z}, 'no changes, then use';
+    like submit_step( $t, 'use-policy', use => 'none' ), qr{/complete\z}, 'and the complete page';
     my $run = $db->query( q{
         SELECT r.data FROM workflow_runs r JOIN workflows w ON w.id = r.workflow_id
          WHERE w.slug = 'session-setup' ORDER BY r.created_at DESC LIMIT 1
     } )->expand->hash->{data};
     is_deeply $run->{session_program}, { project_id => $program, location_id => $site->id }, 'the run records the program';
     is_deeply $run->{sessions}, [ $week->id ], 'and the session it made';
+    is_deeply $run->{refund_policy}, { kind => 'none', approval => 'required' }, 'and the refund policy with its approval';
 };
 
 subtest 'offering instalments asks what a missed one does' => sub {
@@ -129,8 +135,8 @@ subtest 'offering instalments asks what a missed one does' => sub {
     like submit_step( $t, 'instalment-payment', instalments => 'offered', count => 3, cadence => 'monthly', surcharge_pct => '2.5' ),
         qr{/missed-payment-policy\z}, 'offering them asks about a missed one';
     check_screen( $t, 'missed-payment-policy' );
-    like submit_step( $t, 'missed-payment-policy', missed_payment => 'grace', grace_days => 7 ), qr{/complete\z},
-        'a grace period lands on the complete page';
+    like submit_step( $t, 'missed-payment-policy', missed_payment => 'grace', grace_days => 7 ), qr{/refund-policy\z},
+        'a grace period goes on to refunds';
 };
 
 subtest 'two groups of one program can share a week at the same time' => sub {

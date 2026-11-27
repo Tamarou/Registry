@@ -116,7 +116,7 @@ sub ghost_run ($name) {
         offer_basics     => { resource_id => '00000000-0000-0000-0000-00000000abcd', offer_name => $name },
         offer_price      => { price_cents => 1, currency => 'usd', units_per_acceptance => 1, per_booking_cap => 1 },
         one_time_payment => { one_time => 'offered' },
-        refund_policy    => { kind => 'none' },
+        refund_policy    => { kind => 'none', approval => 'none' },
         change_policy    => { kind => 'none' },
         use_policy       => { use => 'none' },
         expiry_policy    => { expiry => 'never' },
@@ -190,7 +190,7 @@ subtest 'admin publishes a one time priced offer version' => sub {
     is_deeply $v->payment_plans($tdb), [ { id => 'one_time', kind => 'one_time', fraction => undef, @NOT_INSTALMENTS } ],
         'paid for once';
     is_deeply $v->policies,
-        { refund => { kind => 'none' }, change => { kind => 'none' }, use => { kind => 'none' }, expiry => { kind => 'never' } },
+        { refund => { kind => 'none', approval => 'none' }, change => { kind => 'none' }, use => { kind => 'none' }, expiry => { kind => 'never' } },
         'with explicit none refund, change and use policies and a never expiry';
     is $tdb->query( 'SELECT o.name FROM offers o WHERE o.id = ?', $v->offer_id )->array->[0],
         'Couples wheel night', 'under the offer name given';
@@ -318,7 +318,7 @@ subtest 'staff run publishes nothing' => sub {
         offer_basics     => { resource_id => $seats->id, offer_name => 'Staff special' },
         offer_price      => { price_cents => 1, currency => 'usd', units_per_acceptance => 1, per_booking_cap => 1 },
         one_time_payment => { one_time => 'offered' },
-        refund_policy    => { kind => 'none' },
+        refund_policy    => { kind => 'none', approval => 'none' },
         change_policy    => { kind => 'none' },
         use_policy       => { use => 'none' },
     } } );
@@ -521,7 +521,7 @@ subtest 'skeleton publishes with an explicit none refund policy' => sub {
         'offer-price'  => { price_cents => 1500, currency => 'usd', units_per_acceptance => 1, per_booking_cap => 2 },
     } );
     ok $version->is_published, 'the offer publishes';
-    is_deeply $version->policies->{refund}, { kind => 'none' }, 'with an explicit none refund policy';
+    is_deeply $version->policies->{refund}, { kind => 'none', approval => 'none' }, 'with an explicit none refund policy';
 };
 
 subtest 'skeleton refuses to publish without a refund choice' => sub {

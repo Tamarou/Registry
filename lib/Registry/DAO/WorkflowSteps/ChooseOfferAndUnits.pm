@@ -8,6 +8,7 @@ use Object::Pad;
 class Registry::DAO::WorkflowSteps::ChooseOfferAndUnits :isa(Registry::DAO::WorkflowStep) {
     use Registry::DAO::Event;
     use Registry::DAO::Offer;
+    use Registry::DAO::OfferVersion;
     use Registry::DAO::Resource;
     use Registry::Terms ();
     use Registry::DAO::WorkflowSteps::ChooseOccurrence;
@@ -51,6 +52,16 @@ class Registry::DAO::WorkflowSteps::ChooseOfferAndUnits :isa(Registry::DAO::Work
         return;
     }
 
+    my %REVIEWED = (
+        refund => 'Refunds are reviewed by the studio before they are made.',
+        change => 'Changes are reviewed by the studio.',
+    );
+    my %PRICE_DIFFERENCE = (
+        charge_and_refund => 'Moving to a different price charges or refunds the difference.',
+        charge_only       => 'Moving to a different price charges the difference.',
+        same_price_only   => 'Moving is allowed only to the same price.',
+    );
+
     # $version's policies as the sentences a customer reads before choosing.
     sub policy_words ( $class, $version ) {
         my $p = $version->policies;
@@ -68,7 +79,10 @@ class Registry::DAO::WorkflowSteps::ChooseOfferAndUnits :isa(Registry::DAO::Work
             none   => sub { 'Bookings cannot be rescheduled.' },
             window => sub ($c) { "Reschedule up to $c->{window_hours} hours before, " . money( $c->{fee_cents} ) . '.' },
         );
-        my %use    = ( optional_attendance => sub { 'Attendance is recorded but not required.' } );
+        my %use    = (
+            optional_attendance => sub { 'Attendance is recorded but not required.' },
+            makeup              => sub ($u) { sprintf 'A missed day earns a make-up class within %d days.', $u->{credit_days} },
+        );
         my %expiry = ( end_of_occurrence   => sub { 'The booking ends when the class does.' } );
         my @words;
         for ( [ refund => \%refund ], [ change => \%change ], [ use => \%use ], [ expiry => \%expiry ] ) {
@@ -76,6 +90,11 @@ class Registry::DAO::WorkflowSteps::ChooseOfferAndUnits :isa(Registry::DAO::Work
             my $policy = $p->{$name} or next;
             my $say    = $words->{ $policy->{kind} } or next;
             push @words, $say->($policy);
+            # A move within the offer is at its own price, so only other targets say how a difference is paid.
+            push @words, $PRICE_DIFFERENCE{ Registry::DAO::OfferVersion->price_difference_for($policy) }
+                if $name eq 'change' && $policy->{kind} eq 'window' && ( $policy->{targets} // '' ) ne 'same_offer';
+            push @words, $REVIEWED{$name}
+                if $REVIEWED{$name} && Registry::DAO::OfferVersion->approval_for($policy) eq 'required';
         }
         return \@words;
     }

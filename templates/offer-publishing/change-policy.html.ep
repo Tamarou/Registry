@@ -1,10 +1,14 @@
 %# ABOUTME: offer-publishing step: the admin chooses no changes, or a change window with a fee.
-%# ABOUTME: A window moves a held booking to another occurrence of the same offer, up to and including its boundary.
+%# ABOUTME: A window moves a held booking up to and including its boundary, to its targets; it says how a price difference is paid and who approves.
 % extends 'layouts/workflow';
 % title 'Changes';
 % stash description => 'Say whether a booking may move to another occurrence.';
 % my $policy = stash('change_policy') // {};
 % my $chosen = $policy->{kind} // '';
+% my $targets = ref $policy->{targets} ? 'offer_ids' : $policy->{targets} // 'same_offer';
+% my %listed = map { $_ => 1 } ref $policy->{targets} ? $policy->{targets}{offer_ids}->@* : ();
+% my $difference = $policy->{price_difference} // 'same_price_only';
+% my $approval = $policy->{approval} // 'none';
 
 % if (my @errors = @{ stash('errors') // [] }) {
 <div class="alert alert-error" role="alert">
@@ -25,7 +29,7 @@
     </div>
     <div>
       <input type="radio" id="change-window" name="change" value="window" required<%= $chosen eq 'window' ? ' checked' : '' %>>
-      <label for="change-window">Window: a booking may move to another occurrence of this offer until a set time before its own</label>
+      <label for="change-window">Window: a booking may move until a set time before its own</label>
     </div>
   </fieldset>
 
@@ -43,7 +47,46 @@
     <p>0 for a free change. Charged as a one-time payment, so the revenue share applies to it.</p>
   </div>
 
-  <input type="hidden" name="targets" value="same_offer">
+  <fieldset>
+    <legend>Where a booking may move</legend>
+    % for my $kind ( [ same_offer => 'Another occurrence of this offer' ], [ same_program => 'Any offer in the same program' ],
+    %                [ offer_ids => 'One of the offers checked below' ] ) {
+    <div>
+      <input type="radio" id="targets-<%= $kind->[0] %>" name="targets" value="<%= $kind->[0] %>"<%= $targets eq $kind->[0] ? ' checked' : '' %>>
+      <label for="targets-<%= $kind->[0] %>"><%= $kind->[1] %></label>
+    </div>
+    % }
+    % for my $offer ( @{ stash('target_offers') // [] } ) {
+    <div>
+      <input type="checkbox" id="offer-<%= $offer->{id} %>" name="offer_ids" value="<%= $offer->{id} %>"<%= $listed{ $offer->{id} } ? ' checked' : '' %>>
+      <label for="offer-<%= $offer->{id} %>"><%= $offer->{name} %></label>
+    </div>
+    % }
+  </fieldset>
+
+  <fieldset>
+    <legend>A move to a different price</legend>
+    % for my $kind ( [ same_price_only => 'Not allowed: a booking moves only to the same price' ],
+    %                [ charge_only => 'Charge the difference when the new price is higher' ],
+    %                [ charge_and_refund => 'Charge the difference when higher, refund it when lower' ] ) {
+    <div>
+      <input type="radio" id="price_difference-<%= $kind->[0] %>" name="price_difference" value="<%= $kind->[0] %>"<%= $difference eq $kind->[0] ? ' checked' : '' %>>
+      <label for="price_difference-<%= $kind->[0] %>"><%= $kind->[1] %></label>
+    </div>
+    % }
+  </fieldset>
+
+  <fieldset>
+    <legend>Approval</legend>
+    <div>
+      <input type="radio" id="approval-none" name="approval" value="none"<%= $approval eq 'none' ? ' checked' : '' %>>
+      <label for="approval-none">None: a change within the policy is made at once</label>
+    </div>
+    <div>
+      <input type="radio" id="approval-required" name="approval" value="required"<%= $approval eq 'required' ? ' checked' : '' %>>
+      <label for="approval-required">Required: an administrator approves each change before it is made</label>
+    </div>
+  </fieldset>
 
   <div class="form-actions">
     <button type="submit" class="btn btn-primary">Continue</button>

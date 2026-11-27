@@ -175,7 +175,7 @@ subtest 'refund against offer-publishing version honoured' => sub {
         'refund-policy' => { refund => 'full_until_cutoff', cutoff_hours => 24 },
         'expiry-policy' => { expiry => 'end_of_occurrence' },
     } );
-    is_deeply $version->policies->{refund}, { kind => 'full_until_cutoff', cutoff_hours => 24 },
+    is_deeply $version->policies->{refund}, { kind => 'full_until_cutoff', cutoff_hours => 24, approval => 'none' },
         'the refund-policy step stored a 24 hour cutoff';
 
     my $e      = booking( $version, $occurrence, my $paid = payment(2500), 2500 );

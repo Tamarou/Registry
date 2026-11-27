@@ -88,7 +88,9 @@ class Registry::DAO::WorkflowSteps::OfferBasics :isa(Registry::DAO::WorkflowStep
             instalment_payment => $plan{instalments} && { $plan{instalments}->%{qw( id count cadence surcharge_pct )} },
             missed_payment_policy => $policies->{missed_payment},
             map( { ( "${_}_policy" => $policies->{$_} ) } grep { $policies->{$_} } qw( refund change ) ),
-            map( { ( "${_}_policy" => { $_ => $policies->{$_}{kind} } ) } grep { $policies->{$_} } qw( use expiry ) ),
+            # use and expiry are stored under their own name, not kind; a make-up keeps its fields.
+            map( { my %p = $policies->{$_}->%*; ( "${_}_policy" => { $_ => delete $p{kind}, %p } ) }
+                grep { $policies->{$_} } qw( use expiry ) ),
         );
     }
 
