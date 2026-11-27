@@ -47,6 +47,10 @@ BEGIN
         EXECUTE format($f$
             CREATE INDEX ON %I.waitlist_entries (resource_id, joined_at, id) WHERE state = 'waiting'
         $f$, s);
+        -- The other foreign keys, so a child's, hold's or run's entries are found without a scan.
+        EXECUTE format('CREATE INDEX ON %I.waitlist_entries (family_member_id)', s);
+        EXECUTE format('CREATE INDEX ON %I.waitlist_entries (hold_id)', s);
+        EXECUTE format('CREATE INDEX ON %I.waitlist_entries (workflow_run_id)', s);
     END LOOP;
 END $$;
 
