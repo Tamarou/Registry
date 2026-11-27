@@ -1,0 +1,45 @@
+%# ABOUTME: session-setup's conditions step: whether the price is for a sibling, and an early-bird time it ends at.
+%# ABOUTME: The early-bird time is local to the program's location; a sibling's place may count from any offer or listed ones.
+% extends 'layouts/workflow';
+% title 'Who may choose it';
+% stash description => 'Say whether this price is for a sibling, or only until an early-bird time.';
+% my $sibling = stash('sibling') // 'none';
+% my $ids = stash('sibling_ids') // {};
+
+% if (my @errors = @{ stash('errors') // [] }) {
+<div class="alert alert-error" role="alert">
+  <ul>
+  % for my $error (@errors) {
+    <li><%= ref $error ? $error->{message} : $error %></li>
+  % }
+  </ul>
+</div>
+% }
+
+<form method="POST" action="<%= $action %>">
+  <fieldset>
+    <legend>Sibling price</legend>
+    % for my $choice ( [ none => 'Not a sibling price: any child may have it' ], [ any => 'For a child whose brother or sister already holds a place here' ], [ offers => 'For a child whose brother or sister holds a place in one of the offers below' ] ) {
+    <div>
+      <input type="radio" id="sibling-<%= $choice->[0] %>" name="sibling" value="<%= $choice->[0] %>" required<%= $sibling eq $choice->[0] ? ' checked' : '' %>>
+      <label for="sibling-<%= $choice->[0] %>"><%= $choice->[1] %></label>
+    </div>
+    % }
+    % for my $offer (@{ stash('offers') // [] }) {
+    <div>
+      <input type="checkbox" id="sibling-offer-<%= $offer->id %>" name="sibling_offer_ids" value="<%= $offer->id %>"<%= $ids->{ $offer->id } ? ' checked' : '' %>>
+      <label for="sibling-offer-<%= $offer->id %>"><%= $offer->name %></label>
+    </div>
+    % }
+  </fieldset>
+
+  <div class="form-group">
+    <label class="form-label" for="early_bird_until">Early-bird until (optional)</label>
+    <input class="form-input" type="datetime-local" id="early_bird_until" name="early_bird_until" value="<%= stash('early_bird_until') %>" aria-describedby="early_bird_until-help">
+    <p id="early_bird_until-help">In the program location's time. The price cannot be chosen from this moment on.</p>
+  </div>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Continue</button>
+  </div>
+</form>

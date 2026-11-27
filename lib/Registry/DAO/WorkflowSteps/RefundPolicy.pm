@@ -1,12 +1,12 @@
 # ABOUTME: offer-publishing step: whether money comes back on a refund, chosen explicitly with no default.
-# ABOUTME: None; full until a cutoff in hours, on an occurrence or class offer; or keep the fee; each says if approval is needed.
+# ABOUTME: None; full until a cutoff in hours, on an occurrence, class or session offer; or keep the fee; each says if approval is needed.
 use 5.42.0;
 use utf8;
 
 use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::RefundPolicy :isa(Registry::DAO::WorkflowStep) {
-    use Registry::DAO::Resource;
+    use Registry::DAO::WorkflowSteps::OfferBasics;
 
     # The refund policies this step offers, OfferVersion's day-one kinds; a
     # cutoff is offered in hours only (cutoff_at is not offered here).
@@ -22,11 +22,9 @@ class Registry::DAO::WorkflowSteps::RefundPolicy :isa(Registry::DAO::WorkflowSte
         return 'With no refund there is nothing for the studio to approve'
             if $kind eq 'none' && $policy->{approval} eq 'required';
         if ( $kind eq 'full_until_cutoff' ) {
-            my $basic = ref $data->{offer_basics} eq 'HASH' ? $data->{offer_basics} : {};
-            my $resource = $basic->{resource_id}
-                && Registry::DAO::Resource->find( $db, { id => $basic->{resource_id} } );
-            return 'A refund cutoff needs an offer bound to one occurrence or covering a class'
-                unless $basic->{class_project_id} || ( $resource && $resource->event_id );
+            # A session's cutoff counts from its first day.
+            return 'A refund cutoff needs an offer bound to one occurrence, covering a class, or over sessions'
+                unless Registry::DAO::WorkflowSteps::OfferBasics->bound( $db, $data );
         }
         if ( $kind eq 'keep_fee_with_admin_exception' ) {
             # It names the platform's application fee, which only a

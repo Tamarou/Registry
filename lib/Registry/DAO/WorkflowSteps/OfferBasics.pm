@@ -1,4 +1,4 @@
-# ABOUTME: offer-publishing step: choose one of this tenant's resources and name the offer.
+# ABOUTME: offer-publishing step: choose one of this tenant's resources, or a session run's sessions, and name the offer.
 # ABOUTME: Resources are read from the run's own schema, so another tenant's are never offered or accepted.
 use 5.42.0;
 use utf8;
@@ -9,6 +9,7 @@ class Registry::DAO::WorkflowSteps::OfferBasics :isa(Registry::DAO::WorkflowStep
     use Registry::DAO::Offer;
     use Registry::DAO::Project;
     use Registry::DAO::Resource;
+    use List::Util qw( uniq );
 
     my $UUID = qr/\A[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\z/i;
 
@@ -16,9 +17,38 @@ class Registry::DAO::WorkflowSteps::OfferBasics :isa(Registry::DAO::WorkflowStep
     my @TERMS = qw( offer_price one_time_payment percentage_of_sales_payment
         refund_policy change_policy use_policy expiry_policy instalment_payment missed_payment_policy );
 
+    # Why $ids are not sessions of the session run $data's program, or nothing.
+    # Publish asks again, so a run whose sessions changed since cannot publish.
+    sub session_refusal ( $class, $db, $data, $ids ) {
+        my $program = ( ref $data->{session_program} eq 'HASH' ? $data->{session_program} : {} )->{project_id};
+        my %ours = map { $_->id => 1 } $program ? Registry::DAO::Resource->sessions_of( $db, $program )->@* : ();
+        return q{Choose at least one of the program's sessions}
+            unless ref $ids eq 'ARRAY' && @$ids && !grep { !( defined && !ref && $ours{$_} ) } @$ids;
+        return;
+    }
+
+    # Whether the offer the run $data describes has days: a class's
+    # occurrences, or every resource it names an occurrence or a session.
+    sub bound ( $class, $db, $data ) {
+        my $basic = ref $data->{offer_basics} eq 'HASH' ? $data->{offer_basics} : {};
+        return 1 if $basic->{class_project_id};
+        return Registry::DAO::Resource->all_have_days( $db, grep { defined && !ref } $basic->{resource_id},
+            ref $basic->{resource_ids} eq 'ARRAY' ? $basic->{resource_ids}->@* : () );
+    }
+
     method process ( $db, $form_data, $run = undef ) {
         my ( $resource_id, $name ) = $form_data->@{qw( resource_id offer_name )};
         $name = ref $name ? '' : ( $name // '' ) =~ s/\A\s+|\s+\z//gr;
+
+        # Session mode: a new offer over some of the program's sessions.
+        if ( $run && $run->data->{session_program} ) {
+            my $ids = $form_data->{resource_ids};
+            my @ids = uniq grep { defined && length } ref $ids eq 'ARRAY' ? @$ids : $ids // ();
+            my @errors = grep { defined } __PACKAGE__->session_refusal( $db, $run->data, \@ids );
+            push @errors, 'Name the offer' unless length $name;
+            return { stay => 1, errors => \@errors } if @errors;
+            return { offer_basics => { resource_ids => \@ids, offer_name => $name } };
+        }
 
         # A new version of one of this schema's published offers, keeping its
         # name; the later steps start from its current version's terms.
@@ -95,6 +125,10 @@ class Registry::DAO::WorkflowSteps::OfferBasics :isa(Registry::DAO::WorkflowStep
     }
 
     method prepare_template_data ( $db, $run, $params = {} ) {
+        if ( my $program = $run->data->{session_program} ) {
+            return { sessions => Registry::DAO::Resource->sessions_of( $db, $program->{project_id} ),
+                chosen => { map { $_ => 1 } ( ( $run->data->{offer_basics} // {} )->{resource_ids} // [] )->@* } };
+        }
         my $choice = $run->data->{resource_choice} // {};
         return {
             resources            => [ Registry::DAO::Resource->find( $db, {}, { -asc => 'name' } ) ],

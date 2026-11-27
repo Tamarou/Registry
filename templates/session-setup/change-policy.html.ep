@@ -33,10 +33,10 @@
     </div>
   </fieldset>
 
-  <p>A window needs an offer bound to an occurrence or covering a class. These apply only to a window.</p>
+  <p>A window counts back from a session's first day. These apply only to a window.</p>
 
   <div class="form-group">
-    <label class="form-label" for="window_hours">Window, in hours before the occurrence</label>
+    <label class="form-label" for="window_hours">Window, in hours before the session's first day</label>
     <input class="form-input" type="number" id="window_hours" name="window_hours" value="<%= $policy->{window_hours} %>" min="0" step="1">
     <p>For example 48: a change is allowed up to and including 48 hours before.</p>
   </div>

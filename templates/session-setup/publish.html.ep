@@ -1,0 +1,78 @@
+%# ABOUTME: session-setup's review screen: the sessions, price, conditions, plans and policies, before an immutable publish.
+%# ABOUTME: Publishing posts action=publish; the step re-checks the run's answers and shows a fixed message on failure.
+% extends 'layouts/workflow';
+% title 'Review and publish';
+% stash description => 'Once published, this version of the offer cannot be changed.';
+% my $basics = stash('offer_basics') // {};
+% my $price  = stash('offer_price') // {};
+% my $refund = stash('refund_policy') // {};
+% my $change = stash('change_policy') // {};
+% my $parts = stash('instalment_payment');
+% my $missed = stash('missed_payment_policy') // {};
+% my %who = ( family_holds_entitlement => 'For a sibling of a child holding a place here', before => 'Only until' );
+% # Each answer by the name its step's screen gives it; an unknown one as stored.
+% my %named = (
+%     offered => 'Offered', declined => 'Not offered', none => 'None',
+%     full_until_cutoff => 'Full refund until a cutoff',
+%     keep_fee_with_admin_exception => 'Keep the fee, unless an administrator makes an exception',
+%     window => 'A change window', optional_attendance => 'Optional attendance',
+%     end_of_occurrence => 'At the end of the occurrence', never => 'Never',
+%     makeup => 'Make-ups', keep_and_owe => 'Keep the place and owe the payment', end => 'End the place',
+%     grace => 'A grace period',
+% );
+% my $use = stash('use_policy') // {};
+% my $reviewed = sub { ( shift->{approval} // '' ) eq 'required' ? '; an administrator approves each one' : '' };
+% my %moves = ( same_program => '; to any offer in the same program', offer_ids => '; to the listed offers' );
+% my %difference = ( charge_only => ', charging any higher price', charge_and_refund => ', charging or refunding any price difference' );
+% my $name = sub { my $kind = shift; defined $kind ? $named{$kind} // $kind : '' };
+
+% if (my @errors = @{ stash('errors') // [] }) {
+<div class="alert alert-error" role="alert">
+  <ul>
+  % for my $error (@errors) {
+    <li><%= ref $error ? $error->{message} : $error %></li>
+  % }
+  </ul>
+</div>
+% }
+
+<section class="card">
+  <h2><%= $basics->{offer_name} %></h2>
+  <dl>
+    <dt>Sessions</dt>
+    <dd><%= join ', ', map { $_->name } @{ stash('sessions') // [] } %></dd>
+    <dt>Price</dt>
+    <dd><%= stash('price_display') %></dd>
+    <dt>Units per acceptance</dt>
+    <dd><%= $price->{units_per_acceptance} %></dd>
+    <dt>Per-booking cap</dt>
+    <dd><%= $price->{per_booking_cap} %></dd>
+    <dt>One-time payment</dt>
+    <dd><%= $name->( ( stash('one_time_payment') // {} )->{one_time} ) %></dd>
+    <dt>Who may choose it</dt>
+    % my @conditions = @{ stash('conditions') // [] };
+    <dd><%= @conditions ? join( '; ', map { $who{ $_->{kind} } . ( $_->{at} ? " $_->{at} (UTC)" : '' ) } @conditions ) : 'Anyone' %></dd>
+    <dt>Instalments</dt>
+    <dd><%= $parts ? "$parts->{count} $parts->{cadence} payments" . ( $parts->{surcharge_pct} ? ", with a $parts->{surcharge_pct}% surcharge" : '' ) : 'Not offered' %></dd>
+    % if ($parts) {
+    <dt>Missed payment</dt>
+    <dd><%= $name->( $missed->{kind} ) %><%= $missed->{days} ? " of $missed->{days} days" : '' %></dd>
+    % }
+    <dt>Refund policy</dt>
+    <dd><%= $name->( $refund->{kind} ) %><%= defined $refund->{cutoff_hours} ? ", until $refund->{cutoff_hours} hours before the first day" : '' %><%= $reviewed->($refund) %></dd>
+    <dt>Change policy</dt>
+    <dd><%= $name->( $change->{kind} ) %><%= defined $change->{window_hours} ? ", up to $change->{window_hours} hours before the first day, for a fee of " . stash('change_fee_display') : '' %><%= $moves{ ref $change->{targets} ? 'offer_ids' : $change->{targets} // '' } // '' %><%= $difference{ $change->{price_difference} // '' } // '' %><%= $reviewed->($change) %></dd>
+    <dt>Use policy</dt>
+    <dd><%= $name->( $use->{use} ) %><%= $use->{credit_days} ? ", a missed day earns a make-up class within $use->{credit_days} days" : '' %><%= $use->{max_per_term} ? ", at most $use->{max_per_term} a term" : '' %></dd>
+    <dt>Expiry policy</dt>
+    <dd><%= $name->( ( stash('expiry_policy') // {} )->{expiry} ) %></dd>
+  </dl>
+</section>
+
+<form method="POST" action="<%= $action %>">
+  <input type="hidden" name="action" value="publish">
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Publish</button>
+  </div>
+</form>

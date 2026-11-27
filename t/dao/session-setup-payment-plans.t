@@ -30,9 +30,7 @@ my $field = Test::Registry::Fixtures::create_location( $db, { name => 'Plans fie
 
 my $workflow = $dao->find( Workflow => { slug => 'session-setup' } );
 sub step ($slug) { $workflow->get_step( $db, { slug => $slug } ) }
-# session-setup gains its publish step later (plan Task 13); offer-publishing's
-# publish step is the same class, called on the session run.
-my $publish = $dao->find( Workflow => { slug => 'offer-publishing' } )->get_step( $db, { slug => 'publish' } );
+my $publish = step('publish');
 
 # A session run with one session from $first to $last, every weekday, and the
 # offer terms the later steps record, so only the payment steps are left.
@@ -46,7 +44,8 @@ sub session_run ( $name, $first, $last ) {
     } );
     $run->process( $db, step('sessions'), { action => 'continue' } );
     $run->update_data( $db, {
-        offer_basics  => { resource_id => $run->data->{sessions}[0], offer_name => "$name offer" },
+        offer_basics  => { resource_ids => [ $run->data->{sessions}[0] ], offer_name => "$name offer" },
+        conditions    => [],
         offer_price   => { price_cents => 30000, currency => 'usd', units_per_acceptance => 1, per_booking_cap => 1 },
         refund_policy => { kind => 'none', approval => 'none' },
         change_policy => { kind => 'none' },

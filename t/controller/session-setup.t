@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-# ABOUTME: The session-setup screens over HTTP: an admin creates a program, adds its sessions, says how they may be paid, and its policies.
+# ABOUTME: The session-setup screens over HTTP: an admin creates a program, adds its sessions, prices them, and its policies.
 # ABOUTME: Staff are refused; a week with no chosen weekday, a last day before the first, or a queue without hours stays on the step.
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
@@ -77,6 +77,19 @@ sub on_sessions ( $program, $location = $site ) {
     return $t;
 }
 
+# From the sessions step, past the offer, price, conditions and one-time
+# payment steps for a price covering the run's session $name, to instalments.
+sub to_instalments ( $t, $name ) {
+    like submit_step( $t, 'sessions', action => 'continue' ), qr{/offer-basics\z}, 'continuing asks what the price covers';
+    check_screen( $t, 'offer-basics' );
+    like submit_step( $t, 'offer-basics', resource_ids => [ map { $_->id } sessions_named($name)->@* ], offer_name => "$name price" ),
+        qr{/offer-price\z}, 'the session, then its price';
+    like submit_step( $t, 'offer-price', price_cents => 30000, currency => 'USD', units_per_acceptance => 1, per_booking_cap => 1 ),
+        qr{/conditions\z}, 'then who may choose it';
+    like submit_step( $t, 'conditions', sibling => 'none' ), qr{/one-time-payment\z}, 'anyone, then one payment';
+    like submit_step( $t, 'one-time-payment', one_time => 'offered' ), qr{/instalment-payment\z}, 'then instalments';
+}
+
 sub sessions_named ($name) {
     return [ Registry::DAO::Resource->find( $db, { name => $name } ) ];
 }
@@ -110,15 +123,16 @@ subtest 'an admin creates a program and a five day camp week' => sub {
         $week->id )->arrays->to_array, [ [ 420, $program, $user{staff}->id, $site->id ] ],
         'each 420 minutes, in the program, taught by the chosen teacher, at the program\'s location';
 
-    like submit_step( $t, 'sessions', action => 'continue' ), qr{/instalment-payment\z}, 'continuing asks about instalments';
-    check_screen( $t, 'instalment-payment' );
+    to_instalments( $t, 'Camp week 1' );
     like submit_step( $t, 'instalment-payment', instalments => 'declined' ), qr{/refund-policy\z},
         'declining them passes the missed-payment step and asks about refunds';
     like submit_step( $t, 'refund-policy', refund => 'none', approval => 'none' ), qr{/change-policy\z},
         'no refunds, so nothing to approve, then changes';
     $t->element_exists( '#workflow-content input[name="price_difference"]', 'the change screen asks about a price difference' );
     like submit_step( $t, 'change-policy', change => 'none' ), qr{/use-policy\z}, 'no changes, then use';
-    like submit_step( $t, 'use-policy', use => 'none' ), qr{/complete\z}, 'and the complete page';
+    like submit_step( $t, 'use-policy', use => 'none' ), qr{/expiry-policy\z}, 'no use, then expiry';
+    like submit_step( $t, 'expiry-policy', expiry => 'end_of_occurrence' ), qr{/publish\z}, 'at the end of the session';
+    like submit_step( $t, 'publish', action => 'publish' ), qr{/complete\z}, 'and the complete page';
     my $run = $db->query( q{
         SELECT r.data FROM workflow_runs r JOIN workflows w ON w.id = r.workflow_id
          WHERE w.slug = 'session-setup' ORDER BY r.created_at DESC LIMIT 1
@@ -131,7 +145,7 @@ subtest 'an admin creates a program and a five day camp week' => sub {
 subtest 'offering instalments asks what a missed one does' => sub {
     my $t = on_sessions('Instalment camp');
     submit_step( $t, 'sessions', %WEEK, name => 'Instalment week', teacher_id => $user{staff}->id, action => 'add' );
-    like submit_step( $t, 'sessions', action => 'continue' ), qr{/instalment-payment\z}, 'on to instalments';
+    to_instalments( $t, 'Instalment week' );
     like submit_step( $t, 'instalment-payment', instalments => 'offered', count => 3, cadence => 'monthly', surcharge_pct => '2.5' ),
         qr{/missed-payment-policy\z}, 'offering them asks about a missed one';
     check_screen( $t, 'missed-payment-policy' );

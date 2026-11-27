@@ -1,12 +1,21 @@
-%# ABOUTME: session-setup's last screen: the program's sessions are set up, each a resource with its days.
-%# ABOUTME: Starts another run to set up more sessions; pricing them comes in later steps.
+%# ABOUTME: session-setup's last screen: the price is published over the chosen sessions and can no longer change.
+%# ABOUTME: Starts a new run on the same program and location for another price, such as a sibling or early-bird one.
 % extends 'layouts/workflow';
-% title 'Sessions set up';
+% title 'Price published';
+% my $basics = stash('offer_basics') // {};
+% my $program = stash('session_program') // {};
 
 <section class="card">
-  <h2>The sessions are set up</h2>
-  <p>Each session has its days, capacity and waitlist.</p>
-  <div class="form-actions">
-    <a class="btn btn-secondary" href="<%= url_for('workflow_index', workflow => 'session-setup') %>">Set up more sessions</a>
-  </div>
+  <h2><%= $basics->{offer_name} %> is published</h2>
+  <p>This version of the price cannot be changed. Families can choose it for the sessions it covers.</p>
+  %# A new run each time: the session's run is not complete until this step is.
+  <form method="POST" action="<%= url_for('workflow_start', workflow => 'session-setup') %>">
+    <input type="hidden" name="program_mode" value="existing">
+    <input type="hidden" name="project_id" value="<%= $program->{project_id} %>">
+    <input type="hidden" name="location_id" value="<%= $program->{location_id} %>">
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">Add another price to this program</button>
+      <a class="btn btn-secondary" href="<%= url_for('workflow_index', workflow => 'session-setup') %>">Set up another program</a>
+    </div>
+  </form>
 </section>

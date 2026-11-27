@@ -31,7 +31,9 @@ class Registry::DAO::WorkflowSteps::SessionDays :isa(Registry::DAO::WorkflowStep
             qw( action name first_day last_day start minutes capacity waitlist offer_hold_hours teacher_id );
 
         if ( $f{action} eq 'continue' ) {
-            return { stay => 1, errors => ['Add at least one session'] } unless ( $run->data->{sessions} // [] )->@*;
+            # A later run prices sessions an earlier one added.
+            return { stay => 1, errors => ['Add at least one session'] }
+                unless Registry::DAO::Resource->sessions_of( $db, $program->{project_id} )->@*;
             return {};
         }
         # A run's start submits only the seeded user: show the form.

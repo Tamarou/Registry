@@ -1,5 +1,5 @@
 # ABOUTME: offer-publishing step: whether and how a held booking may move, chosen explicitly.
-# ABOUTME: None, or a window in hours and a fee in cents, with its targets, price difference and approval, on an offer with occurrences.
+# ABOUTME: None, or a window in hours and a fee in cents, with its targets, price difference and approval, on an offer with days.
 use 5.42.0;
 use utf8;
 
@@ -7,7 +7,7 @@ use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::ChangePolicy :isa(Registry::DAO::WorkflowStep) {
     use Registry::DAO::Offer;
-    use Registry::DAO::Resource;
+    use Registry::DAO::WorkflowSteps::OfferBasics;
 
     # Whole and at most nine digits, so every accepted value fits an integer column.
     my $WHOLE = qr/\A[0-9]{1,9}\z/;
@@ -72,11 +72,8 @@ class Registry::DAO::WorkflowSteps::ChangePolicy :isa(Registry::DAO::WorkflowSte
         return "Say whether a change needs the studio's approval"
             unless ( $policy->{approval} // '' ) =~ /\A(?:required|none)\z/;
 
-        my $basic = ref $data->{offer_basics} eq 'HASH' ? $data->{offer_basics} : {};
-        return if $basic->{class_project_id};
-        my $resource = $basic->{resource_id} && Registry::DAO::Resource->find( $db, { id => $basic->{resource_id} } );
-        return if $resource && $resource->event_id;
-        return 'A change window needs an offer bound to an occurrence or covering a class';
+        return if Registry::DAO::WorkflowSteps::OfferBasics->bound( $db, $data );
+        return 'A change window needs an offer bound to an occurrence, covering a class, or over sessions';
     }
 
     # This schema's offers with a current version: those a window's targets may list.

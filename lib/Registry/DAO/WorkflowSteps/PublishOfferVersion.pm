@@ -14,6 +14,8 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
     use Registry::DAO::WorkflowSteps::ExpiryPolicy;
     use Registry::DAO::WorkflowSteps::InstalmentPaymentPlan;
     use Registry::DAO::WorkflowSteps::MissedPaymentPolicy;
+    use Registry::DAO::WorkflowSteps::OfferBasics;
+    use Registry::DAO::WorkflowSteps::OfferConditions;
     use Registry::DAO::WorkflowSteps::OfferPrice;
     use Registry::DAO::WorkflowSteps::RefundPolicy;
     use Registry::DAO::WorkflowSteps::UsePolicy;
@@ -46,7 +48,15 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
         my ( $basic, $price ) = $data->@{qw( offer_basics offer_price )};
         return { stay => 1, errors => ['Complete the offer and price steps before publishing'] }
             unless ref $basic eq 'HASH' && ref $price eq 'HASH';
-        my $why = Registry::DAO::WorkflowSteps::OfferPrice->refusal( $db, $data, $price->{units_per_acceptance} );
+        # A session run's offer is over some of its program's sessions, and
+        # says who may choose it, as its steps recorded; asked again here.
+        my $why;
+        if ( $data->{session_program} ) {
+            $why = Registry::DAO::WorkflowSteps::OfferBasics->session_refusal( $db, $data, $basic->{resource_ids} )
+                // Registry::DAO::WorkflowSteps::OfferConditions->refusal( $db, $data, $data->{conditions} );
+            return { stay => 1, errors => [$why] } if $why;
+        }
+        $why = Registry::DAO::WorkflowSteps::OfferPrice->refusal( $db, $data, $price->{units_per_acceptance} );
         return { stay => 1, errors => [$why] } if $why;
 
         # From the run, as the refund-policy step recorded it, never this form;
@@ -117,8 +127,8 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
         # the check above is seen; a class's occurrences are locked in id order.
         $db->query( q{
             SELECT r.id FROM resources r LEFT JOIN events e ON e.id = r.event_id
-             WHERE r.id = ? OR e.project_id = ? ORDER BY r.id FOR UPDATE OF r
-        }, $basic->@{qw( resource_id class_project_id )} );
+             WHERE r.id = ? OR e.project_id = ? OR r.id::text = ANY(?) ORDER BY r.id FOR UPDATE OF r
+        }, $basic->@{qw( resource_id class_project_id )}, $basic->{resource_ids} // [] );
         $why = Registry::DAO::WorkflowSteps::OfferPrice->refusal( $db, $data, $price->{units_per_acceptance} );
         return $release->( { stay => 1, errors => [$why] } ) if $why;
 
@@ -139,8 +149,9 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
                 }
             }
             my $published = ( $offer // Registry::DAO::Offer->create( $db, { name => $basic->{offer_name} } ) )->draft( $db, {
-                $basic->%{qw( resource_id class_project_id )},    # one or the other
-                conditions => $current ? $current->conditions : [],    # who may hold it carries over
+                $basic->%{qw( resource_id class_project_id resource_ids )},    # one of them
+                # Who may hold it carries over to a new version; a session run says.
+                conditions => $current ? $current->conditions : $data->{conditions} // [],
                 $price->%{qw( price_cents currency units_per_acceptance per_booking_cap )},
                 payment_plans => \@plans,
                 policies => { refund => $refund, change => $change, use => { kind => delete $use{use}, %use }, expiry => { kind => $expiry },
@@ -181,6 +192,7 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
         my ( $id, $class_id ) = $basic->@{qw( resource_id class_project_id )};
         return {
             %$data,
+            sessions      => [ map { Registry::DAO::Resource->find( $db, { id => $_ } ) // () } ( $basic->{resource_ids} // [] )->@* ],
             resource      => $id ? Registry::DAO::Resource->find( $db, { id => $id } ) : undef,
             class         => $class_id ? Registry::DAO::Project->find( $db, { id => $class_id } ) : undef,
             price_display => format_price( $price->{price_cents}, $price->{currency} ),

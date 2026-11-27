@@ -1,0 +1,42 @@
+%# ABOUTME: session-setup's offer step: the admin ticks the program's sessions this price covers and names its offer.
+%# ABOUTME: Lists every session of the program, those added in earlier runs too; at least one must be chosen.
+% extends 'layouts/workflow';
+% title 'Name the price';
+% stash description => 'Choose the sessions this price covers and name its offer.';
+% my $sessions = stash('sessions') // [];
+% my $chosen = stash('chosen') // {};
+
+% if (my @errors = @{ stash('errors') // [] }) {
+<div class="alert alert-error" role="alert">
+  <ul>
+  % for my $error (@errors) {
+    <li><%= ref $error ? $error->{message} : $error %></li>
+  % }
+  </ul>
+</div>
+% }
+
+<form method="POST" action="<%= $action %>">
+  <fieldset>
+    <legend>Sessions</legend>
+    % unless (@$sessions) {
+    <p>This program has no sessions yet.</p>
+    % }
+    % for my $session (@$sessions) {
+    <div>
+      <input type="checkbox" id="session-<%= $session->id %>" name="resource_ids" value="<%= $session->id %>"<%= $chosen->{ $session->id } ? ' checked' : '' %>>
+      <label for="session-<%= $session->id %>"><%= $session->name %> (<%= $session->capacity %> places)</label>
+    </div>
+    % }
+  </fieldset>
+
+  <div class="form-group">
+    <label class="form-label required" for="offer_name">Offer name</label>
+    <input class="form-input" type="text" id="offer_name" name="offer_name" required>
+    <p>Each price is its own offer: name a sibling or early-bird price apart, such as "Camp sibling".</p>
+  </div>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Continue</button>
+  </div>
+</form>

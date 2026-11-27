@@ -1,8 +1,8 @@
 # ABOUTME: Product design for camp and after-school: an admin creates a program and adds its sessions.
-# ABOUTME: Each session is one finite resource whose days are its events; then instalments, a missed one, refunds, changes and use.
+# ABOUTME: Each session is one finite resource whose days are its events; then a price over some of them, published as an offer version.
 
 name: Session Setup
-description: Create a program and add its sessions, each with its days, capacity and waitlist
+description: Create a program, add its sessions, and publish a price over some of them
 slug: session-setup
 roles: [admin]
 
@@ -18,6 +18,30 @@ steps:
     description: Add the program's sessions, each with its days, start, length, capacity and waitlist
     template: session-setup/sessions
     class: Registry::DAO::WorkflowSteps::SessionDays
+
+  - slug: offer-basics
+    label: Offer
+    description: Choose the sessions this price covers and name its offer
+    template: session-setup/offer-basics
+    class: Registry::DAO::WorkflowSteps::OfferBasics
+
+  - slug: offer-price
+    label: Price
+    description: The price, the seats one unit uses, and how many one booking may take
+    template: session-setup/offer-price
+    class: Registry::DAO::WorkflowSteps::OfferPrice
+
+  - slug: conditions
+    label: Who
+    description: Say whether the price is for a sibling, or only until an early-bird date
+    template: session-setup/conditions
+    class: Registry::DAO::WorkflowSteps::OfferConditions
+
+  - slug: one-time-payment
+    label: Payment
+    description: Offer a one-time payment plan
+    template: session-setup/one-time-payment
+    class: Registry::DAO::WorkflowSteps::OneTimePaymentPlan
 
   - slug: instalment-payment
     label: Instalments
@@ -49,8 +73,20 @@ steps:
     template: session-setup/use-policy
     class: Registry::DAO::WorkflowSteps::UsePolicy
 
+  - slug: expiry-policy
+    label: Expiry
+    description: Choose when a place expires
+    template: session-setup/expiry-policy
+    class: Registry::DAO::WorkflowSteps::ExpiryPolicy
+
+  - slug: publish
+    label: Publish
+    description: Review and publish an immutable offer version
+    template: session-setup/publish
+    class: Registry::DAO::WorkflowSteps::PublishOfferVersion
+
   - slug: complete
     label: Done
-    description: The program's sessions are set up
+    description: The price is published; add another to the same program
     template: session-setup/complete
     class: Registry::DAO::WorkflowStep
