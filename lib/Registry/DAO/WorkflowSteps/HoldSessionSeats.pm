@@ -42,9 +42,12 @@ class Registry::DAO::WorkflowSteps::HoldSessionSeats :isa(Registry::DAO::Workflo
         my $lines = ref $data->{cart_lines} eq 'ARRAY' ? $data->{cart_lines} : [];
         return refuse('Choose a session for at least one child') unless @$lines;
         # The hold's moment is the purchase moment: a session may have filled,
-        # a price ended or a plan stopped fitting since the cart.
+        # a price ended or a plan stopped fitting since the cart. The cart
+        # listed every line's price, so one it would not list now is no longer
+        # offered (an early-bird deadline passed, or a new version replaced it).
         if ( my $why = $CART->refusal( $db, $data, $lines ) ) {
-            return refuse($why);
+            return refuse( $why eq $CART->unlisted
+                ? 'A price in your cart is no longer offered. Go back to your cart and choose again.' : $why );
         }
 
         # A resubmit keeps each line's hold while it is live; anything else the

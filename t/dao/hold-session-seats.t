@@ -105,4 +105,36 @@ subtest 'a cart being paid for keeps its holds' => sub {
     is live_holds($run), 1, 'the hold stays';
 };
 
+subtest 'an early bird crossed before the hold is refused and every hold released' => sub {
+    my $s   = session();
+    my $cap = $s->free_units($db);
+    # A deadline a few seconds off: chosen before it, held again after it.
+    my $deadline = strftime '%Y-%m-%dT%H:%M:%SZ', gmtime( time + 5 );
+    my $early    = session_offer( $db, $s, price_cents => 25000, conditions => [ { kind => 'before', at => $deadline } ] );
+    my ( $run, $hold ) = held_run( [ $kid, $s, $early, 'pay' ], [ $sib, $s, full_price($s), 'pay' ] );
+    ok !$run->process( $db, $hold, {} )->{errors}, 'held before the deadline';
+    is $s->free_units($db), $cap - 2, 'two seats held';
+    sleep 1 until $db->query( 'SELECT clock_timestamp() > ?::timestamptz', $deadline )->array->[0];
+    like $run->process( $db, $hold, {} )->{errors}[0], qr/early-bird.*ended|no longer offered/i, 'refused, with a sentence';
+    is $s->free_units($db), $cap, 'every hold released';
+    is live_holds($run), 0, 'the run holds nothing';
+    ok !data_of($run)->{owed_payment}, 'and owes nothing';
+};
+
+subtest 'a session filled meanwhile is refused' => sub {
+    my $s     = session( capacity => 2 );
+    my $price = full_price($s);
+    my ( $run, $hold ) = held_run( [ $kid, $s, $price, 'pay' ], [ $sib, $s, $price, 'pay' ] );
+    # Another family takes a seat between the cart and the hold.
+    my $other = child( $stranger, 'Other' );
+    Registry::DAO::Entitlement->grant( $db, {
+        holder_family_member_id => $other->id, payer_user_id => $stranger->id,
+        offer_version_id => $price->id, payment_plan_id => 'pay',
+        starts_at => '2026-01-01T00:00:00Z', resource_id => $s->id, units => 1,
+    } );
+    like $run->process( $db, $hold, {} )->{errors}[0], qr/no longer has room/, 'refused';
+    is live_holds($run), 0, 'nothing held';
+    is $s->free_units($db), 1, 'the free seat stays free';
+};
+
 done_testing;

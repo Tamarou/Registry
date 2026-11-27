@@ -17,9 +17,13 @@ class Registry::DAO::WorkflowSteps::SessionCart :isa(Registry::DAO::WorkflowStep
     use Registry::DAO::WorkflowSteps::ChooseOfferAndUnits;
     use Registry::DAO::WorkflowSteps::InstalmentPaymentPlan;
 
-    my $UUID   = qr/\A[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\z/i;
-    my @FIELDS = qw( family_member_id resource_id offer_version_id payment_plan_id );
-    my $UNFIT  = 'Not offered: the last payment would fall after the session ends';
+    my $UUID     = qr/\A[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\z/i;
+    my @FIELDS   = qw( family_member_id resource_id offer_version_id payment_plan_id );
+    my $UNFIT    = 'Not offered: the last payment would fall after the session ends';
+    my $UNLISTED = 'Choose one of the listed prices';
+
+    # The refusal of a price the cart would not list for its line now.
+    sub unlisted ($class) { $UNLISTED }
 
     method process ( $db, $form_data, $run = undef ) {
         my $data   = $run->data // {};
@@ -89,7 +93,7 @@ class Registry::DAO::WorkflowSteps::SessionCart :isa(Registry::DAO::WorkflowStep
         my %own = $class->own_holds( $db, $data );
         my ( @earlier, %seen, %taking );
         for my $line (@$lines) {
-            return 'Choose one of the listed prices'
+            return $UNLISTED
                 if ref $line ne 'HASH' || grep { !defined || ref } $line->@{@FIELDS};
             my ( $child, $resource_id, $version_id, $plan_id ) = $line->@{@FIELDS};
             return 'Choose one of your own children' unless exists $mine{$child};
@@ -98,11 +102,11 @@ class Registry::DAO::WorkflowSteps::SessionCart :isa(Registry::DAO::WorkflowStep
             return 'A child can be in a session only once' if $seen{"$child $resource_id"}++;
             return sprintf '%s already has a place in %s', $mine{$child}, $session->name
                 if $class->has_place( $db, $child, $resource_id );
-            return sprintf '%s is full', $session->name
+            return sprintf '%s is full: it no longer has room for %s', $session->name, $mine{$child}
                 if ++$taking{$resource_id} > $session->free_units($db) + ( $own{$resource_id} // 0 );
             my ($version) = grep { $_->id eq $version_id }
                 $class->choosable( $db, $resource_id, $child, \@earlier, $at )->@*
-                or return 'Choose one of the listed prices';
+                or return $UNLISTED;
             my ($plan) = grep { $_->{id} eq $plan_id } $class->plans( $db, $version, $resource_id )->@*
                 or return 'Choose one of the listed payment plans';
             return $UNFIT unless $plan->{fits};
