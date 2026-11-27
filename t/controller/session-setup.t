@@ -119,4 +119,30 @@ subtest 'an admin creates a program and a five day camp week' => sub {
     is_deeply $run->{sessions}, [ $week->id ], 'and the session it made';
 };
 
+subtest 'staff get 403 from session-setup' => sub {
+    client( $user{staff} )->get_ok('/session-setup')->status_is(403);
+};
+
+# Posts the week with %changes and asserts the step refuses it with $error,
+# staying on the sessions step and making no session.
+sub refused ( $program, $error, %changes ) {
+    my $t = on_sessions($program);
+    my %week = ( %WEEK, name => "$program week", teacher_id => $user{staff}->id, action => 'add', %changes );
+    like submit_step( $t, 'sessions', %week ), qr{/sessions\z}, 'the post stays on the sessions step';
+    $t->content_like( $error, 'with the error' );
+    is_deeply sessions_named("$program week"), [], 'and no session is made';
+}
+
+subtest 'a week with no matching weekday stays on the step' => sub {
+    refused( 'Weekend camp', qr/None of the chosen weekdays falls between the first and last day/, weekdays => [ 6, 7 ] );
+};
+
+subtest 'a last day before the first is refused' => sub {
+    refused( 'Backwards camp', qr/The last day is before the first/, first_day => '2027-06-11', last_day => '2027-06-07' );
+};
+
+subtest 'a queue without hours is refused' => sub {
+    refused( 'Queue camp', qr/A queue needs the hours a freed seat is held for the next child/, offer_hold_hours => '' );
+};
+
 done_testing;
