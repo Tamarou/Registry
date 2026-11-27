@@ -141,4 +141,27 @@ subtest 'early bird until is stored as an instant' => sub {
         'midnight in New York on 2027-03-01 is 05:00 UTC';
 };
 
+subtest 'a version with no sessions chosen is refused' => sub {
+    another_price();
+    like submit_step( 'offer-basics', offer_name => 'Camp nothing' ), qr{/offer-basics\z}, 'the step stays';
+    $t->content_like( qr/Choose at least one of the program&#39;s sessions/, 'and says why' );
+
+    # Publish asks again, so a run whose sessions were dropped since cannot publish.
+    my ($run) = Registry::DAO::WorkflowRun->find( $db, { id => ( $t->tx->req->url->path =~ m{/([0-9a-f-]{36})/} )[0] } );
+    ok $run, 'the run';
+    my $publish = $dao->find( Workflow => { slug => 'session-setup' } )->get_step( $db, { slug => 'publish' } );
+    $run->update_data( $db, {
+        offer_basics  => { resource_ids => [], offer_name => 'Camp nothing' },
+        offer_price   => { price_cents => 100, currency => 'usd', units_per_acceptance => 1, per_booking_cap => 1 },
+        one_time_payment => { one_time => 'offered' },
+        refund_policy => { kind => 'none', approval => 'none' },
+        change_policy => { kind => 'none' },
+        use_policy    => { use => 'none' },
+        expiry_policy => { expiry => 'end_of_occurrence' },
+    } );
+    my $result = $publish->process( $db, { action => 'publish' }, $run );
+    like join( ' ', ( $result->{errors} // [] )->@* ), qr/Choose at least one of the program's sessions/, 'publish refuses it too';
+    ok !Registry::DAO::Offer->find( $db, { name => 'Camp nothing' } ), 'and no offer is made';
+};
+
 done_testing;
