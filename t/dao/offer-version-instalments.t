@@ -45,4 +45,37 @@ subtest 'an instalments plan is drafted, listed and published' => sub {
     ok $v->publish($db)->is_published, 'published';
 };
 
+subtest 'an instalment count below two is refused' => sub {
+    throws_ok { draft_with( instalment_plan( count => 1 ) ) } qr/count/;
+};
+
+subtest 'an unknown cadence is refused' => sub {
+    throws_ok { draft_with( instalment_plan( cadence => 'daily' ) ) } qr/cadence/;
+};
+
+subtest 'a surcharge with more than two places is refused' => sub {
+    throws_ok { draft_with( instalment_plan( surcharge_pct => '1.234' ) ) } qr/surcharge/;
+};
+
+subtest 'instalment fields on a one_time plan are refused' => sub {
+    throws_ok {
+        Registry::DAO::OfferVersion->draft( $db, new_offer(),
+            offer_terms( $r->id, payment_plans => [ { id => 'pay', kind => 'one_time', count => 3 } ] ) )
+    } qr/instalments/;
+};
+
+subtest 'publishing instalments without a missed_payment policy is refused' => sub {
+    my $v = draft_without_missed_payment();
+    throws_ok { $v->publish($db) } qr/no missed_payment policy/;
+    unlike $@, qr/DBD::Pg/, "refused by the DAO, before the database is asked";
+    ok !$db->select( 'offer_versions', ['published_at'], { id => $v->id } )->hash->{published_at},
+        'and it stays a draft';
+};
+
+subtest 'the database refuses publishing instalments without missed_payment' => sub {
+    my $bare = draft_without_missed_payment();
+    throws_ok { $db->query( 'UPDATE offer_versions SET published_at = now() WHERE id = ?', $bare->id ) }
+        qr/missed_payment/;
+};
+
 done_testing;
