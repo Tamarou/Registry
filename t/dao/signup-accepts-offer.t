@@ -5,6 +5,7 @@ use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
 use Test::More;
+use Test::Registry::Fork qw( forget_inherited_handles reap );
 use POSIX ();
 
 use Test::Registry::DB;
@@ -85,6 +86,7 @@ sub while_blocked ( $adb, $tx, $code ) {
     pipe( my $parent_reads, my $child_writes ) or die "pipe: $!";
     my $pid = fork() // die "fork: $!";
     unless ($pid) {
+        forget_inherited_handles();
         close $parent_reads;
         my $out = eval { $code->( Registry::DAO->new( url => $uri )->db ) } // "child died: $@";
         print $child_writes $out;
@@ -100,7 +102,7 @@ sub while_blocked ( $adb, $tx, $code ) {
             ->array->[0];
     }
     $tx->commit;
-    waitpid $pid, 0;
+    reap($pid);
     return ( $blocked, do { local $/; readline $parent_reads } );
 }
 

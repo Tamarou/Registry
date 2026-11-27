@@ -7,6 +7,7 @@ use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
 use Test::More;
+use Test::Registry::Fork qw( forget_inherited_handles reap );
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Test::Registry::Helpers qw( import_all_workflows join_tenant );
@@ -320,6 +321,7 @@ sub race ( $first, $run, $fields ) {
     pipe( my $parent_reads, my $child_writes ) or die "pipe: $!";
     my $pid = fork() // die "fork: $!";
     unless ($pid) {
+        forget_inherited_handles();
         close $_ for $parent_writes, $parent_reads;
         readline $child_reads;
         my $bdb    = Registry::DAO->new( url => $uri, schema => $SLUG )->db;
@@ -338,7 +340,7 @@ sub race ( $first, $run, $fields ) {
     $parent_writes->flush;
     my $blocked = blocked_behind( $holder, $pid );
     $tx->commit;
-    waitpid $pid, 0;
+    reap($pid);
     return ( $blocked, $a, decode_json( do { local $/; readline $parent_reads } ) );
 }
 

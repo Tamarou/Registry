@@ -7,6 +7,7 @@ use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
 use Test::More;
+use Test::Registry::Fork qw( forget_inherited_handles reap );
 use Test::Registry::DB;
 use Test::Registry::Offers qw( offer_terms );
 use Registry::DAO::Resource;
@@ -202,6 +203,7 @@ sub race ( $first, $second ) {
     my $holder = $adb->query('SELECT pg_backend_pid()')->array->[0];
     my $pid    = fork() // die "fork: $!";
     unless ($pid) {
+        forget_inherited_handles();
         close $parent_reads;
         my $bdb = Registry::DAO->new( url => $uri, schema => $SLUG )->db;
         my $out = eval { Mojo::JSON::to_json( $second->($bdb) ) } // Mojo::JSON::to_json( { died => "$@" } );
@@ -217,7 +219,7 @@ sub race ( $first, $second ) {
             $holder )->array->[0];
     }
     $tx->commit;
-    waitpid $pid, 0;
+    reap($pid);
     return ( $blocked, Mojo::JSON::from_json( do { local $/; readline $parent_reads } ) );
 }
 

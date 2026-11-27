@@ -7,6 +7,7 @@ use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
 use Test::More;
+use Test::Registry::Fork qw( forget_inherited_handles reap );
 use POSIX ();
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
@@ -142,6 +143,7 @@ sub publish_while_capacity_lowers ( $run, $capacity, @resource_ids ) {
     pipe( my $parent_reads, my $child_writes ) or die "pipe: $!";
     my $pid = fork() // die "fork: $!";
     unless ($pid) {
+        forget_inherited_handles();
         close $_ for $parent_writes, $parent_reads;
         readline $child_reads;
         my $bdao    = Registry::DAO->new( url => $uri, schema => 'clay_studio' );
@@ -165,7 +167,7 @@ sub publish_while_capacity_lowers ( $run, $capacity, @resource_ids ) {
     $parent_writes->flush;
     my $blocked = blocked_behind( $holder, $pid );
     $tx->commit;
-    waitpid $pid, 0;
+    reap($pid);
     return ( $blocked, do { local $/; readline $parent_reads } );
 }
 
@@ -431,6 +433,7 @@ subtest 'double publish leaves one version' => sub {
     pipe( my $child_reads, my $parent_writes ) or die "pipe: $!";
     my $pid = fork() // die "fork: $!";
     unless ($pid) {
+        forget_inherited_handles();
         close $parent_writes;
         readline $child_reads;
         my $bdao = Registry::DAO->new( url => $uri, schema => 'clay_studio' );
@@ -458,7 +461,7 @@ subtest 'double publish leaves one version' => sub {
     my $blocked = blocked_behind( $holder, $pid );
     ok $blocked, 'the second submission waits on the first one\'s lock';
     $tx->commit;
-    waitpid $pid, 0;
+    reap($pid);
     is $? >> 8, 0, 'the concurrent submission completes';
     is published_count(), $before + 1, 'two concurrent submissions publish one version';
 };

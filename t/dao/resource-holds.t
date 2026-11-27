@@ -7,6 +7,7 @@ use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
 use Test::More;
+use Test::Registry::Fork qw( forget_inherited_handles reap );
 use Test::Exception;
 use Test::Registry::DB;
 use Test::Registry::Offers qw( offer_terms );
@@ -121,6 +122,7 @@ sub race ( $first, $second, $then = sub {} ) {
     pipe( my $parent_reads, my $child_writes ) or die "pipe: $!";
     my $pid = fork() // die "fork: $!";
     unless ($pid) {
+        forget_inherited_handles();
         close $_ for $parent_writes, $parent_reads;
         readline $child_reads;
         my $bdb = Registry::DAO->new( url => $uri, schema => $SLUG )->db;
@@ -140,7 +142,7 @@ sub race ( $first, $second, $then = sub {} ) {
     my $blocked = blocked_behind( $holder, $pid );
     $then->($adb);
     $tx->commit;
-    waitpid $pid, 0;
+    reap($pid);
     return ( $blocked, do { local $/; readline $parent_reads } // q{} );
 }
 

@@ -7,6 +7,7 @@ use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
 use Test::More;
+use Test::Registry::Fork qw( forget_inherited_handles reap );
 use POSIX ();
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
@@ -153,6 +154,7 @@ subtest 'concurrent new versions leave one current' => sub {
     pipe( my $child_reads, my $parent_writes ) or die "pipe: $!";
     my $pid = fork() // die "fork: $!";
     unless ($pid) {
+        forget_inherited_handles();
         close $parent_writes;
         readline $child_reads;
         my $bdao   = Registry::DAO->new( url => $uri, schema => 'clay_studio' );
@@ -171,7 +173,7 @@ subtest 'concurrent new versions leave one current' => sub {
     $parent_writes->flush;
     sleep 1;    # let B reach the offer and wait behind A
     $tx->commit;
-    waitpid $pid, 0;
+    reap($pid);
 
     ok $a->{published_offer_version_id}, 'the first run publishes';
     is $? >> 8, 0, 'the losing run stays with an error';
