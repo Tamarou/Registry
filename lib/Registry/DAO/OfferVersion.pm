@@ -254,6 +254,9 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
         }
     }
 
+    # A payment plan's fields; the database checks each against its kind.
+    my @PLAN_FIELDS = qw( id kind fraction count cadence surcharge_pct );
+
     # Appends the offer's next version number as a draft. $terms names one
     # resource_id, one class_project_id, or resource_ids: the set it buys.
     sub draft ( $class, $db, $offer_id, $terms ) {
@@ -274,7 +277,7 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
                 $terms->@{qw( units_per_acceptance per_booking_cap )},
                 to_json($policies), to_json($conditions), $offer_id )->expand->hash;
             $db->insert( 'offer_version_payment_plans',
-                { offer_version_id => $row->{id}, $_->%{qw( id kind fraction )} } )
+                { offer_version_id => $row->{id}, $_->%{@PLAN_FIELDS} } )
                 for ( $terms->{payment_plans} // [] )->@*;
             $db->insert( 'offer_version_resources', { offer_version_id => $row->{id}, resource_id => $_ } )
                 for ( $terms->{resource_ids} // [] )->@*;
@@ -363,10 +366,11 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
                 }, ($resource_id) x 3 )->expand->hashes->map( sub { $class->new(%$_) } )->each ];
     }
 
-    # The plans a customer chooses between, each { id, kind, fraction }.
+    # The plans a customer chooses between, each { id, kind, fraction, count,
+    # cadence, surcharge_pct }; a field its kind does not carry is undef.
     method payment_plans ($db) {
         $db = $db->db if $db isa Registry::DAO;
-        return $db->select( 'offer_version_payment_plans', [qw( id kind fraction )],
+        return $db->select( 'offer_version_payment_plans', [@PLAN_FIELDS],
             { offer_version_id => $id }, { -asc => 'id' } )->hashes->to_array;
     }
 
@@ -383,6 +387,11 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
                 unless @{ $self->payment_plans($db) };
             croak "offer $offer_id version $version has no refund policy"
                 unless exists $policies->{refund};
+            # What a missed instalment does is never left unspecified; the
+            # database refuses it too (offer_versions_instalments_need_missed_payment).
+            croak "offer $offer_id version $version offers instalments and has no missed_payment policy"
+                if !exists $policies->{missed_payment}
+                && grep { $_->{kind} eq 'instalments' } @{ $self->payment_plans($db) };
             # A draft stored by raw SQL or before a shape was retired never
             # passed draft's checks; nothing is published unchecked.
             _check_policies($policies);

@@ -19,6 +19,9 @@ use Registry::DAO::OfferVersion;
 use Registry::DAO::Resource;
 use Registry::Utility::WorkflowProcessor;
 
+# A plan that is not instalments carries none of their fields.
+my @NOT_INSTALMENTS = ( count => undef, cadence => undef, surcharge_pct => undef );
+
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 
@@ -184,7 +187,7 @@ subtest 'admin publishes a one time priced offer version' => sub {
     is $v->currency,             'usd',      'in the stated currency';
     is $v->units_per_acceptance, 2,          'two units per acceptance';
     is $v->per_booking_cap,      3,          'and a per-booking cap of three';
-    is_deeply $v->payment_plans($tdb), [ { id => 'one_time', kind => 'one_time', fraction => undef } ],
+    is_deeply $v->payment_plans($tdb), [ { id => 'one_time', kind => 'one_time', fraction => undef, @NOT_INSTALMENTS } ],
         'paid for once';
     is_deeply $v->policies,
         { refund => { kind => 'none' }, change => { kind => 'none' }, use => { kind => 'none' }, expiry => { kind => 'never' } },
@@ -542,7 +545,7 @@ subtest 'publish offer helper drives the workflow' => sub {
         'offer-price'  => { price_cents => 900, currency => 'usd', units_per_acceptance => 1, per_booking_cap => 1 },
     } );
     is $version->price_cents, 900, 'the helper returns the version it published';
-    is_deeply $version->payment_plans($tdb), [ { id => 'one_time', kind => 'one_time', fraction => undef } ],
+    is_deeply $version->payment_plans($tdb), [ { id => 'one_time', kind => 'one_time', fraction => undef, @NOT_INSTALMENTS } ],
         'with the one-time plan its default offers';
     is $tdb->query( q{
         SELECT count(*) FROM workflow_runs r JOIN workflows w ON w.id = r.workflow_id

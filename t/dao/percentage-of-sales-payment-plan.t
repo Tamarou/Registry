@@ -14,6 +14,9 @@ use Registry::DAO;
 use Registry::DAO::Entitlement;
 use Registry::PriceOps::RevenueShare qw( revenue_share_fraction_for_tenant );
 
+# A plan that is not instalments carries none of their fields.
+my @NOT_INSTALMENTS = ( count => undef, cadence => undef, surcharge_pct => undef );
+
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 my $db      = $dao->db;
@@ -57,7 +60,7 @@ subtest 'admin publishes a percentage of sales plan' => sub {
     ok $solo->is_published, 'the offer publishes';
     is $solo->price_cents, 0, 'for $0';
     is_deeply $solo->payment_plans($db),
-        [ { id => 'percentage_of_sales', kind => 'percentage_of_sales', fraction => '0.0250' } ],
+        [ { id => 'percentage_of_sales', kind => 'percentage_of_sales', fraction => '0.0250', @NOT_INSTALMENTS } ],
         'paid for by 2.5% of each sale, as the fraction 0.0250, and nothing else';
 
     refused( 'a rate finer than 4 fraction places', 'percentage-of-sales-payment', rate_percent => '2.50005' );
@@ -92,11 +95,11 @@ sub plans_with (%fields) {
 
 subtest 'explicit zero rate distinct from declined' => sub {
     is_deeply plans_with( rate_percent => '0' ), [
-        { id => 'one_time',            kind => 'one_time',            fraction => undef },
-        { id => 'percentage_of_sales', kind => 'percentage_of_sales', fraction => '0.0000' },
+        { id => 'one_time',            kind => 'one_time',            fraction => undef, @NOT_INSTALMENTS },
+        { id => 'percentage_of_sales', kind => 'percentage_of_sales', fraction => '0.0000', @NOT_INSTALMENTS },
     ], 'an explicit 0% is a percentage plan with fraction 0';
     is_deeply plans_with( percentage_of_sales => 'declined' ),
-        [ { id => 'one_time', kind => 'one_time', fraction => undef } ],
+        [ { id => 'one_time', kind => 'one_time', fraction => undef, @NOT_INSTALMENTS } ],
         'a declined plan is no percentage plan at all';
 };
 
@@ -119,7 +122,7 @@ subtest 'two and a half percent stored exactly' => sub {
 
 subtest 'declined plan with a rate writes nothing' => sub {
     is_deeply plans_with( percentage_of_sales => 'declined', rate_percent => '2.5' ),
-        [ { id => 'one_time', kind => 'one_time', fraction => undef } ],
+        [ { id => 'one_time', kind => 'one_time', fraction => undef, @NOT_INSTALMENTS } ],
         'a rate beside a declined plan writes no percentage plan';
 };
 

@@ -6,7 +6,7 @@ use warnings;
 package Test::Registry::Offers;
 
 use Exporter 'import';
-our @EXPORT_OK = qw( offer_terms );
+our @EXPORT_OK = qw( offer_terms instalment_plan );
 
 # offer_terms($resource_id, %overrides): terms OfferVersion->draft accepts
 # and publish allows: one one-time plan and an explicit refund policy.
@@ -20,6 +20,11 @@ sub offer_terms ( $resource_id, %overrides ) {
         policies             => { refund => { kind => 'none' } },
         %overrides,
     };
+}
+
+# instalment_plan(%overrides): a payment plan of three monthly instalments.
+sub instalment_plan (%overrides) {
+    return { id => 'parts', kind => 'instalments', count => 3, cadence => 'monthly', %overrides };
 }
 
 1;
