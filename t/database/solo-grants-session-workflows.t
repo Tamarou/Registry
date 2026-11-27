@@ -99,4 +99,23 @@ subtest 'a tenant holding v2 is moved to v3 on identical terms' => sub {
     undef $db;
 };
 
+subtest 'refuses when v2 and v3 terms differ' => sub {
+    my ( $pg, $db ) = at_parent();
+    my $v2 = solo_current($db);
+    tenant_holding( $db, $v2->{id}, 'still_v2' );
+    # Stands in for a migration that copied v2's terms wrongly: v3's draft is priced.
+    $db->query( q{CREATE FUNCTION pg_temp_reprice() RETURNS trigger LANGUAGE plpgsql AS $$
+                  BEGIN NEW.price_cents := 100; RETURN NEW; END $$} );
+    $db->query( q{CREATE TRIGGER reprice BEFORE INSERT ON registry.offer_versions FOR EACH ROW
+                  WHEN (NEW.id = md5('solo-grants-session-workflows/version')::uuid)
+                  EXECUTE FUNCTION pg_temp_reprice()} );
+    my $err = capture_stderr { dies_ok { deploy($pg) } 'the deploy fails' };
+    like $err, qr/Solo v3 must keep v2's price, fee and policies/, 'naming why';
+    is solo_current($db)->{id}, $v2->{id}, 'Solo v2 is still current';
+    is $db->query( q{SELECT count(*) FROM registry.entitlements e JOIN registry.tenants t ON t.id = e.holder_tenant_id
+                      WHERE t.slug = 'still_v2' AND e.state = 'active' AND e.offer_version_id = ?}, $v2->{id} )
+        ->array->[0], 1, 'its holder still holds v2';
+    undef $db;
+};
+
 done_testing;
