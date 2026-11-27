@@ -46,7 +46,9 @@ class Registry::DAO::WorkflowSteps::OfferBasics :isa(Registry::DAO::WorkflowStep
             my @ids = uniq grep { defined && length } ref $ids eq 'ARRAY' ? @$ids : $ids // ();
             my @errors = grep { defined } __PACKAGE__->session_refusal( $db, $run->data, \@ids );
             push @errors, 'Name the offer' unless length $name;
-            return { stay => 1, errors => \@errors } if @errors;
+            # Shown again with what was entered, as DayView does.
+            return { stay => 1, template_data => { errors => \@errors, offer_name => $name,
+                chosen => { map { $_ => 1 } grep { !ref } @ids } } } if @errors;
             return { offer_basics => { resource_ids => \@ids, offer_name => $name } };
         }
 
@@ -126,8 +128,9 @@ class Registry::DAO::WorkflowSteps::OfferBasics :isa(Registry::DAO::WorkflowStep
 
     method prepare_template_data ( $db, $run, $params = {} ) {
         if ( my $program = $run->data->{session_program} ) {
+            my $basic = $run->data->{offer_basics} // {};
             return { sessions => Registry::DAO::Resource->sessions_of( $db, $program->{project_id} ),
-                chosen => { map { $_ => 1 } ( ( $run->data->{offer_basics} // {} )->{resource_ids} // [] )->@* } };
+                chosen => { map { $_ => 1 } ( $basic->{resource_ids} // [] )->@* }, offer_name => $basic->{offer_name} };
         }
         my $choice = $run->data->{resource_choice} // {};
         return {

@@ -174,6 +174,7 @@ subtest 'a version with no sessions chosen is refused' => sub {
     another_price();
     like submit_step( 'offer-basics', offer_name => 'Camp nothing' ), qr{/offer-basics\z}, 'the step stays';
     $t->content_like( qr/Choose at least one of the program&#39;s sessions/, 'and says why' );
+    $t->element_exists( '#workflow-content input[name="offer_name"][value="Camp nothing"]', 'with the name refilled' );
 
     # Publish asks again, so a run whose sessions were dropped since cannot publish.
     my ($run) = Registry::DAO::WorkflowRun->find( $db, { id => ( $t->tx->req->url->path =~ m{/([0-9a-f-]{36})/} )[0] } );

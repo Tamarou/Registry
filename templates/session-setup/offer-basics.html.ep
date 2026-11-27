@@ -32,7 +32,7 @@
 
   <div class="form-group">
     <label class="form-label required" for="offer_name">Offer name</label>
-    <input class="form-input" type="text" id="offer_name" name="offer_name" required>
+    <input class="form-input" type="text" id="offer_name" name="offer_name" value="<%= stash('offer_name') // '' %>" required>
     <p>Each price is its own offer: name a sibling or early-bird price apart, such as "Camp sibling".</p>
   </div>
 
