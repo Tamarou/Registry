@@ -137,4 +137,22 @@ subtest 'the instalment step checks the run\'s sessions before an offer names on
     is $run->data->{instalment_payment}, undef, 'and records no plan';
 };
 
+subtest 'publish refuses a malformed missed-payment policy' => sub {
+    my $run = session_run( 'Malformed term', days_from_now(7), days_from_now(70) );
+    $run->process( $db, step('instalment-payment'), { instalments => 'offered', count => 2, cadence => 'weekly' } );
+    for my $case (
+        [ { kind => 'grace' },                'a grace with no days' ],
+        [ { kind => 'grace', days => 0 },     'a grace of zero days' ],
+        [ { kind => 'grace', days => 10000 }, 'a grace of 10000 days' ],
+        [ { kind => 'forgive' },              'an unknown kind' ],
+        [ { kind => 'end', days => 7 },       'days on a kind that has none' ],
+    ) {
+        $run->update_data( $db, { missed_payment_policy => $case->[0] } );
+        like errors_of( $publish->process( $db, { action => 'publish' }, $run ) ),
+            qr/\A(?:Choose what happens when an instalment is missed|A grace period is a whole number of days from 1 to 9999)\z/,
+            "$case->[1] is refused with a reason";
+    }
+    is versions_of('Malformed term'), 0, 'and no version is written';
+};
+
 done_testing;

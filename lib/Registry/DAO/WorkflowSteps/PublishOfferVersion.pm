@@ -13,6 +13,7 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
     use Registry::DAO::WorkflowSteps::ChangePolicy;
     use Registry::DAO::WorkflowSteps::ExpiryPolicy;
     use Registry::DAO::WorkflowSteps::InstalmentPaymentPlan;
+    use Registry::DAO::WorkflowSteps::MissedPaymentPolicy;
     use Registry::DAO::WorkflowSteps::OfferPrice;
     use Registry::DAO::WorkflowSteps::RefundPolicy;
     use Registry::Utility::PriceFormat qw( format_price );
@@ -77,8 +78,8 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
         my $parts  = ref $data->{instalment_payment} eq 'HASH' ? $data->{instalment_payment} : undef;
         my $missed = $data->{missed_payment_policy};
         if ($parts) {
-            return { stay => 1, errors => ['Choose what happens when an instalment is missed'] }
-                unless ref $missed eq 'HASH' && defined $missed->{kind};
+            $why = Registry::DAO::WorkflowSteps::MissedPaymentPolicy->refusal( $db, $data, $missed );
+            return { stay => 1, errors => [$why] } if $why;
             $why = Registry::DAO::WorkflowSteps::InstalmentPaymentPlan->refusal( $db, $data, $parts );
             return { stay => 1, errors => [$why] } if $why;
         }

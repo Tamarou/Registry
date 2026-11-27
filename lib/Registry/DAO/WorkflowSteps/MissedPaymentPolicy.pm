@@ -7,6 +7,19 @@ use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::MissedPaymentPolicy :isa(Registry::DAO::WorkflowStep) {
 
+    # Why $policy is not one this step records, or nothing. Publish asks it
+    # of the run's data too, which nothing but this step should have written.
+    sub refusal ( $class, $db, $data, $policy ) {
+        my $kind = ref $policy eq 'HASH' ? $policy->{kind} // '' : '';
+        if ( $kind eq 'grace' ) {
+            return 'A grace period is a whole number of days from 1 to 9999'
+                unless keys %$policy == 2 && ( $policy->{days} // '' ) =~ /\A[1-9][0-9]{0,3}\z/;
+            return;
+        }
+        return if ( $kind eq 'keep_and_owe' || $kind eq 'end' ) && keys %$policy == 1;
+        return 'Choose what happens when an instalment is missed';
+    }
+
     # Nothing to ask without an instalment plan, so the controller passes this step through.
     method nothing_to_ask ( $db, $run ) { !$run->data->{instalment_payment} }
 
@@ -14,14 +27,11 @@ class Registry::DAO::WorkflowSteps::MissedPaymentPolicy :isa(Registry::DAO::Work
         return { missed_payment_policy => undef } if $run && $self->nothing_to_ask( $db, $run );
 
         my %f = map { $_ => ( ref $form_data->{$_} ? '' : $form_data->{$_} // '' ) } qw( missed_payment grace_days );
-        return { missed_payment_policy => { kind => $f{missed_payment} } }
-            if $f{missed_payment} eq 'keep_and_owe' || $f{missed_payment} eq 'end';
-        return { stay => 1, errors => ['Choose what happens when an instalment is missed'] }
-            unless $f{missed_payment} eq 'grace';
-        # Four digits at most, so every accepted number fits an integer.
-        return { stay => 1, errors => ['A grace period is a whole number of days of at least one'] }
-            unless $f{grace_days} =~ /\A[1-9][0-9]{0,3}\z/;
-        return { missed_payment_policy => { kind => 'grace', days => 0 + $f{grace_days} } };
+        my $policy = { kind => $f{missed_payment}, $f{missed_payment} eq 'grace' ? ( days => $f{grace_days} ) : () };
+        my $why = __PACKAGE__->refusal( $db, $run ? $run->data : {}, $policy );
+        return { stay => 1, errors => [$why] } if $why;
+        $policy->{days} += 0 if exists $policy->{days};    # stored as a number
+        return { missed_payment_policy => $policy };
     }
 }
 
