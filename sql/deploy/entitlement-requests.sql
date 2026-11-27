@@ -40,7 +40,10 @@ BEGIN
             )
         $f$, s);
         -- Indexes take default names, as clone_schema's LIKE ... INCLUDING ALL gives.
-        EXECUTE format('CREATE INDEX ON %I.entitlement_requests (entitlement_id)', s);
+        -- One pending request per entitlement, of either kind, so two approvals cannot both refund it.
+        EXECUTE format('CREATE UNIQUE INDEX ON %I.entitlement_requests (entitlement_id) WHERE state = ''pending''', s);
+        -- An entitlement's requests in order; also the foreign key's index.
+        EXECUTE format('CREATE INDEX ON %I.entitlement_requests (entitlement_id, created_at)', s);
         EXECUTE format('CREATE INDEX ON %I.entitlement_requests (created_at, id) WHERE state = ''pending''', s);
     END LOOP;
 END $$;

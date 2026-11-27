@@ -7,6 +7,7 @@ use Object::Pad;
 
 class Registry::DAO::EntitlementRequest :isa(Registry::DAO::Object) {
     use Carp qw( croak );
+    use Registry::DAO::Entitlement;
 
     field $id :param :reader;
     field $entitlement_id :param :reader;
@@ -22,8 +23,21 @@ class Registry::DAO::EntitlementRequest :isa(Registry::DAO::Object) {
 
     sub table { 'entitlement_requests' }
 
+    # Refused while the entitlement already has a pending request, of either
+    # kind: two pending requests could both be approved and refund it twice.
     sub open ( $class, $db, $data ) {
-        return $class->create( $db, { %$data, outcome => { -json => $data->{outcome} } } );
+        $db = $db->db if $db isa Registry::DAO;
+        my $row = $db->query( q{
+            INSERT INTO entitlement_requests (entitlement_id, kind, workflow_run_id, outcome, requested_by)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (entitlement_id) WHERE state = 'pending' DO NOTHING
+            RETURNING *
+        }, @$data{qw( entitlement_id kind workflow_run_id )}, { json => $data->{outcome} }, $data->{requested_by} )
+            ->expand->hash;
+        Registry::DAO::Entitlement::Refused->throw(
+            "Entitlement $data->{entitlement_id} already has a pending request awaiting an admin's decision.\n")
+            unless $row;
+        return $class->new(%$row);
     }
 
     sub for_run ( $class, $db, $run_id ) {

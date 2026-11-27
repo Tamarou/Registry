@@ -28,11 +28,11 @@ my $version = session_offer( $db, $session );
 my $offer   = $db->select( 'offers', 'name', { id => $version->offer_id } )->hash->{name};
 my $flow    = Registry::DAO::Workflow->create( $db, { slug => 'er-flow', name => 'Request flow' } );
 
-# A request for a new child's seat in the session, opened from a new run.
-sub request ( $kind = 'refund' ) {
+# A request for $e (by default a new child's seat in the session), opened from a new run.
+sub request ( $kind = 'refund', $e = undef ) {
     my $child = Registry::DAO::Family->add_child( $db, $parent->id,
         { child_name => 'Child ' . ++$made, birth_date => '2018-01-01', grade => '3' } );
-    my $e = Registry::DAO::Entitlement->grant( $db, {
+    $e //= Registry::DAO::Entitlement->grant( $db, {
         holder_family_member_id => $child->id,
         payer_user_id           => $parent->id,
         offer_version_id        => $version->id,
@@ -42,7 +42,7 @@ sub request ( $kind = 'refund' ) {
         units                   => 1,
     } );
     return Registry::DAO::EntitlementRequest->open( $db, {
-        entitlement_id  => $e->id,
+        entitlement_id  => ref $e ? $e->id : $e,
         kind            => $kind,
         workflow_run_id => $flow->new_run($db)->id,
         outcome         => { amount_cents => 27000 + $made },
@@ -100,6 +100,17 @@ subtest 'an unknown decision state croaks' => sub {
         for qw( maybe pending );
     is Registry::DAO::EntitlementRequest->for_run( $db, $r->workflow_run_id )->state, 'pending',
         'and the request stays pending';
+};
+
+subtest 'one entitlement has one pending request at a time' => sub {
+    my $first = request();
+    throws_ok { request( 'change', $first->entitlement_id ) } 'Registry::DAO::Entitlement::Refused',
+        'a second pending request, of any kind, is refused';
+    like $@, qr/already has a pending request/, 'saying why';
+    is scalar( grep { $_->{entitlement_id} eq $first->entitlement_id }
+            Registry::DAO::EntitlementRequest->pending($db)->@* ), 1, 'one pending request remains';
+    $first->decide( $db, 'declined', $admin->id, 'no' );
+    is request( 'refund', $first->entitlement_id )->state, 'pending', 'once decided, another may be opened';
 };
 
 done_testing;
