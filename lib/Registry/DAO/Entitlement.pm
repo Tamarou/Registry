@@ -25,8 +25,7 @@ class Registry::DAO::Entitlement :isa(Registry::DAO::Object) {
     field $payment_id :param :reader = undef;           # the payment that created it, set at insert
     field $payment_share_cents :param :reader = undef;  # its share of that payment
     field $terms_version :param :reader = undef;        # the /terms version its booker agreed to, set at insert
-    field $past_due_since :param :reader = undef;       # when an invoice of it went unpaid, while active
-    field $past_due_invoice_id :param :reader = undef;  # that Stripe invoice
+    field $past_due_since :param :reader = undef;       # its earliest unpaid failed invoice's failure
     field $transferred_from_entitlement_id :param :reader = undef;  # its predecessor, set at insert
 
     sub table { 'entitlements' }
@@ -42,8 +41,9 @@ and C<ended_reason> and closes the period at C<ended_at>. In effect at T
 means active and the period covers T (in_effect_sql).
 
 Past due is not a state, because an ended state is final: it is a flag on an
-active entitlement (C<past_due_since> and C<past_due_invoice_id>), which keeps
-its units and stays in effect until the invoice is paid or it is ended.
+active entitlement: each failed Stripe invoice it owes is a row of
+C<entitlement_past_due_invoices>, and C<past_due_since> is the earliest of
+their failures. It keeps its units and stays in effect while past due.
 
 =cut
 
@@ -282,29 +282,43 @@ its units and stays in effect until the invoice is paid or it is ended.
                 ->arrays->flatten->each ];
     }
 
-    # Marks it past due for unpaid Stripe invoice $invoice_id, if it is active
-    # and not already past due: a second mark, for this invoice or another,
-    # keeps the first.
+    # Records that it owes failed Stripe invoice $invoice_id, if it is active:
+    # past due until every invoice it owes is paid. Once per invoice.
     method mark_past_due ( $db, $invoice_id ) {
-        $db = $db->db if $db isa Registry::DAO;
-        $db->query( q{
-            UPDATE entitlements SET past_due_since = now(), past_due_invoice_id = ?
-             WHERE id = ? AND state = 'active' AND past_due_invoice_id IS NULL
-        }, $invoice_id, $id );
-        return $self;
+        $self->_past_due( $db, sub ($db) {
+            $db->query( q{
+                INSERT INTO entitlement_past_due_invoices (entitlement_id, invoice_id)
+                SELECT id, ? FROM entitlements WHERE id = ? AND state = 'active'
+                ON CONFLICT DO NOTHING
+            }, $invoice_id, $id );
+        } );
     }
 
-    # Clears past due when $invoice_id is the invoice it is past due for.
+    # Records that invoice $invoice_id is paid: no longer past due once no
+    # invoice it owes remains. Another invoice clears nothing.
     method clear_past_due ( $db, $invoice_id ) {
+        $self->_past_due( $db, sub ($db) {
+            $db->delete( 'entitlement_past_due_invoices', { entitlement_id => $id, invoice_id => $invoice_id } );
+        } );
+    }
+
+    # Runs $change to its owed invoices under its row lock, so concurrent
+    # marks and clears take turns, then sets past_due_since from what remains.
+    method _past_due ( $db, $change ) {
         $db = $db->db if $db isa Registry::DAO;
+        my $tx = $db->dbh->{AutoCommit} ? $db->begin : undef;
+        $db->query( 'SELECT 1 FROM entitlements WHERE id = ? FOR UPDATE', $id );
+        $change->($db);
         $db->query( q{
-            UPDATE entitlements SET past_due_since = NULL, past_due_invoice_id = NULL
-             WHERE id = ? AND past_due_invoice_id = ?
-        }, $id, $invoice_id );
+            UPDATE entitlements SET past_due_since =
+                (SELECT min(failed_at) FROM entitlement_past_due_invoices WHERE entitlement_id = ?)
+             WHERE id = ?
+        }, $id, $id );
+        $tx->commit if $tx;
         return $self;
     }
 
-    method is_past_due { return defined $past_due_invoice_id ? 1 : 0 }
+    method is_past_due { return defined $past_due_since ? 1 : 0 }
 
     # It and the entitlements it was transferred from, oldest first.
     method chain ($db) {

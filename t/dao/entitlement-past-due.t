@@ -70,7 +70,7 @@ subtest 'paying the past due invoice clears it' => sub {
     $e->clear_past_due( $db, 'in_1' );
     $e = reread($e);
     ok !$e->is_past_due, 'no longer past due';
-    ok !defined $e->past_due_since && !defined $e->past_due_invoice_id, 'both columns cleared';
+    ok !defined $e->past_due_since, 'with no past due date';
 };
 
 subtest 'an entitlement can end unpaid' => sub {
@@ -109,10 +109,11 @@ subtest 'chain lists predecessors oldest first' => sub {
 subtest 'another invoice clears nothing' => sub {
     my $e = seat();
     $e->mark_past_due( $db, 'in_1' );
+    my $since = reread($e)->past_due_since;
     $e->clear_past_due( $db, 'in_other' );
     $e = reread($e);
     ok $e->is_past_due, 'still past due';
-    is $e->past_due_invoice_id, 'in_1', 'for the first invoice';
+    is $e->past_due_since, $since, 'since the same moment';
 };
 
 subtest 'marking past due twice for one invoice changes nothing' => sub {
@@ -122,8 +123,28 @@ subtest 'marking past due twice for one invoice changes nothing' => sub {
     $db->query("SELECT pg_sleep(0.01)");
     $e->mark_past_due( $db, 'in_1' );
     $e = reread($e);
-    is $e->past_due_since,      $since, 'past due since the first mark';
-    is $e->past_due_invoice_id, 'in_1', 'for the same invoice';
+    is $e->past_due_since, $since, 'past due since the first mark';
+    $e->clear_past_due( $db, 'in_1' );
+    ok !reread($e)->is_past_due, 'one payment of the invoice clears it: it was owed once';
+};
+
+subtest 'a second failed invoice keeps it past due until both are paid' => sub {
+    my $e = seat();
+    $e->mark_past_due( $db, 'in_1' );
+    my $first = reread($e)->past_due_since;
+    $db->query("SELECT pg_sleep(0.01)");
+    $e->mark_past_due( $db, 'in_2' );
+    is reread($e)->past_due_since, $first, 'past due since the first failure';
+
+    $e->clear_past_due( $db, 'in_1' );
+    $e = reread($e);
+    ok $e->is_past_due, 'paying the first leaves it past due';
+    ok $e->past_due_since gt $first, 'now since the second failure';
+
+    $e->clear_past_due( $db, 'in_2' );
+    $e = reread($e);
+    ok !$e->is_past_due, 'paying both clears it';
+    ok !defined $e->past_due_since, 'and its date';
 };
 
 subtest 'a transfer link cannot be cleared once set' => sub {

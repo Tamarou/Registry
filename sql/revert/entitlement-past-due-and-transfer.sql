@@ -79,11 +79,11 @@ BEGIN
         SELECT slug::name FROM registry.tenants WHERE slug != 'registry'
     LOOP
         CONTINUE WHEN to_regclass(format('%I.entitlements', s)) IS NULL;
+        EXECUTE format('DROP TABLE %I.entitlement_past_due_invoices', s);
         EXECUTE format('ALTER TABLE %I.payments DROP COLUMN entitlement_id', s);
         EXECUTE format($f$
             ALTER TABLE %1$I.entitlements
                 DROP COLUMN transferred_from_entitlement_id,
-                DROP COLUMN past_due_invoice_id,
                 DROP COLUMN past_due_since,
                 DROP CONSTRAINT entitlements_state_check,
                 ADD CONSTRAINT entitlements_state_check

@@ -1,4 +1,4 @@
--- ABOUTME: An entitlement can be past due (a flag on an active one), end unpaid or transferred, and link its predecessor.
+-- ABOUTME: An entitlement can be past due (on active ones, per failed invoice), end unpaid or transferred, and link its predecessor.
 -- ABOUTME: Instalment and change payments name their entitlement, so what it has paid sums over a transfer chain.
 
 -- Deploy registry:entitlement-past-due-and-transfer to pg
@@ -25,17 +25,25 @@ BEGIN
                 DROP CONSTRAINT entitlements_state_check,
                 ADD CONSTRAINT entitlements_state_check
                     CHECK (state IN ('active', 'expired', 'refunded', 'dispute_lost', 'unpaid', 'transferred')),
+                -- The earliest failure among its unpaid invoices, kept by
+                -- Entitlement's mark_past_due and clear_past_due.
                 ADD COLUMN past_due_since timestamp with time zone,
-                ADD COLUMN past_due_invoice_id text,
-                ADD CONSTRAINT entitlements_past_due_check CHECK (
-                    (past_due_since IS NULL) = (past_due_invoice_id IS NULL)
-                    AND coalesce(past_due_invoice_id, 'x') <> ''
-                ),
                 ADD COLUMN transferred_from_entitlement_id uuid
                     CONSTRAINT entitlements_transferred_from_entitlement_id_key UNIQUE
                     REFERENCES %1$I.entitlements (id)
         $f$, s);
         EXECUTE format('ALTER TABLE %1$I.payments ADD COLUMN entitlement_id uuid REFERENCES %1$I.entitlements (id)', s);
+        -- Each failed invoice it owes: past due while any remain, since under
+        -- keep_and_owe later instalments keep billing and each one missed is owed.
+        EXECUTE format($f$
+            CREATE TABLE %1$I.entitlement_past_due_invoices (
+                entitlement_id uuid NOT NULL REFERENCES %1$I.entitlements (id),
+                invoice_id     text NOT NULL
+                    CONSTRAINT entitlement_past_due_invoices_invoice_id_check CHECK (invoice_id <> ''),
+                failed_at      timestamp with time zone NOT NULL DEFAULT now(),
+                PRIMARY KEY (entitlement_id, invoice_id)
+            )
+        $f$, s);
     END LOOP;
 END $$;
 
