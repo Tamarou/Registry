@@ -151,6 +151,18 @@ subtest 'a bound completed row is left as it is, with no second fee' => sub {
     is_deeply rows('sub_sched_ir_bound_done'), $before, 'no row changed';
 };
 
+subtest 'the opening $0 invoice is neither settled nor flagged' => sub {
+    build_set('sub_sched_ir_opening');
+    my $before = rows('sub_sched_ir_opening');
+    @logs = ();
+    run_job( { sub_sched_ir_opening => 'sub_ir_opening' },
+        { sub_ir_opening => [ { %{ paid_invoice( 'in_ir_opening', 1_600_000_000 ) },
+            billing_reason => 'subscription_create', amount_due => 0, amount_paid => 0 } ] } );
+    is_deeply rows('sub_sched_ir_opening'), $before, 'no row changed';
+    is scalar( grep { $_->[0] eq 'error' && $_->[1] =~ /sub_sched_ir_opening/ } @logs ), 0,
+        'and nothing is flagged';
+};
+
 subtest 'a paid invoice that matches no owed row is flagged for ops' => sub {
     build_set( 'sub_sched_ir_full', 2 => 'in_ir_two', 3 => 'in_ir_three' );
     # Two paid, three's card declined: still owed, but its own month, so no

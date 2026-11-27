@@ -136,8 +136,17 @@ field $_stripe_client = undef;
     #
     # Instalment one is taken on-session at checkout, where the parent is
     # present to satisfy a card challenge and the card is saved; this covers
-    # what is left, charged automatically against that card. So `start_date` is
-    # the second instalment's due date, not now.
+    # what is left, charged automatically against that card.
+    #
+    # Stripe bills a schedule on its start's day of the month, clamped to
+    # shorter months (a Jan 31 start bills Feb 28, Mar 31, Apr 30), which is
+    # how Instalments::due_dates counts from the checkout date. Started on
+    # part two's date instead, Feb 28 would bill Mar 28. So given
+    # `first_date` (the checkout date, part one's) the schedule starts then,
+    # with a $0 period for the part already paid, and no phase resets the
+    # anchor: Stripe charges exactly the stored due dates, in at most three
+    # phases however many parts. Without it, the schedule starts on part
+    # two's date.
     sub instalment_schedule_params ( $args ) {
         my $recurring = $RECURRING{ $args->{cadence} // '' }
             or die "no Stripe interval for cadence '" . ( $args->{cadence} // '' ) . "'\n";
@@ -147,10 +156,12 @@ field $_stripe_client = undef;
 
         my $phases = instalment_phases(
             $instalments, $currency, $args->{description} // 'Enrollment' );
+        unshift @$phases, { %{ $phases->[0] }, unit_amount => 0, iterations => 1 }
+            if $args->{first_date};
 
         my %params = (
             customer   => $args->{customer},
-            start_date => _epoch_for_date( $instalments->[0]{due_date} ),
+            start_date => _epoch_for_date( $args->{first_date} // $instalments->[0]{due_date} ),
 
             # It ends. An instalment plan is a fixed number of charges, and a
             # schedule that renewed would bill a family for a camp that finished
@@ -289,8 +300,9 @@ field $_stripe_client = undef;
         my $card = $intent->{payment_method}
             or die "payment $id saved no card\n";
 
+        # The $0 opening phase, then the parts' (instalment_schedule_params).
         my $schedule = $self->_schedule_at_stripe( $client, $customer, $pct, $eid,
-            scalar @{ instalment_phases( \@remaining, lc $currency, $description ) } );
+            1 + @{ instalment_phases( \@remaining, lc $currency, $description ) } );
         $schedule ||= $client->create_subscription_schedule( {
             %{ instalment_schedule_params( {
                 customer          => $customer,
@@ -306,6 +318,7 @@ field $_stripe_client = undef;
                     _idempotency_key           => "instalment_schedule:$eid:product",
                 })->{id},
                 instalments       => \@remaining,
+                first_date        => $parts[0]{due_date},
             } ) },
             _idempotency_key => "instalment_schedule:$eid:schedule",
         } );

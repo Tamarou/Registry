@@ -628,6 +628,14 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             return;
         }
 
+        # The $0 opening period a schedule bills for the part paid at checkout
+        # (Payment::instalment_schedule_params) is no instalment.
+        my $due = $invoice->{amount_due};
+        if ( defined $due && !ref $due && $due eq '0' ) {
+            $self->app->log->info("instalment invoice for schedule $schedule is the \$0 opening period");
+            return;
+        }
+
         # One invoice at a time per schedule. Two deliveries of one invoice
         # (failed and paid) would otherwise both miss its tag and both take the
         # earliest owed row; waiting here, the second sees the first's tag.

@@ -468,6 +468,19 @@ subtest 'an invoice the schedule did not bill changes no instalment' => sub {
     is_deeply statuses(), [qw( completed pending )], 'subscription_create does';
 };
 
+# The schedule opens with a $0 period for the part paid at checkout, so its
+# month-end anchor is the checkout date. That period's invoice is no instalment.
+subtest 'the opening $0 invoice marks no instalment' => sub {
+    build_set();
+    for my $type (qw( invoice.paid invoice.payment_failed )) {
+        deliver( $type, invoice( 'in_opening', undef, billing_reason => 'subscription_create',
+            amount_due => 0, amount_paid => 0, status => 'paid' ) );
+    }
+    is_deeply statuses(), [qw( pending pending )], 'both parts still owed';
+    is $A->{db}->query( q{SELECT count(*) FROM payments WHERE metadata->>'stripe_invoice_id' = 'in_opening'} )
+        ->array->[0], 0, 'and no row is bound to it';
+};
+
 # The final instalment can be its own schedule phase (3333/3333/3334), and the
 # invoice at a phase change may say subscription_update. It is still billed by
 # the schedule, so it still settles the month it is for.

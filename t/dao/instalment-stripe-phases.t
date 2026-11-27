@@ -140,6 +140,38 @@ subtest 'schedule params carry the entitlement id' => sub {
         "the schedule names the child's entitlement it bills for";
 };
 
+# Stripe bills a schedule from its start's day of the month, clamped to
+# shorter months: started on the checkout date, Jan 31 bills Feb 28, Mar 31,
+# Apr 30, as Instalments::due_dates says. Started on part two's date (Feb 28)
+# it would bill Mar 28. So the schedule starts on the checkout date with a $0
+# period for the part already paid, and every phase keeps that anchor.
+subtest 'the schedule starts on the checkout date so month-end due dates are kept' => sub {
+    my $params = Registry::DAO::Payment::instalment_schedule_params( {
+        customer          => 'cus_probe',
+        payment_method    => 'pm_probe',
+        revenue_share_pct => 2.5,
+        currency          => 'usd',
+        product           => 'prod_probe',
+        cadence           => 'monthly',
+        entitlement_id    => 'ent_probe',
+        first_date        => '2027-01-31',
+        instalments       => [
+            { amount_cents => 3333, due_date => '2027-02-28' },
+            { amount_cents => 3334, due_date => '2027-03-31' },
+        ],
+    } );
+    is $params->{start_date}, Registry::DAO::Payment::_epoch_for_date('2027-01-31'),
+        'it starts on the checkout date, not the second due date';
+    is_deeply [ map { [ $params->{"phases[$_][items][0][price_data][unit_amount]"},
+                        $params->{"phases[$_][iterations]"},
+                        $params->{"phases[$_][items][0][price_data][recurring][interval]"},
+                        $params->{"phases[$_][items][0][price_data][recurring][interval_count]"} ] } 0 .. 2 ],
+        [ [ 0, 1, month => 1 ], [ 3333, 1, month => 1 ], [ 3334, 1, month => 1 ] ],
+        'a $0 period for the part paid at checkout, then parts two and three on the same interval';
+    ok !( grep { /billing_cycle_anchor/ } keys %$params ), 'and no phase resets the anchor';
+    ok !exists $params->{'phases[3][iterations]'}, 'three phases at most, however many parts';
+};
+
 subtest 'a tenant with no revenue share still gets its money' => sub {
     my $params = Registry::DAO::Payment::instalment_schedule_params( {
         customer          => 'cus_probe',
@@ -229,8 +261,11 @@ subtest 'schedule is made on the tenant account with fee percent and no transfer
     ok !( grep { /transfer_data/ } keys %$params ), 'and nothing is transferred';
     is $params->{customer}, 'cus_one', "billed to the checkout charge's customer";
     is $params->{'default_settings[default_payment_method]'}, 'pm_one', 'on the card it saved';
-    is_deeply [ map { $params->{"phases[$_][items][0][price_data][unit_amount]"} } 0, 1 ],
-        [ 3333, 3334 ], 'parts two to n, from the charge line';
+    is_deeply [ map { $params->{"phases[$_][items][0][price_data][unit_amount]"} } 0 .. 2 ],
+        [ 0, 3333, 3334 ], 'a $0 period for part one, then parts two to n, from the charge line';
+    is $params->{start_date},
+        Registry::DAO::Payment::_epoch_for_date( $c->{line}{parts}[0]{due_date} ),
+        'starting on the checkout date';
 };
 
 # Lets the Connect webhook tell an invoice from a schedule it has not recorded
@@ -464,7 +499,7 @@ sub seller_made_schedule_is_refused ( $listed_fee, $listed_phases ) {
 }
 
 subtest 'a listed schedule naming this entitlement but taking no fee is not adopted' => sub {
-    seller_made_schedule_is_refused( undef, [ {}, {} ] );
+    seller_made_schedule_is_refused( undef, [ {}, {}, {} ] );
 };
 
 subtest 'a listed schedule naming this entitlement with the wrong phases is not adopted' => sub {
