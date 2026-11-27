@@ -10,7 +10,10 @@ use Test::More;
 use Test::Exception;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
+use Test::Registry::Offers qw( offer_terms );
 use Test::Registry::Sessions qw( make_session session_offer );
+use Registry::DAO::Offer;
+use Registry::DAO::Resource;
 use Registry::DAO::Entitlement;
 use Registry::DAO::FamilyMember;
 use Registry::DAO::OfferVersion;
@@ -173,6 +176,32 @@ subtest 'holder_is_offerer is never met here' => sub {
         { holder_family_member_id => $kid2, at => $AT, cart_lines => [ { family_member_id => $kid1, offer_id => $version->offer_id } ] } )->@*, 1,
         'it is unmet at checkout';
     is_deeply choosable( $s, holder_family_member_id => $kid2 ), [], 'so nothing on the session is choosable';
+};
+
+subtest 'a version buying the resource as one of its set is listed' => sub {
+    my $s   = make_session($db);
+    my $set = session_offer( $db, $s, resource_id => undef,
+        resource_ids => [ $s->id, scalar( make_session($db) )->id ] );
+    my ( $parent, $kid1 ) = family();
+    is_deeply choosable( $s, holder_family_member_id => $kid1 ), [ $set->id ], 'its set names the session';
+};
+
+subtest "a class version covering the resource's occurrence is listed" => sub {
+    my $n     = ++$made;
+    my $class = Test::Registry::Fixtures::create_project( $db, { name => "Cond class $n", slug => "cond-class-$n" } );
+    my $event = Test::Registry::Fixtures::create_event( $db, {
+        project_id  => $class->id,
+        location_id => Test::Registry::Fixtures::create_location( $db,
+            { name => "Cond room $n", slug => "cond-room-$n" } )->id,
+        teacher_id => Test::Registry::Fixtures::create_user( $db, { username => "cond-teacher-$n" } )->id,
+        time       => '2027-06-07T13:00:00Z', duration => 90, capacity => 10,
+    } );
+    my $occurrence = Registry::DAO::Resource->for_occurrence( $db, $event->id );
+    my $version    = Registry::DAO::Offer->create( $db, { name => "Cond class offer $n" } )
+        ->draft( $db, offer_terms( undef, class_project_id => $class->id ) )->publish($db);
+    my ( $parent, $kid1 ) = family();
+    is_deeply choosable( $occurrence, holder_family_member_id => $kid1 ), [ $version->id ],
+        'its class holds the occurrence';
 };
 
 subtest 'an unknown condition kind is refused by name' => sub {
