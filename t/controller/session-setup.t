@@ -172,4 +172,14 @@ subtest 'a day in the spring-forward gap is shown at its shifted start' => sub {
     is scalar sessions_named('Spring weekend')->[0]->session_days($db)->@*, 2, 'and both days are made';
 };
 
+subtest 'a session that cannot be made stays on the step with a message' => sub {
+    my $gone = Test::Registry::Fixtures::create_location( $db, { name => 'Gone field', slug => 'gone-field' } );
+    my $t    = on_sessions( 'Gone camp', $gone );
+    $db->delete( 'locations', { id => $gone->id } );
+    like submit_step( $t, 'sessions', %WEEK, name => 'Gone week', teacher_id => $user{staff}->id, action => 'add' ),
+        qr{/sessions\z}, 'the post stays on the sessions step';
+    $t->content_like( qr/Could not add the session/, 'with a message' );
+    is_deeply sessions_named('Gone week'), [], 'and no session is made';
+};
+
 done_testing;

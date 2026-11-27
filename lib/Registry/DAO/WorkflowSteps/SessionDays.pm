@@ -89,7 +89,10 @@ class Registry::DAO::WorkflowSteps::SessionDays :isa(Registry::DAO::WorkflowStep
             ->expand->array->[0] // [];
         # In list context it also returns the days a spring-forward gap moved,
         # which the admin is shown, as GenerateOccurrences reports them.
-        my ( $session, $shifted ) = Registry::DAO::Resource->create_session( $db, {
+        # In a caller's transaction, a savepoint, so a refused insert leaves
+        # that transaction usable, as ClassBasics does.
+        $db->query('SAVEPOINT session_days') unless $tx;
+        my ( $session, $shifted ) = eval { Registry::DAO::Resource->create_session( $db, {
             name       => $name,
             capacity   => 0 + $f{capacity},
             waitlist   => $f{waitlist} eq 'queue'
@@ -101,7 +104,14 @@ class Registry::DAO::WorkflowSteps::SessionDays :isa(Registry::DAO::WorkflowStep
             days       => \@days,
             start      => $f{start},
             minutes    => 0 + $f{minutes},
-        } );
+        } ) };
+        # The program or its location gone since the program step, say: the
+        # error itself names rows, so it is not shown.
+        unless ($session) {
+            $db->query('ROLLBACK TO SAVEPOINT session_days') unless $tx;
+            return { stay => 1, errors => ['Could not add the session: choose the program and its location again'] };
+        }
+        $db->query('RELEASE SAVEPOINT session_days') unless $tx;
         $run->update_data( $db, { sessions => [ @$made, $session->id ] } );
         $tx->commit if $tx;
 
