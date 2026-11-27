@@ -18,6 +18,7 @@ use Registry::DAO;
 use Registry::DAO::Offer;
 use Registry::DAO::Project;
 use Registry::DAO::Resource;
+use Registry::DAO::WorkflowSteps::RefundPolicy;
 use Registry::DAO::WorkflowRun;
 
 # Many screens from one client in a minute: lift the per-IP limit, as
@@ -203,6 +204,85 @@ subtest 'an early bird in the spring-forward gap is shown as moved' => sub {
     $t->element_exists( '#workflow-content input[name="early_bird_until"][value="2027-03-14T03:30"]', 'and refilled' );
     like submit_step( 'conditions', sibling => 'none', early_bird_until => '2027-03-14T03:30' ), qr{/one-time-payment\z},
         'continuing with it goes on';
+};
+
+# A new run on Lake camp, at its offer step, posting %fields; it must stay
+# there with $error.
+sub offer_refused ( $error, %fields ) {
+    my ($program) = Registry::DAO::Project->find( $db, { name => 'Lake camp' } );
+    $t->get_ok('/session-setup')->status_is(200);
+    submit_step( 'program', program_mode => 'existing', project_id => $program->id, location_id => $site->id );
+    like submit_step( 'sessions', action => 'continue' ), qr{/offer-basics\z}, 'a run at its offer step';
+    like submit_step( 'offer-basics', %fields ), qr{/offer-basics\z}, 'the step stays';
+    $t->content_like( $error, 'and says why' );
+}
+
+# A session of its own program at $location taught by $teacher, made with the DAO in $tenant_db.
+sub foreign_session ( $tenant_db, $name, $location, $teacher ) {
+    my $program = Test::Registry::Fixtures::create_project( $tenant_db, { name => "$name program" } );
+    return Registry::DAO::Resource->create_session( $tenant_db, {
+        name => $name, capacity => 10, project_id => $program->id, location_id => $location->id,
+        teacher_id => $teacher->id, days => ['2027-07-05'], start => '09:00', minutes => 60,
+    } );
+}
+
+subtest 'session ids from another program are refused' => sub {
+    my $other = foreign_session( $db, 'Other week', $site, $user{staff} );
+    offer_refused( qr/Choose at least one of the program&#39;s sessions/,
+        resource_ids => [ $sessions[0]->id, $other->id ], offer_name => 'Camp mixed' );
+    ok !Registry::DAO::Offer->find( $db, { name => 'Camp mixed' } ), 'no offer is made';
+};
+
+subtest 'session ids from another tenant are refused' => sub {
+    Test::Registry::Fixtures::create_tenant( $db, { name => 'Other camp co', slug => 'other_camp' } );
+    my $other    = Registry::DAO->new( url => $test_db->uri, schema => 'other_camp' );
+    my $other_db = $other->db;
+    my $teacher  = Test::Registry::Fixtures::create_user( $other,
+        { username => 'their_staff', name => 'Their Staff', email => 'staff@their.test', user_type => 'staff' } );
+    my $there    = Test::Registry::Fixtures::create_location( $other_db, { name => 'Their lake', slug => 'their-lake' } );
+    my $theirs   = foreign_session( $other_db, 'Their week', $there, $teacher );
+    offer_refused( qr/Choose at least one of the program&#39;s sessions/, resource_ids => [ $theirs->id ], offer_name => 'Camp theirs' );
+};
+
+subtest 'a refund cutoff on a session and a resource without days is refused' => sub {
+    my $plain = Test::Registry::Fixtures::create_resource( $db, { name => 'Canoe', kind => 'finite', capacity => 4 } );
+    like Registry::DAO::WorkflowSteps::RefundPolicy->refusal( $db,
+        { offer_basics => { resource_ids => [ $sessions[0]->id, $plain->id ] } },
+        { kind => 'full_until_cutoff', cutoff_hours => 24, approval => 'none' } ) // '',
+        qr/A refund cutoff needs an offer bound to one occurrence, covering a class, or over sessions/,
+        'every resource must have days';
+};
+
+subtest 'sibling offers that are not current are refused' => sub {
+    my $draft = Registry::DAO::Offer->create( $db, { name => 'Never published' } );
+    to_conditions('Camp draft sibling');
+    like submit_step( 'conditions', sibling => 'offers', sibling_offer_ids => [ $draft->id ] ), qr{/conditions\z},
+        'the step stays';
+    $t->content_like( qr/Choose the offers a sibling&#39;s place counts from among your offers/, 'and says why' );
+};
+
+subtest 'an unparseable early-bird time is refused' => sub {
+    to_conditions('Camp someday');
+    like submit_step( 'conditions', sibling => 'none', early_bird_until => 'next tuesday' ), qr{/conditions\z}, 'the step stays';
+    $t->content_like( qr/The early-bird time is a date and time like 2027-03-01T00:00/, 'and says why' );
+};
+
+subtest 'a sibling offer retired after the conditions step is refused at publish' => sub {
+    my $counted = current('Camp sibling');
+    to_conditions('Camp late sibling');
+    like submit_step( 'conditions', sibling => 'offers', sibling_offer_ids => [ $counted->offer_id ] ),
+        qr{/one-time-payment\z}, 'a sibling of a Camp sibling holder';
+    submit_step( 'one-time-payment', one_time => 'offered' );
+    submit_step( 'instalment-payment', instalments => 'declined' );
+    submit_step( 'refund-policy', refund => 'none', approval => 'none' );
+    submit_step( 'change-policy', change => 'none' );
+    submit_step( 'use-policy', use => 'none' );
+    like submit_step( 'expiry-policy', expiry => 'end_of_occurrence' ), qr{/publish\z}, 'at the review';
+    # Retired: no DAO method takes an offer off sale without a new version.
+    $db->update( 'offer_versions', { superseded_at => \'now()' }, { id => $counted->id } );
+    like submit_step( 'publish', action => 'publish' ), qr{/publish\z}, 'publish stays';
+    $t->content_like( qr/Choose the offers a sibling&#39;s place counts from among your offers/, 'and says why' );
+    ok !Registry::DAO::Offer->find( $db, { name => 'Camp late sibling' } ), 'no offer is made';
 };
 
 done_testing;
