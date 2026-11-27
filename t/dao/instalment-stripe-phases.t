@@ -556,3 +556,22 @@ subtest 'the instalment schedule uses the rate snapshotted on the checkout charg
     is $calls->[3][2]{'default_settings[application_fee_percent]'}, $plan_pct,
         'the schedule still takes the rate the checkout charge was quoted at';
 };
+
+# The product and schedule creates carry keys named for the entitlement, so a
+# retry must send what the first run sent, whatever the offer is called now.
+subtest 'a retry sends the name the first run stamped, not the offer name now' => sub {
+    my $c = checkout();
+    my $first = with_stripe_calls( sub {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_subscription_schedule = sub ( $s, $p ) { die "Connect timeout\n" };
+        eval { schedule($c); 1 };
+    } );
+    my ($name) = map { $_->[2]{name} } grep { $_->[0] eq 'create_product' } @$first;
+    ok $name, 'the first run named the product';
+
+    $db->update( 'offers', { name => 'Renamed since' }, { id => $c->{version}->offer_id } );
+    my $retry = with_stripe_calls( sub { schedule($c) } );
+    is_deeply [ map { $_->[2]{name} } grep { $_->[0] eq 'create_product' } @$retry ], [$name],
+        'the retry names the product as the first run did';
+    is $retry->[3][2]{'phases[0][items][0][price_data][product]'}, 'prod_one', 'and bills against it';
+};

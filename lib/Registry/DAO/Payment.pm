@@ -261,6 +261,13 @@ field $_stripe_client = undef;
         # card live; dies, before any Stripe call, when there is none.
         my $client = $self->stripe_client;
 
+        # The name its product and schedule carry, stamped on the charge by the
+        # first run and committed at once, so every retry under the keys below
+        # sends the same params, however the offer is renamed meanwhile.
+        my $description = __PACKAGE__->stamp_schedule_description( $raw, $id, $eid,
+            $raw->select( 'offers', 'name',
+                { id => $entitlement->offer_version($raw)->offer_id } )->array->[0] );
+
         # Open across the Stripe calls for the lock alone: it holds no row lock
         # until the writes at the end, so nothing waits on Stripe but another
         # run for this entitlement. Released by COMMIT, or by rollback on any death.
@@ -282,8 +289,6 @@ field $_stripe_client = undef;
         my $card = $intent->{payment_method}
             or die "payment $id saved no card\n";
 
-        my $description = $raw->select( 'offers', 'name',
-            { id => $entitlement->offer_version($raw)->offer_id } )->array->[0];
         my $schedule = $self->_schedule_at_stripe( $client, $customer, $pct, $eid,
             scalar @{ instalment_phases( \@remaining, lc $currency, $description ) } );
         $schedule ||= $client->create_subscription_schedule( {
@@ -380,6 +385,19 @@ field $_stripe_client = undef;
     # on what it paid, not a credit Stripe works out.
     sub instalment_cancel_params ( $eid ) {
         return { prorate => 'false', invoice_now => 'false', _idempotency_key => "cancel_schedule:$eid" };
+    }
+
+    # Entitlement $eid's schedule name as payment $payment_id first stamped
+    # it, stamping $name when none is.
+    sub stamp_schedule_description ( $class, $db, $payment_id, $eid, $name ) {
+        return $db->query( q{
+            UPDATE payments
+               SET metadata = COALESCE(metadata, '{}') || jsonb_build_object( 'schedule_descriptions',
+                       COALESCE(metadata->'schedule_descriptions', '{}')
+                       || jsonb_build_object( ?::text, COALESCE(metadata->'schedule_descriptions'->>?::text, ?::text) ) )
+             WHERE id = ?
+         RETURNING metadata->'schedule_descriptions'->>?::text
+        }, $eid, $eid, $name, $payment_id, $eid )->array->[0];
     }
 
     # Has payment $payment_id recorded entitlement $eid's schedule as cancelled?
