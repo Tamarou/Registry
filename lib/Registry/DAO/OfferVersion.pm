@@ -42,7 +42,7 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
              WHERE r.id = ? OR e.project_id = ?
                 OR r.id IN (SELECT resource_id FROM offer_version_resources WHERE offer_version_id = ?)
              ORDER BY e.time, r.id
-        }, $resource_id, $class_project_id, $id )->hashes
+        }, $resource_id, $class_project_id, $id )->expand->hashes
             ->map( sub { Registry::DAO::Resource->new(%$_) } )->to_array;
     }
 

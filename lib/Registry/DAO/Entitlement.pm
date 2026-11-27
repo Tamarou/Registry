@@ -263,9 +263,19 @@ active and the period covers T (in_effect_sql).
         return __PACKAGE__->new(%$row);
     }
 
+    # [start, end] of each occurrence or session it holds units of, read
+    # through Resource->occurrence_window.
+    method occurrence_windows ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        return [ map { [ $_->occurrence_window($db) ] } grep { $_->event_id || $_->is_session($db) }
+                map { scalar Registry::DAO::Resource->find( $db, { id => $_ } ) }
+                $db->select( 'entitlement_units', 'DISTINCT resource_id', { entitlement_id => $id } )
+                ->arrays->flatten->each ];
+    }
+
     # Ends as `expired` each active entitlement whose stamped expiry policy is
-    # end_of_occurrence and whose units are on an occurrence that has ended,
-    # at that occurrence's end. Its units are read under its row lock, so a
+    # end_of_occurrence and whose units are on an occurrence or session that
+    # has ended, at its end. Its units are read under its row lock, so a
     # change that moved it is followed and a concurrent sweep expires it once.
     # Returns the ids it expired.
     sub expire_ended_occurrences ( $class, $db ) {
@@ -282,14 +292,12 @@ active and the period covers T (in_effect_sql).
             my $tx = $db->dbh->{AutoCommit} ? $db->begin : undef;
             next unless $db->query( q{SELECT 1 FROM entitlements WHERE id = ? AND state = 'active' FOR UPDATE},
                 $id )->rows;
-            my @ends = map { ( $_->occurrence_window($db) )[1] }
-                grep { $_->event_id } map { scalar Registry::DAO::Resource->find( $db, { id => $_ } ) }
-                $db->select( 'entitlement_units', 'DISTINCT resource_id', { entitlement_id => $id } )
-                ->arrays->flatten->each;
+            my $entitlement = $class->find( $db, { id => $id } );
+            my @ends = map { $_->[1] } $entitlement->occurrence_windows($db)->@*;
             my ( $over, $ended ) = $db->query(
                 'SELECT max(e) <= now(), max(e) FROM unnest(?::timestamptz[]) e', \@ends )->array->@*;
             next unless $over;
-            scalar( $class->find( $db, { id => $id } ) )->end( $db, 'expired', 'occurrence ended', $ended );
+            $entitlement->end( $db, 'expired', 'occurrence ended', $ended );
             $tx->commit if $tx;
             push @expired, $id;
         }
