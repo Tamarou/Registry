@@ -91,6 +91,10 @@ subtest 'the refund policy step saves approval' => sub {
 
     ( $run, $result ) = walk('offer-publishing');
     is_deeply $run->data->{refund_policy}, { kind => 'none', approval => 'none' }, 'an unanswered approval is saved as none';
+
+    ( $run, $result ) = walk( 'offer-publishing', 'refund-policy' => { refund => 'none', approval => '' } );
+    is errors_of( $result->{'refund-policy'} ), '', 'a blank approval is accepted';
+    is_deeply $run->data->{refund_policy}, { kind => 'none', approval => 'none' }, 'and saved as none, as the change step does';
 };
 
 subtest 'the change policy step saves targets, price difference and approval' => sub {

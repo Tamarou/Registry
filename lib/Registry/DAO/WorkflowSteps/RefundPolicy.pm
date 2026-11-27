@@ -40,10 +40,13 @@ class Registry::DAO::WorkflowSteps::RefundPolicy :isa(Registry::DAO::WorkflowSte
         return { stay => 1, errors => ['Choose a refund policy: none, full until a cutoff, or keep the fee'] }
             unless defined $kind && !ref $kind && $OFFERED{$kind};
 
-        # Unanswered is none, as OfferVersion reads it. Approval stays off for
-        # in-studio offers (the design's call), whatever the form says.
-        my $approval = $self->workflow($db)->slug eq 'in-studio-class-setup' ? 'none' : $form_data->{approval} // 'none';
-        my %policy = ( kind => $kind, approval => ref $approval ? '' : $approval );
+        # Unanswered or blank is none, as OfferVersion reads it and the change
+        # step saves it. Approval stays off for in-studio offers (the design's
+        # call), whatever the form says.
+        my $approval = $form_data->{approval};
+        $approval = ref $approval ? '' : $approval // '';
+        $approval = 'none' if !length $approval || $self->workflow($db)->slug eq 'in-studio-class-setup';
+        my %policy = ( kind => $kind, approval => $approval );
         if ( $kind eq 'full_until_cutoff' ) {
             my $hours = $form_data->{cutoff_hours};
             return { stay => 1, errors => ['The cutoff must be a whole number of hours before the start, such as 24'] }
