@@ -87,7 +87,9 @@ class Registry::DAO::WorkflowSteps::SessionDays :isa(Registry::DAO::WorkflowStep
         my $tx = $db->dbh->{AutoCommit} ? $db->begin : undef;
         my $made = $db->query( q{SELECT data->'sessions' FROM workflow_runs WHERE id = ? FOR UPDATE}, $run->id )
             ->expand->array->[0] // [];
-        my $session = Registry::DAO::Resource->create_session( $db, {
+        # In list context it also returns the days a spring-forward gap moved,
+        # which the admin is shown, as GenerateOccurrences reports them.
+        my ( $session, $shifted ) = Registry::DAO::Resource->create_session( $db, {
             name       => $name,
             capacity   => 0 + $f{capacity},
             waitlist   => $f{waitlist} eq 'queue'
@@ -103,7 +105,7 @@ class Registry::DAO::WorkflowSteps::SessionDays :isa(Registry::DAO::WorkflowStep
         $run->update_data( $db, { sessions => [ @$made, $session->id ] } );
         $tx->commit if $tx;
 
-        return { stay => 1 };
+        return { stay => 1, template_data => { shifted => $shifted } };
     }
 
     method prepare_template_data ( $db, $run, $params = {} ) {

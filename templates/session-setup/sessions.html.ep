@@ -14,6 +14,17 @@
 </div>
 % }
 
+% if (my @shifted = @{ stash('shifted') // [] }) {
+<section class="card" role="status">
+  <p>These start times do not exist on their day because the clocks go forward, so each starts at the shown local time instead:</p>
+  <ul>
+    % for my $s (@shifted) {
+    <li><%= $s->{asked} %> starts at <%= $s->{local_start} %></li>
+    % }
+  </ul>
+</section>
+% }
+
 % my @sessions = @{ stash('session_list') // [] };
 % if (@sessions) {
 <section class="card">

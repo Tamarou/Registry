@@ -163,4 +163,13 @@ subtest 'an unknown teacher is refused' => sub {
         teacher_id => '6f1c1f0e-3b7a-4d6e-9a51-2f0d8c4b7e13' );
 };
 
+subtest 'a day in the spring-forward gap is shown at its shifted start' => sub {
+    my $t = on_sessions('Spring camp');
+    submit_step( $t, 'sessions', %WEEK, name => 'Spring weekend', first_day => '2027-03-13', last_day => '2027-03-14',
+        weekdays => [ 6, 7 ], start => '02:30', minutes => 60, teacher_id => $user{staff}->id, action => 'add' );
+    $t->content_like( qr/2027-03-14 02:30 starts at 2027-03-14 03:30/, 'the shifted day is reported' );
+    $t->content_unlike( qr/2027-03-13 02:30 starts at/, 'the day that exists is not' );
+    is scalar sessions_named('Spring weekend')->[0]->session_days($db)->@*, 2, 'and both days are made';
+};
+
 done_testing;
