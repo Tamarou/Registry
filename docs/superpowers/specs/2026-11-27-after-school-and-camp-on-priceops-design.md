@@ -135,8 +135,10 @@ at checkout.
 | `family_holds_entitlement {offer_ids?}` | Already stored; now evaluated. Another child in the payer's family holds an active entitlement, bought earlier or earlier in the same checkout. `offer_ids` limits which offers count; leaving it out means any offer at the studio. perigrin confirmed that a sibling added a month later gets the rate, and that which enrollments qualify is configuration. |
 | `before {at}` (new) | The version can be chosen only until `at`. This is early-bird. |
 
-The sibling and early-bird prices are **separate offer versions** of the same
-offer, each with its condition. At checkout, the parent sees the versions
+The sibling and early-bird prices are **separate offers covering the same
+session resource**, each with its condition. (Corrected 2026-11-27 during
+step 8.1: the database allows one current version per offer, so prices on sale
+together must be separate offers.) At checkout, the parent sees the versions
 whose conditions the child meets, with the cheapest preselected. This
 replaces `PricingPlan->best_plan`. A price is always a published version.
 
