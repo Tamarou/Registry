@@ -12,6 +12,7 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
     use Registry::DAO::Tenant;
     use Registry::DAO::WorkflowSteps::ChangePolicy;
     use Registry::DAO::WorkflowSteps::ExpiryPolicy;
+    use Registry::DAO::WorkflowSteps::InstalmentPaymentPlan;
     use Registry::DAO::WorkflowSteps::OfferPrice;
     use Registry::DAO::WorkflowSteps::RefundPolicy;
     use Registry::Utility::PriceFormat qw( format_price );
@@ -71,6 +72,17 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
         $why = Registry::DAO::WorkflowSteps::ExpiryPolicy->refusal( $db, $data, $expiry );
         return { stay => 1, errors => [$why] } if $why;
 
+        # Instalments say what a missed one does, and end by the session's
+        # last day: asked again, since the resource can be chosen after the plan.
+        my $parts  = ref $data->{instalment_payment} eq 'HASH' ? $data->{instalment_payment} : undef;
+        my $missed = $data->{missed_payment_policy};
+        if ($parts) {
+            return { stay => 1, errors => ['Choose what happens when an instalment is missed'] }
+                unless ref $missed eq 'HASH' && defined $missed->{kind};
+            $why = Registry::DAO::WorkflowSteps::InstalmentPaymentPlan->refusal( $db, $data, $parts );
+            return { stay => 1, errors => [$why] } if $why;
+        }
+
         # Every plan a payment step declared; refused, never defaulted, when
         # none did: absence is not zero.
         my $percentage = $data->{percentage_of_sales_payment} // {};
@@ -79,6 +91,7 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
                 ? { id => 'one_time', kind => 'one_time' } : (),
             ( $percentage->{percentage_of_sales} // '' ) eq 'offered'
                 ? { id => 'percentage_of_sales', kind => 'percentage_of_sales', fraction => $percentage->{fraction} } : (),
+            $parts ? { kind => 'instalments', $parts->%{qw( id count cadence surcharge_pct )} } : (),
         );
         return { stay => 1, errors => ['Offer at least one payment plan'] } unless @plans;
 
@@ -126,7 +139,8 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
                 conditions => $current ? $current->conditions : [],    # who may hold it carries over
                 $price->%{qw( price_cents currency units_per_acceptance per_booking_cap )},
                 payment_plans => \@plans,
-                policies => { refund => $refund, change => $change, use => { kind => $use }, expiry => { kind => $expiry } },
+                policies => { refund => $refund, change => $change, use => { kind => $use }, expiry => { kind => $expiry },
+                    $parts ? ( missed_payment => $missed ) : () },
             } )->publish($db);
             # The platform-offer guard runs now, so its refusal is this step's error
             # rather than a failed commit; then deferred again, as a caller expects.

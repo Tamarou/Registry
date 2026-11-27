@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-# ABOUTME: The session-setup screens over HTTP: an admin creates a program and adds its sessions, each a resource with its days.
+# ABOUTME: The session-setup screens over HTTP: an admin creates a program, adds its sessions, and says how they may be paid.
 # ABOUTME: Staff are refused; a week with no chosen weekday, a last day before the first, or a queue without hours stays on the step.
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
@@ -110,13 +110,27 @@ subtest 'an admin creates a program and a five day camp week' => sub {
         $week->id )->arrays->to_array, [ [ 420, $program, $user{staff}->id, $site->id ] ],
         'each 420 minutes, in the program, taught by the chosen teacher, at the program\'s location';
 
-    like submit_step( $t, 'sessions', action => 'continue' ), qr{/complete\z}, 'continuing lands on the complete page';
+    like submit_step( $t, 'sessions', action => 'continue' ), qr{/instalment-payment\z}, 'continuing asks about instalments';
+    check_screen( $t, 'instalment-payment' );
+    like submit_step( $t, 'instalment-payment', instalments => 'declined' ), qr{/complete\z},
+        'declining them passes the missed-payment step and lands on the complete page';
     my $run = $db->query( q{
         SELECT r.data FROM workflow_runs r JOIN workflows w ON w.id = r.workflow_id
          WHERE w.slug = 'session-setup' ORDER BY r.created_at DESC LIMIT 1
     } )->expand->hash->{data};
     is_deeply $run->{session_program}, { project_id => $program, location_id => $site->id }, 'the run records the program';
     is_deeply $run->{sessions}, [ $week->id ], 'and the session it made';
+};
+
+subtest 'offering instalments asks what a missed one does' => sub {
+    my $t = on_sessions('Instalment camp');
+    submit_step( $t, 'sessions', %WEEK, name => 'Instalment week', teacher_id => $user{staff}->id, action => 'add' );
+    like submit_step( $t, 'sessions', action => 'continue' ), qr{/instalment-payment\z}, 'on to instalments';
+    like submit_step( $t, 'instalment-payment', instalments => 'offered', count => 3, cadence => 'monthly', surcharge_pct => '2.5' ),
+        qr{/missed-payment-policy\z}, 'offering them asks about a missed one';
+    check_screen( $t, 'missed-payment-policy' );
+    like submit_step( $t, 'missed-payment-policy', missed_payment => 'grace', grace_days => 7 ), qr{/complete\z},
+        'a grace period lands on the complete page';
 };
 
 subtest 'two groups of one program can share a week at the same time' => sub {

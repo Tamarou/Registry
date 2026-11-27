@@ -1,0 +1,96 @@
+#!/usr/bin/env perl
+# ABOUTME: session-setup's instalment and missed-payment steps, driven on a session run, and what publishing makes of them.
+# ABOUTME: A version offering instalments says what a missed one does, and its last payment falls by the session's last day.
+BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
+
+use 5.42.0;
+use warnings;
+use lib qw(lib t/lib);
+use Test::More;
+use Test::Registry::DB;
+use Test::Registry::Fixtures;
+use Test::Registry::Helpers qw( days_from_now import_all_workflows join_tenant );
+use Registry::DAO;
+use Registry::DAO::OfferVersion;
+use Registry::DAO::Workflow;
+use Registry::Utility::WorkflowProcessor;
+
+my $test_db = Test::Registry::DB->new;
+my $dao     = $test_db->db;
+my $db      = $dao->db;
+import_all_workflows($dao);
+
+my %user;
+for my $role (qw( admin staff )) {
+    $user{$role} = Test::Registry::Fixtures::create_user( $dao,
+        { username => "plans_$role", name => "Plans \u$role", email => "$role\@plans.test", user_type => $role } );
+    join_tenant( $dao, $user{$role}, $role );
+}
+my $field = Test::Registry::Fixtures::create_location( $db, { name => 'Plans field', slug => 'plans-field' } );
+
+my $workflow = $dao->find( Workflow => { slug => 'session-setup' } );
+sub step ($slug) { $workflow->get_step( $db, { slug => $slug } ) }
+# session-setup gains its publish step later (plan Task 13); offer-publishing's
+# publish step is the same class, called on the session run.
+my $publish = $dao->find( Workflow => { slug => 'offer-publishing' } )->get_step( $db, { slug => 'publish' } );
+
+# A session run with one session from $first to $last, every weekday, and the
+# offer terms the later steps record, so only the payment steps are left.
+sub session_run ( $name, $first, $last ) {
+    my $run = Registry::WorkflowProcessor->new( dao => $dao )
+        ->new_run( $workflow, { user => { id => $user{admin}->id, name => $user{admin}->name } } );
+    $run->process( $db, step('program'), { program_mode => 'create', program_name => "$name program", location_id => $field->id } );
+    $run->process( $db, step('sessions'), {
+        action => 'add', name => $name, first_day => $first, last_day => $last, weekdays => [ 1 .. 7 ],
+        start  => '09:00', minutes => 420, capacity => 12, waitlist => 'none', teacher_id => $user{staff}->id,
+    } );
+    $run->process( $db, step('sessions'), { action => 'continue' } );
+    $run->update_data( $db, {
+        offer_basics  => { resource_id => $run->data->{sessions}[0], offer_name => "$name offer" },
+        offer_price   => { price_cents => 30000, currency => 'usd', units_per_acceptance => 1, per_booking_cap => 1 },
+        refund_policy => { kind => 'none' },
+        change_policy => { kind => 'none' },
+        use_policy    => { use => 'optional_attendance' },
+        expiry_policy => { expiry => 'end_of_occurrence' },
+    } );
+    return $run;
+}
+
+sub errors_of ($result) { join ' ', ( ( ref $result eq 'HASH' ? $result->{errors} : undef ) // [] )->@* }
+
+subtest 'a grace policy of seven days is published' => sub {
+    my $run = session_run( 'Grace term', days_from_now(7), days_from_now(70) );
+    my $plan = $run->process( $db, step('instalment-payment'),
+        { instalments => 'offered', count => 2, cadence => 'weekly', surcharge_pct => '5' } );
+    is errors_of($plan), '', 'the instalment step accepts weekly x2';
+    is_deeply $run->data->{instalment_payment},
+        { id => 'parts', count => 2, cadence => 'weekly', surcharge_pct => '5' }, 'and records the plan';
+
+    ok !step('missed-payment-policy')->nothing_to_ask( $db, $run ), 'the missed-payment step asks when instalments are offered';
+    my $missed = $run->process( $db, step('missed-payment-policy'), { missed_payment => 'grace', grace_days => 7 } );
+    is errors_of($missed), '', 'the missed-payment step accepts grace of seven days';
+    is_deeply $run->data->{missed_payment_policy}, { kind => 'grace', days => 7 }, 'and records it';
+
+    my $result = $publish->process( $db, { action => 'publish' }, $run );
+    is errors_of($result), '', 'it publishes';
+    my $version = Registry::DAO::OfferVersion->find( $db, { id => $result->{published_offer_version_id} } );
+    ok $version, 'a version';
+    is_deeply $version->policies->{missed_payment}, { kind => 'grace', days => 7 }, 'whose missed_payment is grace of seven days';
+    my ($parts) = grep { $_->{kind} eq 'instalments' } $version->payment_plans($db)->@*;
+    is_deeply [ $parts->@{qw( id count cadence )} ], [ 'parts', 2, 'weekly' ], 'and which offers the instalments';
+    is 0 + $parts->{surcharge_pct}, 5, 'with their surcharge';
+};
+
+subtest 'the missed-payment step is skipped without instalments' => sub {
+    my $run = session_run( 'Plain term', days_from_now(7), days_from_now(70) );
+    $run->update_data( $db, { missed_payment_policy => { kind => 'end' } } );    # an earlier answer
+    $run->process( $db, step('instalment-payment'), { instalments => 'declined' } );
+    is $run->data->{instalment_payment}, undef, 'declining records no instalment plan';
+    ok step('missed-payment-policy')->nothing_to_ask( $db, $run ), 'the missed-payment step has nothing to ask';
+    my $skipped = $run->process( $db, step('missed-payment-policy'), {} );
+    is errors_of($skipped), '', 'and passes with no answer';
+    ok exists $run->data->{missed_payment_policy}, 'missed_payment_policy is recorded';
+    is $run->data->{missed_payment_policy}, undef, 'as undef';
+};
+
+done_testing;

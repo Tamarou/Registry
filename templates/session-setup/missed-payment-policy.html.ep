@@ -1,0 +1,40 @@
+%# ABOUTME: session-setup step: what happens when an instalment is missed, after the card's final retry fails.
+%# ABOUTME: Keep the seat and owe, end it and free the seat, or keep it for a grace period of days and then end it.
+% extends 'layouts/workflow';
+% title 'Missed payments';
+% stash description => 'Say what happens when an instalment is missed.';
+% my $policy = stash('missed_payment_policy') // {};
+% my $chosen = $policy->{kind} // '';
+
+% if (my @errors = @{ stash('errors') // [] }) {
+<div class="alert alert-error" role="alert">
+  <ul>
+  % for my $error (@errors) {
+    <li><%= ref $error ? $error->{message} : $error %></li>
+  % }
+  </ul>
+</div>
+% }
+
+<form method="POST" action="<%= $action %>">
+  <fieldset>
+    <legend>When an instalment is missed</legend>
+    % for my $kind ( [ keep_and_owe => 'Keep the seat; the family owes the payment and is sent a link to pay' ],
+    %                [ end          => 'End the place and free the seat' ],
+    %                [ grace        => 'Keep the seat for a grace period, then end it' ] ) {
+    <div>
+      <input type="radio" id="missed_payment-<%= $kind->[0] %>" name="missed_payment" value="<%= $kind->[0] %>" required<%= $chosen eq $kind->[0] ? ' checked' : '' %>>
+      <label for="missed_payment-<%= $kind->[0] %>"><%= $kind->[1] %></label>
+    </div>
+    % }
+  </fieldset>
+
+  <div class="form-group">
+    <label for="grace_days" class="form-label">Grace period, in days (for a grace period)</label>
+    <input class="form-input" type="number" id="grace_days" name="grace_days" min="1" max="9999" value="<%= $policy->{days} // '' %>">
+  </div>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Continue</button>
+  </div>
+</form>

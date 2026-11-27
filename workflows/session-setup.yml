@@ -1,5 +1,5 @@
 # ABOUTME: Product design for camp and after-school: an admin creates a program and adds its sessions.
-# ABOUTME: Each session is one finite resource whose days are its events; pricing and policy steps come later.
+# ABOUTME: Each session is one finite resource whose days are its events; then instalments and what a missed one does.
 
 name: Session Setup
 description: Create a program and add its sessions, each with its days, capacity and waitlist
@@ -18,6 +18,18 @@ steps:
     description: Add the program's sessions, each with its days, start, length, capacity and waitlist
     template: session-setup/sessions
     class: Registry::DAO::WorkflowSteps::SessionDays
+
+  - slug: instalment-payment
+    label: Instalments
+    description: Say whether the sessions may be paid in instalments, and how many, how often and at what surcharge
+    template: session-setup/instalment-payment
+    class: Registry::DAO::WorkflowSteps::InstalmentPaymentPlan
+
+  - slug: missed-payment-policy
+    label: Missed payments
+    description: Say what happens when an instalment is missed; asked only when instalments are offered
+    template: session-setup/missed-payment-policy
+    class: Registry::DAO::WorkflowSteps::MissedPaymentPolicy
 
   - slug: complete
     label: Done

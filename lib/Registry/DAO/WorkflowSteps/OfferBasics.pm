@@ -14,7 +14,7 @@ class Registry::DAO::WorkflowSteps::OfferBasics :isa(Registry::DAO::WorkflowStep
 
     # Every run key _terms_of may copy.
     my @TERMS = qw( offer_price one_time_payment percentage_of_sales_payment
-        refund_policy change_policy use_policy expiry_policy );
+        refund_policy change_policy use_policy expiry_policy instalment_payment missed_payment_policy );
 
     method process ( $db, $form_data, $run = undef ) {
         my ( $resource_id, $name ) = $form_data->@{qw( resource_id offer_name )};
@@ -85,6 +85,8 @@ class Registry::DAO::WorkflowSteps::OfferBasics :isa(Registry::DAO::WorkflowStep
             percentage_of_sales_payment => $plan{percentage_of_sales}
                 ? { percentage_of_sales => 'offered', fraction => $plan{percentage_of_sales}{fraction} }
                 : { percentage_of_sales => 'declined' },
+            instalment_payment => $plan{instalments} && { $plan{instalments}->%{qw( id count cadence surcharge_pct )} },
+            missed_payment_policy => $policies->{missed_payment},
             map( { ( "${_}_policy" => $policies->{$_} ) } grep { $policies->{$_} } qw( refund change ) ),
             map( { ( "${_}_policy" => { $_ => $policies->{$_}{kind} } ) } grep { $policies->{$_} } qw( use expiry ) ),
         );
