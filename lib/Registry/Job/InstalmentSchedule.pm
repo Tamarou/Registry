@@ -15,6 +15,7 @@ class Registry::Job::InstalmentSchedule {
         instalment_schedule => {
             act     => 'schedule_instalments_for',
             done    => 'scheduled as',
+            none    => 'has no instalments to schedule',
             subject => 'Instalments could not be scheduled',
             told    => 'Registry could not set up the remaining instalments of entitlement %s '
                      . '(tenant %s) at Stripe, so the family has paid instalment one and will '
@@ -24,6 +25,7 @@ class Registry::Job::InstalmentSchedule {
         cancel_instalment_schedule => {
             act     => 'cancel_instalment_schedule',
             done    => 'cancelled',
+            none    => 'had no instalment schedule to cancel',
             subject => 'Instalments could not be cancelled',
             told    => 'Registry could not cancel the remaining instalments of entitlement %s '
                      . '(tenant %s) at Stripe, so the family may still be charged for them. '
@@ -84,7 +86,7 @@ class Registry::Job::InstalmentSchedule {
         return $job->finish(
             $schedule_id
                 ? "entitlement $entitlement_id $TASK{$task}{done} $schedule_id"
-                : "entitlement $entitlement_id has no instalments to schedule"
+                : "entitlement $entitlement_id $TASK{$task}{none}"
         );
     }
 

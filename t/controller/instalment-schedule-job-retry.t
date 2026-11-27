@@ -183,6 +183,21 @@ subtest 'a cancel that fails once is retried until Stripe cancels' => sub {
         "the child's schedule is cancelled once, on the studio's account";
 };
 
+subtest 'each job says when it had nothing to do' => sub {
+    my ( $c, $cancel ) = queued('cancel_instalment_schedule');
+    run($cancel);
+    like $minion->job( $cancel->{id} )->info->{result}, qr/had no instalment schedule to cancel/,
+        'a cancel with no schedule says there was nothing to cancel';
+
+    my $one_time = instalment_checkout( $tdb, slug => $slug );
+    $tdb->query( q{UPDATE payments SET metadata = jsonb_set(metadata, '{lines,0,kind}', '"one_time"') WHERE id = ?},
+        $one_time->{payment}->id );
+    my ( undef, $schedule ) = queued( 'instalment_schedule', $one_time );
+    run($schedule);
+    like $minion->job( $schedule->{id} )->info->{result}, qr/has no instalments to schedule/,
+        'and a schedule job with none says so';
+};
+
 subtest 'the last failed attempt alerts admins' => sub {
     my ( $c, $job ) = queued('instalment_schedule');
     @logs = ();
