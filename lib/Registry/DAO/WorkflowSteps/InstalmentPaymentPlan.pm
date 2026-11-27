@@ -10,10 +10,8 @@ class Registry::DAO::WorkflowSteps::InstalmentPaymentPlan :isa(Registry::DAO::Wo
 
     my %CADENCE = map { $_ => 1 } qw( weekly monthly quarterly );
 
-    # Why $plan cannot be offered on the offer's resources, or nothing. Each
-    # session's last day and today are read in its location's zone; the
-    # earliest-ending session is the one a plan must fit. Publish asks again,
-    # since the offer's resources can be chosen after this step.
+    # Why $plan cannot be offered on the offer's resources, or nothing.
+    # Publish asks again, since the offer's resources can be chosen after this step.
     sub refusal ( $class, $db, $data, $plan ) {
         my $basic = ref $data->{offer_basics} eq 'HASH' ? $data->{offer_basics} : {};
         my @ids   = grep { defined && !ref } $basic->{resource_id},
@@ -21,14 +19,18 @@ class Registry::DAO::WorkflowSteps::InstalmentPaymentPlan :isa(Registry::DAO::Wo
         # Before an offer names its sessions, every session the run made.
         @ids = grep { defined && !ref } $data->{sessions}->@* if !@ids && ref $data->{sessions} eq 'ARRAY';
         return unless @ids;
-        my $session = $db->query( q{
-            SELECT r.name, to_char(max(e.time AT TIME ZONE l.time_zone), 'YYYY-MM-DD') AS last_day,
-                   to_char(now() AT TIME ZONE l.time_zone, 'YYYY-MM-DD') AS today
+        # Grouped by session alone, so a session whose days span two
+        # locations is judged on all of them, each day read in its own zone;
+        # today is the latest local today among its locations.
+        my $sessions = $db->query( q{
+            SELECT r.name, max(to_char(e.time AT TIME ZONE l.time_zone, 'YYYY-MM-DD')) AS last_day,
+                   max(to_char(now() AT TIME ZONE l.time_zone, 'YYYY-MM-DD')) AS today
               FROM resources r JOIN events e ON e.id = r.event_id OR e.session_resource_id = r.id
               JOIN locations l ON l.id = e.location_id
-             WHERE r.id::text = ANY(?) GROUP BY r.id, r.name, l.time_zone ORDER BY last_day LIMIT 1
-        }, \@ids )->hash or return;
-        return if fits( $plan, $session->{today}, $session->{last_day} );
+             WHERE r.id::text = ANY(?) GROUP BY r.id, r.name ORDER BY last_day, r.name
+        }, \@ids )->hashes;
+        # The earliest-ending session that the plan does not fit.
+        my ($session) = grep { !fits( $plan, $_->{today}, $_->{last_day} ) } @$sessions or return;
         return sprintf 'A %s plan of %d payments bought today would end after %s, the last day of %s',
             $plan->{cadence}, $plan->{count}, $session->@{qw( last_day name )};
     }
