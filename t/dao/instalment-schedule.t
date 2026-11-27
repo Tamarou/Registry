@@ -1,132 +1,123 @@
 #!/usr/bin/env perl
-# ABOUTME: A plan's instalment offer is declared in pricing_configuration and resolved, not branched on.
-# ABOUTME: The split must preserve every cent: three ways of $100 is 33/33/34, never 33/33/33.
+# ABOUTME: Each child on instalments gets its own Stripe schedule for parts two to n, recorded as rows of its entitlement.
+# ABOUTME: Cancelling that schedule is recorded on the checkout charge before Stripe is asked, so Registry knows its own cancels.
 
 use 5.42.0;
 use warnings;
 use utf8;
 use lib qw(lib t/lib);
 use experimental qw(defer signatures);
-use Test::More import => [qw( done_testing is ok is_deeply subtest note )];
+use Test::More import => [qw( done_testing is ok is_deeply subtest )];
 defer { done_testing };
 
 use Test::Registry::DB;
-use Registry::DAO::PricingPlan;
+use Test::Registry::Fixtures;
+use Test::Registry::PricingProbe ();
+use Test::Registry::InstalmentCheckout qw( instalment_checkout );
+use Registry::PriceOps::Instalments ();
+use Registry::DAO::Payment;
+use Registry::Service::Stripe;
 
 my $t_db = Test::Registry::DB->new;
-my $dao  = $t_db->db;
-my $db   = $dao->db;
+my $db   = $t_db->db->db;
 
-# A plan is a row, but the schedule is a property of its declared configuration,
-# so these exercise the configuration rather than the database where they can.
-sub plan_with ( $config ) {
-    return Registry::DAO::PricingPlan->new(
-        id                    => '00000000-0000-0000-0000-000000000001',
-        session_id            => undef,
-        plan_name             => 'Probe',
-        amount_cents          => 30000,
-        currency              => 'USD',
-        created_at            => '2026-01-01',
-        updated_at            => '2026-01-01',
-        pricing_configuration => $config,
-    );
+my $seller = Test::Registry::Fixtures::platform_seller($db);
+Test::Registry::PricingProbe::give_tenant_terms( $db, $seller, { rate => '0.025', name => 'Solo' } );
+
+# Stripe's side of a schedule, recorded with what the database held when each
+# call was made: $seen->() is read at every call.
+sub with_stripe ( $code, $seen = sub { undef } ) {
+    my @calls;
+    my %status;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::retrieve_payment_intent = sub ( $s, $pi ) {
+        push @calls, [ retrieve_payment_intent => $seen->() ];
+        return { id => $pi, customer => 'cus_rows', payment_method => 'pm_rows' };
+    };
+    local *Registry::Service::Stripe::list_subscription_schedules = sub ( $s, $p ) {
+        push @calls, [ list_subscription_schedules => $seen->() ];
+        return { data => [] };
+    };
+    local *Registry::Service::Stripe::create_product = sub ( $s, $p ) {
+        push @calls, [ create_product => $seen->() ];
+        return { id => 'prod_rows' };
+    };
+    local *Registry::Service::Stripe::create_subscription_schedule = sub ( $s, $p ) {
+        push @calls, [ create_subscription_schedule => $seen->() ];
+        my $id = 'sub_sched_rows_' . scalar @calls;
+        $status{$id} = 'not_started';
+        return { id => $id };
+    };
+    local *Registry::Service::Stripe::retrieve_subscription_schedule = sub ( $s, $id ) {
+        push @calls, [ retrieve_subscription_schedule => $seen->(), $id ];
+        return { id => $id, status => $status{$id} // 'active' };
+    };
+    local *Registry::Service::Stripe::cancel_subscription_schedule = sub ( $s, $id, $p = {} ) {
+        push @calls, [ cancel_subscription_schedule => $seen->(), $id, $p ];
+        $status{$id} = 'canceled';
+        return { id => $id, status => 'canceled' };
+    };
+    $code->();
+    return \@calls;
 }
 
-subtest 'a plan with no declared schedule offers no instalments' => sub {
-    my $plan = plan_with( {} );
-    is $plan->payment_schedule, undef, 'no schedule declared';
-    is $plan->instalment_schedule( 30000 ), undef, 'and none resolved';
+sub rows ($c) {
+    return $db->query( q{
+        SELECT instalment_seq, instalment_count, amount_cents, due_date::text AS due_date,
+               status, entitlement_id, stripe_schedule_id, user_id
+          FROM payments WHERE entitlement_id = ? ORDER BY instalment_seq
+    }, $c->{entitlement}->id )->hashes->to_array;
+}
 
-    # Not a boolean column and a branch. A plan that says nothing about being
-    # paid in parts is paid in one, and the code asks the configuration rather
-    # than asking what kind of plan it is -- which is what lets a new payment
-    # shape ship as data (#427, Pillar 4).
-    ok !Registry::DAO::PricingPlan->can('installments_allowed'),
-        'and there is no installments_allowed flag left to branch on';
+subtest 'rows two to n carry the entitlement and due dates' => sub {
+    my $c = instalment_checkout( $db, slug => $seller, count => 4, cadence => 'weekly',
+        price_cents => 10000, first_date => '2027-01-31' );
+    my $schedule;
+    with_stripe( sub { $schedule = $c->{payment}->schedule_instalments_for( $db, $c->{entitlement} ) } );
+
+    my $dates = Registry::PriceOps::Instalments::due_dates( $c->{plan}, '2027-01-31' );
+    is_deeply rows($c), [ map { {
+        instalment_seq     => $_ + 1,
+        instalment_count   => 4,
+        amount_cents       => 2500,
+        due_date           => $dates->[$_],
+        status             => 'pending',
+        entitlement_id     => $c->{entitlement}->id,
+        stripe_schedule_id => $schedule,
+        user_id            => $c->{parent},
+    } } 1 .. 3 ], "parts two to four, owed by the payer on the child's entitlement and schedule";
+
+    my $charge = Registry::DAO::Payment->find( $db, { id => $c->{payment}->id } );
+    ok !defined $charge->instalment_seq && !defined $charge->stripe_schedule_id,
+        'and the checkout charge carries no instalment columns';
+
+    my $monthly = instalment_checkout( $db, slug => $seller, count => 3, cadence => 'monthly',
+        first_date => '2027-01-31' );
+    with_stripe( sub { $monthly->{payment}->schedule_instalments_for( $db, $monthly->{entitlement} ) } );
+    is_deeply [ map { $_->{due_date} } rows($monthly)->@* ], [qw( 2027-02-28 2027-03-31 )],
+        'monthly due dates anchor to the first date';
 };
 
-subtest 'a declared schedule resolves to dated instalments' => sub {
-    my $plan = plan_with( { schedule => { count => 3, cadence => 'monthly' } } );
+sub cancelled ($c) {
+    return Registry::DAO::Payment->find( $db, { id => $c->{payment}->id } )->metadata->{cancelled_schedules};
+}
 
-    my $declared = $plan->payment_schedule;
-    is $declared->{count},   3,         'the count is read from the configuration';
-    is $declared->{cadence}, 'monthly', 'and the cadence';
+subtest 'cancelling records the entitlement before asking stripe' => sub {
+    my $c = instalment_checkout( $db, slug => $seller );
+    my $schedule;
+    with_stripe( sub { $schedule = $c->{payment}->schedule_instalments_for( $db, $c->{entitlement} ) } );
 
-    my $parts = $plan->instalment_schedule( 30000, first_due => '2026-06-01' );
-    is scalar(@$parts), 3, 'three instalments';
+    my $calls = with_stripe(
+        sub { Registry::DAO::Payment->find( $db, { id => $c->{payment}->id } )
+                ->cancel_instalment_schedule( $db, $c->{entitlement} ) },
+        sub { cancelled($c) } );
 
-    is_deeply [ map { $_->{amount_cents} } @$parts ], [ 10000, 10000, 10000 ],
-        'an evenly divisible total splits evenly';
-    is_deeply [ map { $_->{due_date} } @$parts ],
-        [ '2026-06-01', '2026-07-01', '2026-08-01' ],
-        'one month apart, starting at enrolment';
+    my ($cancel) = grep { $_->[0] eq 'cancel_subscription_schedule' } @$calls;
+    ok $cancel, 'Stripe is asked to cancel';
+    is $cancel->[2], $schedule, "the child's own schedule";
+    is_deeply $cancel->[1], [ $c->{entitlement}->id ],
+        'with the entitlement already recorded in cancelled_schedules when it is asked';
+    is $cancel->[3]{_idempotency_key}, 'cancel_schedule:' . $c->{entitlement}->id,
+        'under a key named for the entitlement';
+    is_deeply cancelled($c), [ $c->{entitlement}->id ], 'and the record stays';
 };
-
-# The arithmetic that loses money if it is wrong. The method this replaces did
-# int($amount / $count) for every instalment and said so in a comment: "the
-# installments can sum to less than the plan price".
-subtest 'no cent is lost to the division' => sub {
-    my $plan = plan_with( { schedule => { count => 3, cadence => 'monthly' } } );
-
-    my $parts = $plan->instalment_schedule( 10000, first_due => '2026-06-01' );
-    is_deeply [ map { $_->{amount_cents} } @$parts ], [ 3333, 3333, 3334 ],
-        '$100 in three is 33.33 / 33.33 / 33.34';
-
-    my $sum = 0;
-    $sum += $_->{amount_cents} for @$parts;
-    is $sum, 10000, 'and the parts sum to the whole';
-
-    # The remainder goes on the LAST instalment, not the first: a parent
-    # comparing the checkout total to the first charge should see the round
-    # number they were quoted.
-    is $parts->[0]{amount_cents}, 3333, 'the first charge is the even share';
-};
-
-subtest 'a cent more than the parts can hold still balances' => sub {
-    my $plan = plan_with( { schedule => { count => 7, cadence => 'monthly' } } );
-    my $parts = $plan->instalment_schedule( 100, first_due => '2026-06-01' );
-
-    my $sum = 0;
-    $sum += $_->{amount_cents} for @$parts;
-    is $sum, 100, 'seven ways of a dollar still sums to a dollar';
-    note join ' / ', map { $_->{amount_cents} } @$parts;
-};
-
-# Declared, so it can be changed without touching this code -- which is the
-# whole point of putting it in the configuration.
-subtest 'the surcharge is declared, and defaults to nothing' => sub {
-    my $free = plan_with( { schedule => { count => 3, cadence => 'monthly' } } );
-    is $free->payment_schedule->{surcharge_pct}, 0,
-        'a schedule that says nothing about a surcharge has none';
-
-    my $parts = $free->instalment_schedule( 30000, first_due => '2026-06-01' );
-    my $sum = 0;
-    $sum += $_->{amount_cents} for @$parts;
-    is $sum, 30000, 'so paying in parts costs exactly what paying at once costs';
-
-    my $surcharged = plan_with(
-        { schedule => { count => 3, cadence => 'monthly', surcharge_pct => 10 } } );
-    my $more = $surcharged->instalment_schedule( 30000, first_due => '2026-06-01' );
-    my $more_sum = 0;
-    $more_sum += $_->{amount_cents} for @$more;
-    is $more_sum, 33000, 'and a declared surcharge is applied to the total';
-};
-
-subtest 'a schedule that makes no sense is refused, not quietly honoured' => sub {
-    for my $bad (
-        { count => 1,    cadence => 'monthly' },
-        { count => 0,    cadence => 'monthly' },
-        { count => 3,    cadence => 'fortnightly' },
-        { cadence => 'monthly' },
-    ) {
-        my $plan = plan_with( { schedule => $bad } );
-        is $plan->payment_schedule, undef,
-            'refused: ' . join( ',', map { "$_=" . ( $bad->{$_} // 'undef' ) } sort keys %$bad );
-    }
-
-    # One instalment is not an instalment plan, and a cadence nothing can
-    # schedule is worse than none -- both would otherwise reach Stripe as a
-    # subscription nobody meant to create.
-};
-
-$t_db->cleanup_test_database;

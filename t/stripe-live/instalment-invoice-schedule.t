@@ -61,6 +61,8 @@ subtest "an invoice's subscription names the schedule Registry stored" => sub {
         revenue_share_pct => 2.5,
         currency          => 'usd',
         description       => 'Summer Camp',
+        cadence           => 'monthly',
+        entitlement_id    => '00000000-0000-4000-8000-000000000001',
         instalments       => [
             { amount_cents => 3333, due_date => '2027-07-01' },
             { amount_cents => 3334, due_date => '2027-08-01' },
@@ -69,9 +71,7 @@ subtest "an invoice's subscription names the schedule Registry stored" => sub {
     # Starting now, so Stripe makes the subscription and its first invoice at
     # once rather than on a due date months away.
     $params->{start_date} = 'now';
-    # As schedule_remaining_instalments names instalment one on the schedule.
-    my $payment_id = '00000000-0000-4000-8000-000000000001';
-    $params->{'metadata[payment_id]'} = $payment_id;
+    my $entitlement_id = $params->{'metadata[entitlement_id]'};
 
     my $schedule = eval { $stripe->create_subscription_schedule($params) };
     ok $schedule, 'the schedule was created' or do { diag $@; return };
@@ -86,8 +86,8 @@ subtest "an invoice's subscription names the schedule Registry stored" => sub {
         $stripe->retrieve_subscription_async( $sub_id, { 'expand[]' => 'schedule' } ) );
     is $subscription->{schedule}{id}, $schedule->{id},
         'the subscription names the schedule id Registry stores';
-    is $subscription->{schedule}{metadata}{payment_id}, $payment_id,
-        'and the expanded schedule carries the payment id Registry wrote';
+    is $subscription->{schedule}{metadata}{entitlement_id}, $entitlement_id,
+        'and the expanded schedule carries the entitlement id Registry wrote';
 
     my $invoice = $stripe->_await( $stripe->retrieve_invoice_async( $subscription->{latest_invoice} ) );
     is $invoice->{subscription}, $sub_id, "and the invoice's subscription is that subscription";

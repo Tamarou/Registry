@@ -332,24 +332,6 @@ subtest 'a superseded refund that cannot be queued after commit is logged at err
         'and the platform log says so at error';
 };
 
-subtest 'an instalment schedule that cannot be queued after commit is logged at error and admins alerted' => sub {
-    my $sale = a_sale( stripe_payment_intent_id => 'pi_schedule_enqueue_dies',
-                       instalment_seq => 1, instalment_count => 3 );
-
-    @logs = ();
-    my ( $tx, $event_id ) = post_with_enqueue_dying( 'pi_schedule_enqueue_dies', $sale );
-    $tx->status_is(200, 'acknowledged: a retry of a claimed event does nothing');
-    is settlement($sale)->{payment}{status}, 'completed', 'instalment one settled';
-
-    my $id = $sale->id;
-    my @told = grep { $_->{message} =~ /\Q$id\E/ }
-        @{ notices_titled( $admin->id, '%not queued%' ) };
-    is scalar @told, 1, 'the admin is alerted once';
-    ok scalar( grep { $_->[0] eq 'error' && $_->[1] =~ /instalment_schedule/
-                      && $_->[1] =~ /\Q$id\E/ && $_->[1] =~ /minion is down/ } @logs ),
-        'and the platform log says so at error';
-};
-
 # Stripe answering a refund with an invalid_request_error will answer it the
 # same way on every retry: retrying only delays the person who has to act.
 subtest 'a refund create answering charge_already_refunded finishes on the first run and notifies the parent' => sub {

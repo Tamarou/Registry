@@ -78,8 +78,10 @@ my $product = $stripe->_await( $stripe->create_product_async({
 }) );
 like $product->{id}, qr/^prod_/, 'a product for the session being sold';
 
-my $schedule;
-subtest 'schedule is on the tenant account with fee percent and no transfer' => sub {
+# Registry's request for a child's parts two and three on $cadence, made on
+# the tenant's account, with the entitlement it bills for.
+my $ENTITLEMENT = '00000000-0000-4000-8000-0000000000e1';
+sub made_schedule ( $cadence ) {
     my $params = Registry::DAO::Payment::instalment_schedule_params({
         product           => $product->{id},
         customer          => $customer->{id},
@@ -87,23 +89,35 @@ subtest 'schedule is on the tenant account with fee percent and no transfer' => 
         revenue_share_pct => 2.5,
         currency          => 'usd',
         description       => 'Summer Camp',
+        cadence           => $cadence,
+        entitlement_id    => $ENTITLEMENT,
         instalments       => [
             { amount_cents => 3333, due_date => '2027-07-01' },
             { amount_cents => 3334, due_date => '2027-08-01' },
         ],
     });
-
-    $schedule = eval { $stripe->create_subscription_schedule($params) };
-    ok $schedule, 'the schedule was created' or do { diag $@; return };
+    my $schedule = eval { $stripe->create_subscription_schedule($params) };
+    ok $schedule, "the $cadence schedule was created" or do { diag $@; return };
     like $schedule->{id}, qr/^sub_sched_/, 'and Stripe gave it an id';
     push @schedules, $schedule->{id};
+    return $schedule;
+}
+
+# Each phase's price, as Stripe stored it: [ unit_amount, interval, interval_count ].
+sub stored_prices ( $schedule ) {
+    return [ map {
+        my $price = $stripe->_await( $stripe->retrieve_price_async( $_->{items}[0]{price} ) );
+        [ $price->{unit_amount}, $price->{recurring}{interval}, $price->{recurring}{interval_count} ]
+    } @{ $schedule->{phases} // [] } ];
+}
+
+my $schedule;
+subtest 'stripe accepts a weekly schedule on a connected account' => sub {
+    $schedule = made_schedule('weekly') or return;
 
     is $schedule->{end_behavior}, 'cancel',
         'it ends after the instalments rather than renewing';
-
-    my $phases = $schedule->{phases} // [];
-    is scalar(@$phases), 2, 'both phases survived the round trip'
-        or diag explain $phases;
+    is $schedule->{metadata}{entitlement_id}, $ENTITLEMENT, "it names the child's entitlement";
 
     # What the money does, read back from Stripe rather than from our own hash.
     is $stripe->retrieve_subscription_schedule( $schedule->{id} )->{id}, $schedule->{id},
@@ -112,14 +126,28 @@ subtest 'schedule is on the tenant account with fee percent and no transfer' => 
         'with no transfer: each charge is already the tenant\'s';
     is $schedule->{default_settings}{application_fee_percent} + 0, 2.5,
         'and our revenue share is the application fee';
+    is_deeply stored_prices($schedule), [ [ 3333, 'week', 1 ], [ 3334, 'week', 1 ] ],
+        'the even share and the remainder, in that order, every week';
+};
 
-    # The amounts, as Stripe stored them.
-    my @amounts = map { $_->{items}[0]{price} } @$phases;
-    my @unit = map {
-        $stripe->_await( $stripe->retrieve_price_async($_) )->{unit_amount}
-    } @amounts;
-    is_deeply \@unit, [ 3333, 3334 ],
-        'the even share and the remainder, in that order';
+subtest 'stripe accepts a quarterly schedule on a connected account' => sub {
+    my $quarterly = made_schedule('quarterly') or return;
+    is_deeply stored_prices($quarterly), [ [ 3333, 'month', 3 ], [ 3334, 'month', 3 ] ],
+        'billed every three months, not every month';
+};
+
+subtest 'stripe updates and then cancels a schedule as Registry asks' => sub {
+    my $id = $schedule && $schedule->{id}
+        or plan skip_all => 'no schedule was created';
+    my $updated = $stripe->_await( $stripe->update_subscription_schedule_async( $id,
+        { 'metadata[purpose]' => 'registry-test-suite' } ) );
+    is $updated->{metadata}{purpose}, 'registry-test-suite', 'an update is accepted';
+    is $updated->{metadata}{entitlement_id}, $ENTITLEMENT, 'and keeps the entitlement';
+
+    my $cancelled = $stripe->cancel_subscription_schedule( $id,
+        Registry::DAO::Payment::instalment_cancel_params($ENTITLEMENT) );
+    is $cancelled->{status}, 'canceled', 'the cancel Registry sends is accepted';
+    @schedules = grep { $_ ne $id } @schedules;    # cleanup has nothing left to cancel
 };
 
 subtest 'schedule is not on the platform account' => sub {

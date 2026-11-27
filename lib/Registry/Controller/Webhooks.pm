@@ -343,10 +343,10 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
                     && $self->_invoice_is_instalment($db, $schedule) ) {
                 $self->_process_instalment_invoice($db, $event, $schedule);
             }
-            # Ours, but billed before schedule_remaining_instalments committed
-            # its rows: unclaimed, so Stripe retries once they are there. Only
+            # Ours, but billed before schedule_instalments_for committed its
+            # rows: unclaimed, so Stripe retries once they are there. Only
             # while the signed event is a day old or less: a seller can name
-            # a payment whose schedule never comes, and that is not retried.
+            # an entitlement whose schedule never comes, and that is not retried.
             elsif ( $event->{type} =~ INSTALMENT_INVOICE
                     && $self->_schedule_not_recorded($db, $sched) ) {
                 my $created = $event->{created};
@@ -354,8 +354,8 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
                     if defined $created && !ref $created && $created =~ /\A\d+\z/
                     && time - $created < 24 * 60 * 60;
                 $self->app->log->warn( "Connect webhook event $event_id: instalment schedule "
-                      . _printable($schedule) . " for payment "
-                      . _printable( $sched->{metadata}{payment_id} )
+                      . _printable($schedule) . " for entitlement "
+                      . _printable( $sched->{metadata}{entitlement_id} )
                       . " is still not recorded after a day; not retried" );
             }
             # The readiness mirror, for the account that sent it and no other:
@@ -406,10 +406,6 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # capacity gate demoted and now owes a refund.
         my $refund_for;
 
-        # Set when instalment one has just been paid: the id whose remaining
-        # instalments need a Stripe schedule, built after the COMMIT below.
-        my $schedule_for;
-
         # Set when a superseded intent was paid: the refund owed, after COMMIT.
         my $superseded;
 
@@ -427,7 +423,6 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             if ($event->{type} eq 'payment_intent.succeeded') {
                 $refund_for = $self->_process_payment_intent_succeeded($db, $event,
                     \$superseded, \$continue_run);
-                $schedule_for = $self->_instalment_to_schedule($db, $event);
             }
             else {
                 # Revenue share bills no tenant by subscription, so tenant
@@ -452,38 +447,6 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
 
         # Post-COMMIT. Reached only on success, so a refund failure below cannot
         # be confused with a settlement failure above.
-
-        # The Stripe schedule for instalments two onwards. After the COMMIT and
-        # in a job, not here: it is a network call, and one made inside the
-        # transaction above would hold a row lock across Stripe's latency and
-        # lose its work on any failure -- which is #284's shape. Without the job
-        # the family pays instalment one and nothing more, so it gets ten
-        # attempts on Minion's default backoff (retries**4 + 15 seconds), about
-        # two and a half hours in all: past a Stripe outage or a deploy restart,
-        # and inside the 24 hours Stripe keeps the job's Idempotency-Keys.
-        #
-        # One job per payment: a second event for it finds the first still
-        # waiting and adds nothing. Keyed by a note named for the payment,
-        # because Minion filters notes by key.
-        # Check-then-enqueue, so two events settling at the same instant can
-        # still queue two. That is harmless: the job serialises runs for one
-        # payment and the second finds the first's schedule
-        # (Payment::schedule_remaining_instalments).
-        if ($schedule_for) {
-            $self->_enqueue_after_commit( $dao, $slug, sub ($minion) {
-                my $queued = $minion->jobs( {
-                    tasks  => ['instalment_schedule'],
-                    notes  => [$schedule_for],
-                    states => [ 'inactive', 'active' ],
-                } )->total;
-                $minion->enqueue(
-                    instalment_schedule => [ $schedule_for, $slug // 'registry' ],
-                    { attempts => 10, notes => { $schedule_for => 1 } } )
-                    unless $queued;
-            }, 'instalment_schedule', "payment $schedule_for",
-               "Schedule the remaining instalments of payment $schedule_for by hand in Stripe.",
-               { payment_id => $schedule_for } );
-        }
 
         # The run an offer payment was taken for goes on whether or not anyone
         # is there to come back: a job drives it from where it was parked
@@ -620,27 +583,6 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
 
     # --- Instalments -------------------------------------------------------
 
-    # The payment id whose remaining instalments still need scheduling, or undef.
-    #
-    # Read after _process_payment_intent_succeeded has completed the row, because
-    # a charge that did not complete has no card to schedule against.
-    method _instalment_to_schedule ($db, $event) {
-        my $payment_id = $event->{data}{object}{metadata}{payment_id} or return undef;
-        return undef unless !ref $payment_id && $payment_id =~ UUID;
-
-        require Registry::DAO::Payment;
-        my $payment = Registry::DAO::Payment->find($db, { id => $payment_id })
-            or return undef;
-
-        # Only the intent Registry created settled anything above.
-        return undef unless ( $payment->stripe_payment_intent_id // '' )
-            eq ( $event->{data}{object}{id} // "\0" );
-        return undef unless $payment->is_instalment;
-        return undef unless $payment->instalment_seq == 1;
-        return undef if $payment->stripe_schedule_id;    # already scheduled
-        return $payment_id;
-    }
-
     # Is this invoice one of a family's instalments, rather than a tenant paying
     # us? Both arrive as invoice.paid, and the tenant-billing handler would read
     # a parent's instalment as our own subscription being settled.
@@ -653,18 +595,18 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         return $row ? 1 : 0;
     }
 
-    # Does this schedule name a paid instalment one still awaiting its
-    # schedule? Its metadata is the seller's to edit, so it decides only retry
-    # against ignore, never which row is marked. The job runs only once
-    # instalment one is paid, so an unpaid one never gets a schedule; a paid
-    # one whose job failed for good never does either, which is why the
-    # caller retries only while the event is young.
+    # Does this schedule name a paid child's instalment entitlement still
+    # awaiting its schedule? Its metadata is the seller's to edit, so it
+    # decides only retry against ignore, never which row is marked. The job
+    # runs only once the cart charge is paid, so an unpaid one never gets a
+    # schedule; a paid one whose job failed for good never does either, which
+    # is why the caller retries only while the event is young.
     method _schedule_not_recorded ($db, $sched) {
-        my $payment_id = ref $sched eq 'HASH' ? $sched->{metadata}{payment_id} : undef;
-        return 0 unless defined $payment_id && !ref $payment_id;
+        my $entitlement_id = ref $sched eq 'HASH' ? $sched->{metadata}{entitlement_id} : undef;
+        return 0 unless defined $entitlement_id && !ref $entitlement_id;
 
         # Compared as text: the seller's value need not be a uuid.
-        return Registry::DAO::Payment->instalment_awaiting_schedule( $db, $payment_id ) ? 1 : 0;
+        return Registry::DAO::Payment->instalment_awaiting_schedule( $db, $entitlement_id ) ? 1 : 0;
     }
 
     # Mark one instalment of this set paid, or failed.

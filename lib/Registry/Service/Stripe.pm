@@ -243,8 +243,16 @@ class Registry::Service::Stripe {
         return $self->_request_async('GET', 'subscription_schedules', $params);
     }
 
+    method update_subscription_schedule_async($schedule_id, $params) {
+        my %p  = %$params;
+        my $ik = delete $p{_idempotency_key};
+        return $self->_request_async('POST', "subscription_schedules/$schedule_id", \%p, $ik);
+    }
+
     method cancel_subscription_schedule_async($schedule_id, $params = {}) {
-        return $self->_request_async('POST', "subscription_schedules/$schedule_id/cancel", $params);
+        my %p  = %$params;
+        my $ik = delete $p{_idempotency_key};
+        return $self->_request_async('POST', "subscription_schedules/$schedule_id/cancel", \%p, $ik);
     }
 
     # Invoices API (for subscription payment tracking)

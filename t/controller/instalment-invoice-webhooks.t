@@ -16,6 +16,7 @@ defer { done_testing };
 use Test::Registry::DB;
 use Test::Registry::Mojo;
 use Test::Registry::StripeWebhook;
+use Test::Registry::InstalmentCheckout qw( instalment_checkout );
 use Registry::DAO::Payment;
 use Registry::DAO::Tenant;
 use Registry::Service::Stripe;
@@ -84,27 +85,38 @@ use warnings 'redefine';
 # The platform offer version instalment one was priced under (Solo v1), snapshotted onto every row.
 my $PLAN = '00000000-0000-0000-0003-000000000001';
 
-# The set as schedule_remaining_instalments leaves it: instalment one paid with
-# its fee recorded, the rest owed, all sharing one schedule id and carrying the
-# seller account and plan instalment one was charged under.
-sub build_set ( $tenant = $A ) {
+# A child's paid checkout in three parts: the cart charge took part one, with
+# its fee recorded under $PLAN.
+sub checkout ( $tenant, %o ) {
+    my $c = instalment_checkout( $tenant->{db}, parent => $tenant->{user}->id, %o );
+    $tenant->{db}->update( 'payments', { platform_fee_cents => 83, platform_offer_version_id => $PLAN },
+        { id => $c->{payment}->id } );
+    return $c;
+}
+
+# The set as schedule_instalments_for leaves it: parts two and three owed on
+# the child's entitlement, sharing one schedule id and carrying the seller
+# account and plan the checkout charge was made under. One checkout per
+# tenant unless $c names another; each call replaces the rows.
+sub build_set ( $tenant = $A, $c = $tenant->{checkout} //= checkout($tenant) ) {
     my $db = $tenant->{db};
     $db->delete( 'payments', { stripe_schedule_id => $SCHED } );
 
     my @amounts = ( 3333, 3333, 3334 );
     my @ids;
-    for my $i ( 1 .. 3 ) {
+    for my $i ( 2 .. 3 ) {
         my $row = $db->insert( 'payments', {
             user_id            => $tenant->{user}->id,
             amount_cents       => $amounts[ $i - 1 ],
             currency           => 'USD',
-            status             => $i == 1 ? 'completed' : 'pending',
+            status             => 'pending',
             instalment_seq     => $i,
             instalment_count   => 3,
             due_date           => sprintf( '2026-%02d-01', 5 + $i ),
             stripe_schedule_id => $SCHED,
-            ( $i == 1 ? ( platform_fee_cents => 83, platform_offer_version_id => $PLAN ) : () ),
+            entitlement_id     => $c->{entitlement}->id,
             metadata           => { -json => {
+                instalment_of             => $c->{payment}->id,
                 stripe_account_id         => $tenant->{account},
                 platform_offer_version_id => $PLAN,
                 platform_payment_plan_id  => 'revenue_share',
@@ -143,30 +155,30 @@ subtest 'connect instalment invoice marks the tenant instalment' => sub {
     build_set();
 
     deliver( 'invoice.paid', invoice( 'in_conn_two', 'pi_conn_two' ) );
-    is_deeply statuses(), [qw( completed completed pending )],
+    is_deeply statuses(), [qw( completed pending )],
         "the earliest owed row in the account's tenant is completed";
 
     deliver( 'invoice.paid', invoice( 'in_conn_two', 'pi_conn_two' ) );
-    is_deeply statuses(), [qw( completed completed pending )],
+    is_deeply statuses(), [qw( completed pending )],
         'a redelivery does not advance the set';
 
     deliver( 'invoice.payment_failed', invoice( 'in_conn_three', 'pi_conn_three' ) );
-    is_deeply statuses(), [qw( completed completed failed )],
+    is_deeply statuses(), [qw( completed failed )],
         'and a failed invoice marks the next owed row failed';
 };
 
 subtest 'a paid invoice completes the earliest owed instalment' => sub {
     build_set();
-    is_deeply statuses(), [qw( completed pending pending )], 'two still owed';
+    is_deeply statuses(), [qw( pending pending )], 'two still owed';
 
     deliver( 'invoice.paid', invoice( 'in_two', 'pi_two', amount_paid => 3333 ) );
 
-    is_deeply statuses(), [qw( completed completed pending )],
+    is_deeply statuses(), [qw( completed pending )],
         'the second is paid, the third is not';
 
     deliver( 'invoice.paid', invoice( 'in_three', 'pi_three', amount_paid => 3334 ) );
 
-    is_deeply statuses(), [qw( completed completed completed )], 'and then the third';
+    is_deeply statuses(), [qw( completed completed )], 'and then the third';
 };
 
 sub fee_and_plan ( $id, $tenant = $A ) {
@@ -187,9 +199,9 @@ subtest 'a paid instalment invoice records its application fee and snapshotted p
 
     deliver( 'invoice.paid', invoice( 'in_fee', 'pi_fee', application_fee_amount => 83 ) );
 
-    is_deeply fee_and_plan( $ids[1] ), [ 83, $PLAN ],
+    is_deeply fee_and_plan( $ids[0] ), [ 83, $PLAN ],
         "the invoice's fee and instalment one's plan are on the row";
-    is_deeply fee_and_plan( $ids[2] ), [ undef, undef ], 'the next owed row is untouched';
+    is_deeply fee_and_plan( $ids[1] ), [ undef, undef ], 'the next owed row is untouched';
 };
 
 # Stripe omits a zero application fee; on a seller's account that took nothing.
@@ -198,7 +210,7 @@ subtest 'a paid instalment invoice with no application fee records zero' => sub 
 
     deliver( 'invoice.paid', invoice( 'in_no_fee', 'pi_no_fee' ) );
 
-    is_deeply fee_and_plan( $ids[1] ), [ 0, $PLAN ], 'zero, under the snapshotted plan';
+    is_deeply fee_and_plan( $ids[0] ), [ 0, $PLAN ], 'zero, under the snapshotted plan';
 };
 
 # Stripe's retry of a failed invoice is the delivery that takes the fee.
@@ -208,8 +220,8 @@ subtest 'payment_failed then invoice.paid records the fee on that row' => sub {
     deliver( 'invoice.payment_failed', invoice( 'in_two', 'pi_two' ) );
     deliver( 'invoice.paid', invoice( 'in_two', 'pi_two', application_fee_amount => 50 ) );
 
-    is_deeply fee_and_plan( $ids[1] ), [ 50, $PLAN ], "the retry's fee is on the row that failed";
-    is_deeply fee_and_plan( $ids[2] ), [ undef, undef ], 'and the next owed row is untouched';
+    is_deeply fee_and_plan( $ids[0] ), [ 50, $PLAN ], "the retry's fee is on the row that failed";
+    is_deeply fee_and_plan( $ids[1] ), [ undef, undef ], 'and the next owed row is untouched';
 };
 
 # Recorded once, by the delivery that completed the row.
@@ -219,7 +231,7 @@ subtest 'a redelivered invoice.paid with a different fee leaves the first fee' =
     deliver( 'invoice.paid', invoice( 'in_two', 'pi_two', application_fee_amount => 50 ) );
     deliver( 'invoice.paid', invoice( 'in_two', 'pi_two', application_fee_amount => 99 ) );
 
-    is_deeply fee_and_plan( $ids[1] ), [ 50, $PLAN ], 'the first fee stands';
+    is_deeply fee_and_plan( $ids[0] ), [ 50, $PLAN ], 'the first fee stands';
 };
 
 subtest 'platform_revenue counts a paid instalment as recorded' => sub {
@@ -240,10 +252,10 @@ subtest 'a redelivered invoice advances nothing' => sub {
     build_set();
 
     deliver( 'invoice.paid', invoice( 'in_two', 'pi_two' ) );
-    is_deeply statuses(), [qw( completed completed pending )], 'the second is paid';
+    is_deeply statuses(), [qw( completed pending )], 'the second is paid';
 
     deliver( 'invoice.paid', invoice( 'in_two', 'pi_two' ) );
-    is_deeply statuses(), [qw( completed completed pending )],
+    is_deeply statuses(), [qw( completed pending )],
         'and the same invoice again changes nothing';
 };
 
@@ -253,10 +265,10 @@ subtest 'a failed instalment is recorded, and the child keeps their place' => su
     deliver( 'invoice.payment_failed', invoice( 'in_two', 'pi_two_failed',
         last_finalization_error => { message => 'Your card was declined.' } ) );
 
-    is_deeply statuses(), [qw( completed failed pending )],
+    is_deeply statuses(), [qw( failed pending )],
         'the second instalment is failed, the third still pending';
 
-    my $failed = Registry::DAO::Payment->find( $A->{db}, { id => $ids[1] } );
+    my $failed = Registry::DAO::Payment->find( $A->{db}, { id => $ids[0] } );
     like $failed->error_message, qr/declined/,
         'and the reason is on the row, for Morgan to read';
 
@@ -278,8 +290,8 @@ subtest 'a second failure of one invoice keeps the latest reason' => sub {
     deliver( 'invoice.payment_failed', invoice( 'in_two', 'pi_two',
         last_finalization_error => { message => 'Your card has expired.' } ) );
 
-    is_deeply statuses(), [qw( completed failed pending )], 'the row stays failed';
-    like( Registry::DAO::Payment->find( $A->{db}, { id => $ids[1] } )->error_message,
+    is_deeply statuses(), [qw( failed pending )], 'the row stays failed';
+    like( Registry::DAO::Payment->find( $A->{db}, { id => $ids[0] } )->error_message,
         qr/expired/, "with the second attempt's reason" );
 };
 
@@ -287,12 +299,12 @@ subtest 'a retry after a failure completes the same instalment' => sub {
     build_set();
 
     deliver( 'invoice.payment_failed', invoice( 'in_two', 'pi_two_failed' ) );
-    is_deeply statuses(), [qw( completed failed pending )], 'failed';
+    is_deeply statuses(), [qw( failed pending )], 'failed';
 
     # A failed row is still owed, so Stripe's own retry lands on it rather than
     # skipping to the third instalment and leaving the second owed forever.
     deliver( 'invoice.paid', invoice( 'in_two', 'pi_two_retry' ) );
-    is_deeply statuses(), [qw( completed completed pending )],
+    is_deeply statuses(), [qw( completed pending )],
         'the retry settles the instalment that failed, not the next one';
 };
 
@@ -302,10 +314,10 @@ subtest 'payment_failed then invoice.paid on the same intent completes the same 
     build_set();
 
     deliver( 'invoice.payment_failed', invoice( 'in_two', 'pi_two' ) );
-    is_deeply statuses(), [qw( completed failed pending )], 'failed';
+    is_deeply statuses(), [qw( failed pending )], 'failed';
 
     deliver( 'invoice.paid', invoice( 'in_two', 'pi_two', amount_paid => 3333, status => 'paid' ) );
-    is_deeply statuses(), [qw( completed completed pending )],
+    is_deeply statuses(), [qw( completed pending )],
         'the retry completes the row that failed';
 };
 
@@ -315,7 +327,7 @@ subtest 'payment_failed with no payment_intent delivered twice marks no row fail
     build_set();
 
     deliver( 'invoice.payment_failed', invoice( 'in_no_intent', undef ) ) for 1 .. 2;
-    is_deeply statuses(), [qw( completed pending pending )], 'no row is failed';
+    is_deeply statuses(), [qw( pending pending )], 'no row is failed';
 };
 
 # A failure with no intent still names its month: the invoice is bound to the
@@ -324,14 +336,14 @@ subtest 'payment_failed with no intent binds its row, and month three paid takes
     my @ids = build_set();
 
     deliver( 'invoice.payment_failed', invoice( 'in_month_two', undef ) );
-    is_deeply statuses(), [qw( completed pending pending )], 'no row is failed';
+    is_deeply statuses(), [qw( pending pending )], 'no row is failed';
 
     deliver( 'invoice.paid', invoice( 'in_month_three', 'pi_month_three' ) );
-    is_deeply statuses(), [qw( completed pending completed )],
+    is_deeply statuses(), [qw( pending completed )],
         "month three's invoice completes month three, month two stays owed";
 
     is $A->{db}->query( q{SELECT metadata->>'stripe_invoice_id' FROM payments WHERE id = ?},
-        $ids[1] )->array->[0], 'in_month_two', "and month two's invoice is bound to its row";
+        $ids[0] )->array->[0], 'in_month_two', "and month two's invoice is bound to its row";
 };
 
 # Stripe delivers the failure and the paid retry of one invoice concurrently.
@@ -381,7 +393,7 @@ subtest 'concurrent payment_failed and invoice.paid for one invoice mark one row
     reap($pid);
 
     is $? >> 8, 0, 'the failed delivery waited on the paid transaction';
-    is_deeply statuses(), [qw( completed completed pending )],
+    is_deeply statuses(), [qw( completed pending )],
         'the invoice completes one row and fails none';
 };
 
@@ -393,28 +405,28 @@ subtest 'a voided or uncollectible instalment invoice is flagged on the dashboar
     # Bound by no-intent failures, as a schedule's unchargeable invoice is.
     deliver( 'invoice.payment_failed', invoice( 'in_void', undef ) );
     deliver( 'invoice.payment_failed', invoice( 'in_uncollectible', undef ) );
-    is_deeply statuses(), [qw( completed pending pending )], 'both bound, both still pending';
+    is_deeply statuses(), [qw( pending pending )], 'both bound, both still pending';
 
     deliver( 'invoice.voided', invoice( 'in_void', undef, status => 'void' ) );
     deliver( 'invoice.marked_uncollectible', invoice( 'in_uncollectible', undef, status => 'uncollectible' ) );
-    is_deeply statuses(), [qw( completed failed failed )], 'each marks its own row failed';
+    is_deeply statuses(), [qw( failed failed )], 'each marks its own row failed';
 
     my %owed = map { $_->{id} => $_ }
         @{ Registry::DAO::Payment->outstanding_instalments( $A->{db} ) };
-    is $owed{ $ids[1] }{status}, 'failed', 'the voided month is on the dashboard as failed';
-    like $owed{ $ids[1] }{error_message}, qr/voided/, 'with why';
-    like $owed{ $ids[2] }{error_message}, qr/uncollectible/, 'and so is the uncollectible one';
+    is $owed{ $ids[0] }{status}, 'failed', 'the voided month is on the dashboard as failed';
+    like $owed{ $ids[0] }{error_message}, qr/voided/, 'with why';
+    like $owed{ $ids[1] }{error_message}, qr/uncollectible/, 'and so is the uncollectible one';
 };
 
 subtest 'a void names only its own invoice, and never a paid one' => sub {
     build_set();
 
     deliver( 'invoice.voided', invoice( 'in_never_seen', undef, status => 'void' ) );
-    is_deeply statuses(), [qw( completed pending pending )], 'an unseen invoice takes no row';
+    is_deeply statuses(), [qw( pending pending )], 'an unseen invoice takes no row';
 
     deliver( 'invoice.paid', invoice( 'in_two', 'pi_two' ) );
     deliver( 'invoice.voided', invoice( 'in_two', 'pi_two', status => 'void' ) );
-    is_deeply statuses(), [qw( completed completed pending )], 'a completed row stays completed';
+    is_deeply statuses(), [qw( completed pending )], 'a completed row stays completed';
 };
 
 # Each month is its own invoice. A later month paying does not settle an
@@ -426,7 +438,7 @@ subtest 'month two failed then month three paid completes month three only' => s
     deliver( 'invoice.paid', invoice( 'in_month_three', 'pi_month_three',
         amount_due => 3334, amount_paid => 3334, status => 'paid' ) );
 
-    is_deeply statuses(), [qw( completed failed completed )],
+    is_deeply statuses(), [qw( failed completed )],
         "month three's row completes and month two stays failed";
 };
 
@@ -441,7 +453,7 @@ subtest 'an invoice the schedule did not bill changes no instalment' => sub {
             billing_reason => $reason, amount_paid => 3333, status => 'paid' ) );
         deliver( 'invoice.payment_failed', invoice( "in_${reason}_failed", "pi_${reason}_failed",
             billing_reason => $reason ) );
-        is_deeply statuses(), [qw( completed pending pending )], "$reason marks no instalment";
+        is_deeply statuses(), [qw( pending pending )], "$reason marks no instalment";
     }
 
     # The seller sets billing_reason by how they raise the invoice; what they
@@ -453,7 +465,7 @@ subtest 'an invoice the schedule did not bill changes no instalment' => sub {
     like $warned[-1][1], qr/manual\\x\{a\}ERROR forged/, 'escaped';
 
     deliver( 'invoice.paid', invoice( 'in_create', 'pi_create', billing_reason => 'subscription_create' ) );
-    is_deeply statuses(), [qw( completed completed pending )], 'subscription_create does';
+    is_deeply statuses(), [qw( completed pending )], 'subscription_create does';
 };
 
 # The final instalment can be its own schedule phase (3333/3333/3334), and the
@@ -463,7 +475,7 @@ subtest 'a subscription_update invoice on the schedule completes the owed row' =
     build_set();
 
     deliver( 'invoice.paid', invoice( 'in_update', 'pi_update', billing_reason => 'subscription_update' ) );
-    is_deeply statuses(), [qw( completed completed pending )], 'the owed row is completed';
+    is_deeply statuses(), [qw( completed pending )], 'the owed row is completed';
 };
 
 # Stripe's invoice at 2024-12-18.acacia: `subscription`, and no schedule field.
@@ -473,7 +485,7 @@ subtest 'an invoice naming only its subscription completes the earliest owed row
 
     deliver( 'invoice.paid', invoice( 'in_by_sub', 'pi_by_sub' ) );
 
-    is_deeply statuses(), [qw( completed completed pending )],
+    is_deeply statuses(), [qw( completed pending )],
         'the schedule the subscription names marks the earliest owed row';
     is_deeply \@lookups, [ [ $A->{account}, $SUB, { 'expand[]' => 'schedule' } ] ],
         "and the subscription was read, with its schedule, on the tenant's own account";
@@ -487,25 +499,22 @@ subtest 'a subscription with no schedule, or another schedule, changes nothing' 
             type => 'invoice.paid', account => $A->{account},
             data => { object => invoice( "in_$sub", "pi_$sub", subscription => $sub ) } } )
             ->status_is(200)->content_is('OK');
-        is_deeply statuses(), [qw( completed pending pending )], "$sub marks no instalment";
+        is_deeply statuses(), [qw( pending pending )], "$sub marks no instalment";
     }
 };
 
-# schedule_remaining_instalments records the rows only after Stripe made the
+# schedule_instalments_for records the rows only after Stripe made the
 # schedule, and a past due date bills at once. That invoice is Registry's --
-# the schedule names instalment one, still awaiting its schedule -- so it is
-# retried until the rows are there. A schedule naming no such payment is the
-# studio's own, and is ignored as before.
+# the schedule names a paid child's entitlement still awaiting its schedule --
+# so it is retried until the rows are there. A schedule naming no such
+# entitlement is the studio's own, and is ignored as before.
 subtest 'an invoice from a schedule not yet recorded asks for a retry' => sub {
     $A->{db}->delete( 'payments', { stripe_schedule_id => $SCHED } );
-    my $first = $A->{db}->insert( 'payments', {
-        user_id => $A->{user}->id, amount_cents => 3333, currency => 'USD',
-        status  => 'completed', instalment_seq => 1, instalment_count => 3,
-    }, { returning => 'id' } )->hash->{id};
+    my $c = checkout($A);
     local $SUBSCRIPTIONS{sub_early} = { id => 'sub_early',
-        schedule => { id => $SCHED, metadata => { payment_id => $first } } };
+        schedule => { id => $SCHED, metadata => { entitlement_id => $c->{entitlement}->id } } };
     local $SUBSCRIPTIONS{sub_forged} = { id => 'sub_forged',
-        schedule => { id => 'sub_sched_forged', metadata => { payment_id => "not-a-uuid'" } } };
+        schedule => { id => 'sub_sched_forged', metadata => { entitlement_id => "not-a-uuid'" } } };
 
     my $event = { type => 'invoice.paid', account => $A->{account}, created => time,
         data => { object => invoice( 'in_early', 'pi_early', subscription => 'sub_early' ) } };
@@ -513,33 +522,29 @@ subtest 'an invoice from a schedule not yet recorded asks for a retry' => sub {
     is $dao->db->select( 'registry.webhook_events', ['id'],
         { stripe_event_id => $event->{id} } )->rows, 0, 'the event is not claimed';
 
-    # The job commits: instalment one gets the schedule, the rest are owed.
-    $A->{db}->delete( 'payments', { id => $first } );
-    build_set();
+    # The job commits: the child's remaining parts are owed on the schedule.
+    build_set( $A, $c );
     Test::Registry::StripeWebhook::post_connect( $t, $event )->status_is(200);
-    is_deeply statuses(), [qw( completed completed pending )], "Stripe's retry marks the instalment";
+    is_deeply statuses(), [qw( completed pending )], "Stripe's retry marks the instalment";
 
-    # A schedule naming a payment that has its schedule, or no payment, is not ours.
+    # A schedule naming an entitlement that has its schedule, or none, is not ours.
     local $SUBSCRIPTIONS{sub_early}{schedule}{id} = 'sub_sched_studio_twin';
     for my $sub (qw( sub_early sub_forged )) {
         Test::Registry::StripeWebhook::post_connect( $t, { type => 'invoice.paid', account => $A->{account},
             data => { object => invoice( "in_$sub", "pi_$sub", subscription => $sub ) } } )
             ->status_is(200)->content_is('OK');
     }
-    is_deeply statuses(), [qw( completed completed pending )], 'and neither marks anything';
+    is_deeply statuses(), [qw( completed pending )], 'and neither marks anything';
 };
 
-# A seller can name any payment whose schedule never comes (an abandoned
-# checkout, a job that failed for good): retrying that is only worth it while
-# the job could still commit.
+# A seller can name any entitlement whose schedule never comes (a job that
+# failed for good): retrying that is only worth it while the job could still
+# commit.
 subtest 'an old not-yet-recorded schedule invoice answers 200 and warns' => sub {
     $A->{db}->delete( 'payments', { stripe_schedule_id => $SCHED } );
-    my $first = $A->{db}->insert( 'payments', {
-        user_id => $A->{user}->id, amount_cents => 3333, currency => 'USD',
-        status  => 'completed', instalment_seq => 1, instalment_count => 3,
-    }, { returning => 'id' } )->hash->{id};
+    my $c = checkout($A);
     local $SUBSCRIPTIONS{sub_stale} = { id => 'sub_stale',
-        schedule => { id => $SCHED, metadata => { payment_id => $first } } };
+        schedule => { id => $SCHED, metadata => { entitlement_id => $c->{entitlement}->id } } };
 
     @logs = ();
     my $event = { type => 'invoice.paid', account => $A->{account}, created => time - 25 * 3600,
@@ -547,22 +552,17 @@ subtest 'an old not-yet-recorded schedule invoice answers 200 and warns' => sub 
     Test::Registry::StripeWebhook::post_connect( $t, $event )->status_is(200);
     ok( ( grep { $_->[0] eq 'warn' && $_->[1] =~ /\Q$event->{id}\E.*not recorded/ } @logs ),
         'and warns that the schedule was never recorded' );
-    $A->{db}->delete( 'payments', { id => $first } );
 };
 
-subtest 'a not-yet-recorded schedule invoice naming a pending instalment one answers 200' => sub {
+subtest 'a not-yet-recorded schedule invoice naming an unpaid checkout answers 200' => sub {
     $A->{db}->delete( 'payments', { stripe_schedule_id => $SCHED } );
-    my $first = $A->{db}->insert( 'payments', {
-        user_id => $A->{user}->id, amount_cents => 3333, currency => 'USD',
-        status  => 'pending', instalment_seq => 1, instalment_count => 3,
-    }, { returning => 'id' } )->hash->{id};
+    my $c = checkout( $A, status => 'pending' );
     local $SUBSCRIPTIONS{sub_unpaid} = { id => 'sub_unpaid',
-        schedule => { id => $SCHED, metadata => { payment_id => $first } } };
+        schedule => { id => $SCHED, metadata => { entitlement_id => $c->{entitlement}->id } } };
 
     Test::Registry::StripeWebhook::post_connect( $t, { type => 'invoice.paid', account => $A->{account},
         created => time, data => { object => invoice( 'in_unpaid', 'pi_unpaid', subscription => 'sub_unpaid' ) } } )
         ->status_is(200)->content_is('OK');
-    $A->{db}->delete( 'payments', { id => $first } );
 };
 
 # Unreadable now is not "not ours": the claim is not taken and Stripe retries.
@@ -573,7 +573,7 @@ subtest 'a subscription Stripe cannot return asks for a retry' => sub {
         data => { object => invoice( 'in_unreadable', 'pi_unreadable', subscription => 'sub_unreadable' ) } };
     Test::Registry::StripeWebhook::post_connect( $t, $event )->status_is(500);
 
-    is_deeply statuses(), [qw( completed pending pending )], 'no instalment is marked';
+    is_deeply statuses(), [qw( pending pending )], 'no instalment is marked';
     is $dao->db->select( 'registry.webhook_events', ['id'],
         { stripe_event_id => $event->{id} } )->rows, 0, 'and the event is not claimed';
 };
@@ -589,7 +589,7 @@ subtest 'unmatched connect invoice changes nothing and skips billing' => sub {
         Test::Registry::StripeWebhook::post_connect( $t, $event )
             ->status_is(200)->content_is('OK');
 
-        is_deeply statuses(), [qw( completed pending pending )], "$type changes no instalment";
+        is_deeply statuses(), [qw( pending pending )], "$type changes no instalment";
         is $dao->db->select( 'registry.subscription_events', ['id'],
             { stripe_event_id => $event->{id} } )->rows, 0, 'and never reaches tenant billing';
     }
@@ -604,7 +604,7 @@ subtest 'invoice matching only another tenant changes neither' => sub {
 
     deliver( 'invoice.paid', invoice( 'in_cross_tenant', 'pi_cross_tenant' ) );
 
-    is_deeply statuses($B), [qw( completed pending pending )], 'the other tenant is untouched';
+    is_deeply statuses($B), [qw( pending pending )], 'the other tenant is untouched';
     is_deeply statuses($A), [], 'and the tenant the account names has nothing to mark';
 };
 
@@ -616,7 +616,7 @@ subtest 'failed after paid never reverts a completed instalment' => sub {
     deliver( 'invoice.paid', invoice( 'in_two', 'pi_two_late' ) );
     deliver( 'invoice.payment_failed', invoice( 'in_two', 'pi_two_late' ) );
 
-    is_deeply statuses(), [qw( completed completed pending )],
+    is_deeply statuses(), [qw( completed pending )],
         'the paid instalment stays completed and the next is not failed';
 };
 
@@ -629,11 +629,11 @@ subtest 'a refunded or refund_pending instalment is not moved by an invoice even
 
     for my $type (qw( invoice.paid invoice.payment_failed invoice.voided )) {
         $A->{db}->query( q{UPDATE payments SET status = 'refunded', refunded_cents = amount_cents WHERE id = ?},
-            $ids[1] );
+            $ids[0] );
         $A->{db}->query( q{UPDATE payments SET status = 'refund_pending', refund_owed_cents = amount_cents WHERE id = ?},
-            $ids[2] );
+            $ids[1] );
         deliver( $type, invoice( $_, "pi_$_" ) ) for qw( in_two in_three );
-        is_deeply statuses(), [qw( completed refunded refund_pending )], "$type moves neither row";
+        is_deeply statuses(), [qw( refunded refund_pending )], "$type moves neither row";
     }
 };
 
@@ -650,8 +650,8 @@ subtest 'platform endpoint no longer marks instalments' => sub {
         data => { object => invoice( 'in_platform_inst', 'pi_platform_inst' ) } },
         path => '/webhooks/stripe', secret => $ENV{STRIPE_WEBHOOK_SECRET} )->status_is(200);
 
-    is_deeply statuses($reg), [qw( completed pending pending )], 'no registry instalment is marked';
-    is_deeply statuses(),     [qw( completed pending pending )], 'nor any tenant instalment';
+    is_deeply statuses($reg), [qw( pending pending )], 'no registry instalment is marked';
+    is_deeply statuses(),     [qw( pending pending )], 'nor any tenant instalment';
     $dao->db->delete( 'payments', { stripe_schedule_id => $SCHED } );
 };
 
@@ -665,7 +665,7 @@ subtest 'seller metadata naming a schedule marks nothing' => sub {
         subscription_details => { metadata => { subscription => $SUB } },
         payment_intent       => 'pi_seller_own' } );
 
-    is_deeply statuses(), [qw( completed pending pending )], 'no instalment is marked paid';
+    is_deeply statuses(), [qw( pending pending )], 'no instalment is marked paid';
 };
 
 $t_db->cleanup_test_database;

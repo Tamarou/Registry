@@ -88,6 +88,8 @@ subtest 'instalment invoice still handled' => sub {
         revenue_share_pct => 2.5,
         currency          => 'usd',
         description       => 'Summer Camp',
+        cadence           => 'monthly',
+        entitlement_id    => '00000000-0000-4000-8000-0000000000f2',
         instalments       => [
             { amount_cents => 3333, due_date => '2027-07-01' },
             { amount_cents => 3334, due_date => '2027-08-01' },

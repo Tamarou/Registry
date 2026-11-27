@@ -396,7 +396,8 @@ sub settled_once ($payment) {
 }
 
 # Instalment one of a cart whose seat is gone: one delivery completes it,
-# records the fee, refunds the seat and asks for the rest to be scheduled.
+# records the fee and refunds the seat. The webhook schedules nothing: a
+# child's instalments are scheduled by checkout, per entitlement.
 sub an_instalment_for_a_gone_seat () {
     a_doomed_payment( instalment_seq => 1, instalment_count => 3 );
 }
@@ -419,7 +420,7 @@ subtest 'redelivered event settles once' => sub {
     }
 
     is $after_first->{platform_fee_cents}, 450, 'the first delivery records the fee';
-    is $after_first->{schedule_jobs}, 1, 'and asks once for the rest to be scheduled';
+    is $after_first->{schedule_jobs}, 0, 'and asks for no schedule';
     is_deeply settled_once($payment), $after_first, 'the redelivery changes nothing';
     cmp_ok scalar @refunds, '<=', 1, 'and at most one capacity refund is issued';
 };
@@ -440,7 +441,7 @@ subtest 'second event id for completed payment changes nothing' => sub {
         post_settlement($payment, fee => 999)->status_is(200);
     }
 
-    is $after_first->{schedule_jobs}, 1, 'the first event asks once for scheduling';
+    is $after_first->{schedule_jobs}, 0, 'the first event asks for no schedule';
     is_deeply settled_once($payment), $after_first,
         'a second event id changes no status, fee, enrollment or job';
     is scalar @refunds, 1, 'and issues no second capacity refund';

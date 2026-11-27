@@ -128,13 +128,19 @@ field $_stripe_client = undef;
         return \@phases;
     }
 
-    # The subscription-schedule request for the instalments still to come.
+    # Stripe's recurring interval for a plan's cadence: [ interval, count ].
+    my %RECURRING = ( weekly => [ week => 1 ], monthly => [ month => 1 ], quarterly => [ month => 3 ] );
+
+    # The subscription-schedule request for one child's instalments still to
+    # come, on $args->{cadence}, naming $args->{entitlement_id}.
     #
     # Instalment one is taken on-session at checkout, where the parent is
     # present to satisfy a card challenge and the card is saved; this covers
     # what is left, charged automatically against that card. So `start_date` is
     # the second instalment's due date, not now.
     sub instalment_schedule_params ( $args ) {
+        my $recurring = $RECURRING{ $args->{cadence} // '' }
+            or die "no Stripe interval for cadence '" . ( $args->{cadence} // '' ) . "'\n";
         my $instalments = $args->{instalments} // [];
         my $currency    = lc( $args->{currency} // 'usd' );
         my $product     = $args->{product};
@@ -157,6 +163,10 @@ field $_stripe_client = undef;
             # No transfer_data: the schedule is made on the seller's own account
             # (a direct charge, as the one-off path is), so the money is
             # already theirs and our share is the application fee.
+
+            # So an invoice that beats the rows' COMMIT is retried, not ignored
+            # (Webhooks::_schedule_not_recorded).
+            'metadata[entitlement_id]' => $args->{entitlement_id},
         );
 
         # Omitted rather than sent as zero. A tenant on a 0% platform offer owes no
@@ -179,7 +189,8 @@ field $_stripe_client = undef;
             # parameter: product_data. Did you mean product?" -- so the caller
             # creates the product and passes its id.
             $params{"phases[$i][items][0][price_data][product]"} = $product;
-            $params{"phases[$i][items][0][price_data][recurring][interval]"} = 'month';
+            $params{"phases[$i][items][0][price_data][recurring][interval]"}       = $recurring->[0];
+            $params{"phases[$i][items][0][price_data][recurring][interval_count]"} = $recurring->[1];
         }
 
         return \%params;
@@ -194,69 +205,80 @@ field $_stripe_client = undef;
         return Time::Local::timegm_posix( 0, 0, 12, $3, $2 - 1, $1 - 1900 );
     }
 
-    # Create the Stripe schedule for the instalments after the first, and record
-    # each of them as a payments row.
+    # Create the Stripe schedule for $entitlement's instalments after the
+    # first, and record each of them as a payments row naming it. $self is
+    # the cart charge that made $entitlement and took its part one: its
+    # metadata.lines hold the parts, and its customer and saved card pay the
+    # rest. Each child on instalments has a schedule of its own, so a missed
+    # payment, drop or transfer acts on that child alone. The schedule id, or
+    # undef when its line is not paid in instalments.
     #
-    # Called from a job rather than from the webhook that completes instalment
-    # one, for two reasons. The card only exists once that charge has succeeded,
-    # so this cannot happen at checkout; and a blocking Stripe call inside a
-    # webhook's transaction is the shape of #284 -- the work belongs after the
-    # COMMIT, where a failure can be retried without holding a lock.
+    # Called from a job rather than at checkout, for two reasons. The card
+    # only exists once the cart charge has succeeded; and a blocking Stripe
+    # call inside a transaction is the shape of #284 -- the work belongs
+    # after the COMMIT, where a failure can be retried without holding a lock.
     #
     # Idempotent three ways, because a second schedule bills the family twice.
-    # A run that finds a schedule recorded returns it. Runs for one payment are
-    # serialised by an advisory lock, and the check is repeated under it, so a
-    # second job (two success events can queue two) waits for the first and
+    # A run that finds rows recorded for the entitlement returns their
+    # schedule. Runs for one entitlement are serialised by an advisory lock,
+    # and the check is made under it, so a second job waits for the first and
     # then finds its schedule. And the product and schedule creates carry
-    # Idempotency-Keys named for the payment, so a retry after Stripe made the
-    # schedule but before our COMMIT gets that same schedule back.
+    # Idempotency-Keys named for the entitlement, so a retry after Stripe made
+    # the schedule but before our COMMIT gets that same schedule back.
     # And Stripe is asked for a schedule an earlier run made before another is
     # created, as a key does not always answer that: Stripe replays a stored
     # 500 under it for 24 hours, and forgets it after.
-    method schedule_remaining_instalments ($db) {
+    method schedule_instalments_for ( $db, $entitlement ) {
         my $raw = ($db isa Registry::DAO) ? $db->db : $db;
+        my $eid = $entitlement->id;
+        die "entitlement $eid was not made by payment $id\n"
+            unless ( $entitlement->payment_id // '' ) eq $id;
 
-        return $stripe_schedule_id if $stripe_schedule_id;
-        return undef unless $self->is_instalment && $instalment_seq == 1;
-
-        my $meta        = $metadata // {};
-        my $instalments = $meta->{instalment_plan} or return undef;
-        my @remaining   = @{$instalments}[ 1 .. $#$instalments ];
+        my $line = $self->_line_for( $raw, $entitlement );
+        return undef unless $line && ( $line->{kind} // '' ) eq 'instalments';
+        my @parts     = @{ $line->{parts} // [] };
+        my @remaining = @parts[ 1 .. $#parts ];
         return undef unless @remaining;
 
+        my $meta = $metadata // {};
         my $slug = $meta->{tenant_slug}
             or die "cannot schedule instalments without a tenant slug\n";
 
-        # Our share -- the rate snapshotted on instalment one's row at create, as
+        # The plan stamped on the entitlement, not the line's copy.
+        my ($plan) = grep { $_->{id} eq $entitlement->payment_plan_id }
+            $entitlement->offer_version($raw)->payment_plans($raw)->@*;
+        die "entitlement $eid has no instalments plan\n"
+            unless $plan && $plan->{kind} eq 'instalments';
+
+        # Our share -- the rate snapshotted on the charge at create, as
         # _connect_params reads it, so a retry under the keys below sends the
         # same fee even after the tenant changes plan.
         my $pct = ( $meta->{revenue_share_fraction}
             // Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant(
                 $raw, $slug ) ) * 100;
 
-        # Bound to the account instalment one was charged on, where its customer
-        # and card live; dies, before any Stripe call, when there is none.
+        # Bound to the account the charge was made on, where its customer and
+        # card live; dies, before any Stripe call, when there is none.
         my $client = $self->stripe_client;
 
         # Open across the Stripe calls for the lock alone: it holds no row lock
         # until the writes at the end, so nothing waits on Stripe but another
-        # run for this payment. Released by COMMIT, or by rollback on any death.
+        # run for this entitlement. Released by COMMIT, or by rollback on any death.
         my $txn = $raw->begin;
         $raw->query( 'SELECT pg_advisory_xact_lock(hashtextextended(?, 0))',
-            "instalment_schedule:$id" );
-        my $done = $raw->select( 'payments', ['stripe_schedule_id'], { id => $id } )
-            ->hash->{stripe_schedule_id};
-        return $stripe_schedule_id = $done if $done;
+            "instalment_schedule:$eid" );
+        if ( my $done = __PACKAGE__->instalment_schedule_of( $raw, $eid ) ) { return $done }
 
-        # The customer the first charge was made against, and the card it saved.
+        # The customer the charge was made against, and the card it saved.
         my $intent = $client->retrieve_payment_intent($stripe_payment_intent_id);
         my $customer = $intent->{customer}
-            or die "instalment 1 of payment $id has no customer to bill\n";
+            or die "payment $id has no customer to bill\n";
         my $card = $intent->{payment_method}
-            or die "instalment 1 of payment $id saved no card\n";
+            or die "payment $id saved no card\n";
 
-        my $description = $meta->{instalment_description} // 'Program Enrollment';
-        my $schedule = $self->_schedule_at_stripe( $client, $customer, $pct,
+        my $description = $raw->select( 'offers', 'name',
+            { id => $entitlement->offer_version($raw)->offer_id } )->array->[0];
+        my $schedule = $self->_schedule_at_stripe( $client, $customer, $pct, $eid,
             scalar @{ instalment_phases( \@remaining, lc $currency, $description ) } );
         $schedule ||= $client->create_subscription_schedule( {
             %{ instalment_schedule_params( {
@@ -265,37 +287,33 @@ field $_stripe_client = undef;
                 revenue_share_pct => $pct,
                 currency          => lc $currency,
                 description       => $description,
+                cadence           => $plan->{cadence},
+                entitlement_id    => $eid,
                 product           => $client->create_product({
-                    name                   => $description,
-                    'metadata[payment_id]' => $id,
-                    _idempotency_key       => "instalment_schedule:$id:product",
+                    name                       => $description,
+                    'metadata[entitlement_id]' => $eid,
+                    _idempotency_key           => "instalment_schedule:$eid:product",
                 })->{id},
                 instalments       => \@remaining,
             } ) },
-            # So an invoice that beats the COMMIT below is retried, not
-            # ignored (Webhooks::_schedule_not_recorded).
-            'metadata[payment_id]' => $id,
-            _idempotency_key => "instalment_schedule:$id:schedule",
+            _idempotency_key => "instalment_schedule:$eid:schedule",
         } );
 
-        # Recorded in one transaction with the rows it bills. A crash before the
-        # COMMIT leaves a schedule at Stripe with no record here; the retry's
-        # Idempotency-Key gets that same schedule back, so it is recorded once.
-        $raw->update( 'payments', { stripe_schedule_id => $schedule->{id} },
-            { id => $id } );
-
+        # Recorded in one transaction. A crash before the COMMIT leaves a
+        # schedule at Stripe with no record here; the retry's Idempotency-Key
+        # gets that same schedule back, so it is recorded once.
         my $seq = 1;
         for my $part (@remaining) {
-            $seq++;
             $raw->insert( 'payments', {
                 user_id            => $user_id,
                 amount_cents       => $part->{amount_cents},
                 currency           => $currency,
                 status             => 'pending',
-                instalment_seq     => $seq,
-                instalment_count   => $instalment_count,
+                instalment_seq     => ++$seq,
+                instalment_count   => scalar @parts,
                 due_date           => $part->{due_date},
                 stripe_schedule_id => $schedule->{id},
+                entitlement_id     => $eid,
                 metadata           => { -json => {
                     instalment_of     => $id,
                     tenant_slug       => $slug,
@@ -312,31 +330,84 @@ field $_stripe_client = undef;
         }
 
         $txn->commit;
-        $stripe_schedule_id = $schedule->{id};
         return $schedule->{id};
     }
 
-    # A live schedule at Stripe made for this payment, or undef. Each carries
-    # metadata[payment_id] (schedule_remaining_instalments) -- but it is on the
-    # seller's own account, where the seller can write that too, so it is
-    # adopted only if it takes our fee in as many phases as we would send.
+    # Cancel $entitlement's instalment schedule, made from this cart charge.
+    # The entitlement is appended to metadata.cancelled_schedules first, so a
+    # cancel Stripe then reports is known as Registry's own; a schedule
+    # already over is not asked again. Safe to repeat: the job retries it.
+    # The schedule id, or undef when none was made.
+    method cancel_instalment_schedule ( $db, $entitlement ) {
+        my $raw = ($db isa Registry::DAO) ? $db->db : $db;
+        my $eid = $entitlement->id;
+        die "entitlement $eid was not made by payment $id\n"
+            unless ( $entitlement->payment_id // '' ) eq $id;
+
+        $raw->query( q{
+            UPDATE payments
+               SET metadata = jsonb_set( COALESCE(metadata, '{}'), '{cancelled_schedules}',
+                       COALESCE(metadata->'cancelled_schedules', '[]') || to_jsonb(?::text) )
+             WHERE id = ?
+               AND NOT COALESCE(metadata->'cancelled_schedules', '[]') @> jsonb_build_array(?::text)
+        }, $eid, $id, $eid );
+
+        my $schedule = __PACKAGE__->instalment_schedule_of( $raw, $eid ) or return undef;
+        my $client   = $self->stripe_client;
+        return $schedule
+            if ( $client->retrieve_subscription_schedule($schedule)->{status} // '' )
+                =~ /\A(?:canceled|completed|released)\z/;
+        $client->cancel_subscription_schedule( $schedule, instalment_cancel_params($eid) );
+        return $schedule;
+    }
+
+    # The cancel request for entitlement $eid's schedule. No proration and no
+    # final invoice: what a family is owed back is the refund policy's call
+    # on what it paid, not a credit Stripe works out.
+    sub instalment_cancel_params ( $eid ) {
+        return { prorate => 'false', invoice_now => 'false', _idempotency_key => "cancel_schedule:$eid" };
+    }
+
+    # The Stripe schedule billing entitlement $eid's instalments, or undef.
+    sub instalment_schedule_of ( $class, $db, $eid ) {
+        my $row = $db->query( q{
+            SELECT stripe_schedule_id FROM payments
+             WHERE entitlement_id = ? AND stripe_schedule_id IS NOT NULL LIMIT 1
+        }, $eid )->array;
+        return $row && $row->[0];
+    }
+
+    # This cart charge's line for $entitlement: its child in the session it
+    # holds (a child is in a session at most once per cart).
+    method _line_for ( $db, $entitlement ) {
+        my %held = map { $_ => 1 } $entitlement->unit_resource_ids($db);
+        my $child = $entitlement->holder_family_member_id // return undef;
+        my ($line) = grep { ( $_->{family_member_id} // '' ) eq $child && $held{ $_->{resource_id} // '' } }
+            @{ ( $metadata // {} )->{lines} // [] };
+        return $line;
+    }
+
+    # A live schedule at Stripe made for entitlement $eid, or undef. Each
+    # carries metadata[entitlement_id] (schedule_instalments_for) -- but it is
+    # on the seller's own account, where the seller can write that too, so it
+    # is adopted only if it takes our fee in as many phases as we would send.
     # shortcut: phase amounts are not compared, as a listed phase's price is an
     # id; expand data.phases.items.price if a seller ever games the count.
     # shortcut: reads the customer's first 100 schedules; page through them
     # if one customer ever holds more.
-    method _schedule_at_stripe ($client, $customer, $pct, $phase_count) {
+    method _schedule_at_stripe ($client, $customer, $pct, $eid, $phase_count) {
         my $listed = $client->list_subscription_schedules(
             { customer => $customer, limit => 100 } );
         my $ours = sprintf '%.2f', $pct;
         for my $s ( @{ $listed->{data} // [] } ) {
-            next unless ( $s->{metadata}{payment_id} // '' ) eq $id
+            next unless ( $s->{metadata}{entitlement_id} // '' ) eq $eid
                 && ( $s->{status} // '' ) !~ /\A(?:canceled|released)\z/;
             return $s
                 if sprintf( '%.2f', $s->{default_settings}{application_fee_percent} // 0 ) eq $ours
                 && @{ $s->{phases} // [] } == $phase_count;
             warn "not adopting Stripe schedule "
                 . ( ( $s->{id} // "" ) =~ s/([^\x20-\x7e])/sprintf '\\x{%x}', ord $1/ger )
-                . " for payment $id: its fee or phases are not ours\n";
+                . " for entitlement $eid: its fee or phases are not ours\n";
         }
         return undef;
     }
@@ -460,24 +531,23 @@ field $_stripe_client = undef;
         }, $why, $intent, $invoice_id, $id, $class->_legal_predecessors('failed') );
     }
 
-    # Is $payment_id (compared as text: it need not be a uuid) a paid first
-    # instalment still awaiting its schedule?
-    sub instalment_awaiting_schedule ( $class, $db, $payment_id ) {
+    # Is $entitlement_id (compared as text: it need not be a uuid) an
+    # instalments entitlement whose cart charge is paid, still awaiting its
+    # schedule?
+    sub instalment_awaiting_schedule ( $class, $db, $entitlement_id ) {
         return $db->query( q{
-            SELECT 1 FROM payments
-             WHERE id::text = ? AND instalment_seq = 1 AND status = 'completed'
-               AND stripe_schedule_id IS NULL
-        }, $payment_id )->rows;
+            SELECT 1 FROM entitlements e JOIN payments p ON p.id = e.payment_id
+             WHERE e.id::text = ? AND e.plan_kind = 'instalments' AND p.status = 'completed'
+               AND NOT EXISTS ( SELECT 1 FROM payments o
+                                 WHERE o.entitlement_id = e.id AND o.stripe_schedule_id IS NOT NULL )
+        }, $entitlement_id )->rows;
     }
 
     # The schedules whose instalment set still has a row owed.
     sub schedules_with_owed_instalments ( $class, $db ) {
         return $db->query( q{
-            SELECT p.stripe_schedule_id FROM payments p
-             WHERE p.instalment_seq = 1 AND p.stripe_schedule_id IS NOT NULL
-               AND EXISTS ( SELECT 1 FROM payments o
-                             WHERE o.stripe_schedule_id = p.stripe_schedule_id
-                               AND o.status IN ('pending', 'failed') )
+            SELECT DISTINCT stripe_schedule_id FROM payments
+             WHERE stripe_schedule_id IS NOT NULL AND status IN ('pending', 'failed')
         } )->arrays->flatten;
     }
 
