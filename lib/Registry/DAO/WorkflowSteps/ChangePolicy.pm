@@ -11,7 +11,6 @@ class Registry::DAO::WorkflowSteps::ChangePolicy :isa(Registry::DAO::WorkflowSte
 
     # Whole and at most nine digits, so every accepted value fits an integer column.
     my $WHOLE = qr/\A[0-9]{1,9}\z/;
-    my $UUID  = qr/\A[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\z/i;
 
     method process ( $db, $form_data, $run = undef ) {
         my %f = map { $_ => ( ref $form_data->{$_} ? '' : $form_data->{$_} // '' ) }
@@ -58,11 +57,11 @@ class Registry::DAO::WorkflowSteps::ChangePolicy :isa(Registry::DAO::WorkflowSte
 
         my $targets = $policy->{targets};
         if ( ref $targets eq 'HASH' ) {
-            my $ids = $targets->{offer_ids};
-            # Unqualified, so only this schema's offers are found.
+            my $ids     = $targets->{offer_ids};
+            my %current = map { $_->id => 1 } $class->current_offers($db)->@*;
             return 'Choose the offers a change may move to from your offers'
                 unless keys %$targets == 1 && ref $ids eq 'ARRAY' && @$ids
-                && !grep { !( defined $_ && !ref $_ && /$UUID/ && Registry::DAO::Offer->find( $db, { id => $_ } ) ) } @$ids;
+                && !grep { !( defined $_ && !ref $_ && $current{$_} ) } @$ids;
         }
         else {
             return 'A change can move to the same offer, the same program, or a list of your offers'
@@ -80,10 +79,15 @@ class Registry::DAO::WorkflowSteps::ChangePolicy :isa(Registry::DAO::WorkflowSte
         return 'A change window needs an offer bound to an occurrence or covering a class';
     }
 
-    # This schema's offers, which a window's targets may list.
+    # This schema's offers with a current version: those a window's targets may list.
+    # Unqualified, so only this schema's offers are found.
+    sub current_offers ( $class, $db ) {
+        return [ grep { $_->current_version($db) } Registry::DAO::Offer->find( $db, {}, { -asc => 'name' } ) ];
+    }
+
     method prepare_template_data ( $db, $run, $params = {} ) {
         return { %{ $run->data // {} },
-            target_offers => [ map { { id => $_->id, name => $_->name } } Registry::DAO::Offer->find( $db, {}, { -asc => 'name' } ) ] };
+            target_offers => [ map { { id => $_->id, name => $_->name } } __PACKAGE__->current_offers($db)->@* ] };
     }
 }
 

@@ -11,6 +11,7 @@ use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Test::Registry::Helpers qw( import_all_workflows join_tenant publish_offer );
 use Registry::DAO;
+use Registry::DAO::Offer;
 use Registry::DAO::OfferVersion;
 use Registry::DAO::WorkflowSteps::ChooseOfferAndUnits;
 use Registry::Utility::WorkflowProcessor;
@@ -188,6 +189,37 @@ subtest 'offer_ids naming an unknown offer is refused' => sub {
     my $publish = $tdao->find( Workflow => { slug => 'offer-publishing' } )->get_step( $tdb, { slug => 'publish' } );
     is errors_of( $publish->process( $tdb, { action => 'publish' }, $run ) ),
         'Choose the offers a change may move to from your offers', 'and so does publish';
+};
+
+subtest 'a retired offer as a change target is refused' => sub {
+    my $retired = publish_offer( $dao, 'dance_studio', $admin, {
+        resource        => { resource_mode => 'class', class_project_id => $class->id },
+        'offer-basics'  => { offer_name => 'Retired ballet' },
+        'offer-price'   => { price_cents => 2000, currency => 'usd', units_per_acceptance => 1, per_booking_cap => 1 },
+        'expiry-policy' => { expiry => 'end_of_occurrence' },
+    } );
+    # No interface retires a version without a successor; as the pricing probe does.
+    $tdb->query( 'UPDATE offer_versions SET superseded_at = now() WHERE id = ?', $retired->id );
+    my $draft_only = Registry::DAO::Offer->create( $tdb, { name => 'Never published' } );
+
+    for my $case ( [ $retired->offer_id, 'a retired offer' ], [ $draft_only->id, 'an offer never published' ] ) {
+        my ( $id, $label ) = @$case;
+        my ( $run, $result ) = walk( 'offer-publishing',
+            'change-policy' => { %WINDOW, targets => 'offer_ids', offer_ids => [$id] } );
+        is errors_of( $result->{'change-policy'} ), 'Choose the offers a change may move to from your offers',
+            "the step refuses $label";
+        ok !published($run), 'and nothing is published';
+
+        $run->update_data( $tdb, { change_policy => { kind => 'window', window_hours => 48, fee_cents => 1000,
+            targets => { offer_ids => [$id] }, price_difference => 'charge_only', approval => 'none' } } );
+        my $publish = $tdao->find( Workflow => { slug => 'offer-publishing' } )->get_step( $tdb, { slug => 'publish' } );
+        is errors_of( $publish->process( $tdb, { action => 'publish' }, $run ) ),
+            'Choose the offers a change may move to from your offers', 'and so does publish';
+
+        my $change = $tdao->find( Workflow => { slug => 'offer-publishing' } )->get_step( $tdb, { slug => 'change-policy' } );
+        ok !( grep { $_->{id} eq $id } $change->prepare_template_data( $tdb, $run )->{target_offers}->@* ),
+            "and the change screen does not list $label";
+    }
 };
 
 done_testing;
