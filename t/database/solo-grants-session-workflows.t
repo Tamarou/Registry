@@ -118,4 +118,19 @@ subtest 'refuses when v2 and v3 terms differ' => sub {
     undef $db;
 };
 
+subtest 'refuses when v2 and v3 fees differ' => sub {
+    my ( $pg, $db ) = at_parent();
+    my $v2 = solo_current($db);
+    # Stands in for a migration that copied v2's plan wrongly: v3's fee is 3%.
+    $db->query( q{CREATE FUNCTION refee() RETURNS trigger LANGUAGE plpgsql AS $$
+                  BEGIN NEW.fraction := 0.03; RETURN NEW; END $$} );
+    $db->query( q{CREATE TRIGGER refee BEFORE INSERT ON registry.offer_version_payment_plans FOR EACH ROW
+                  WHEN (NEW.offer_version_id = md5('solo-grants-session-workflows/version')::uuid)
+                  EXECUTE FUNCTION refee()} );
+    my $err = capture_stderr { dies_ok { deploy($pg) } 'the deploy fails' };
+    like $err, qr/Solo v3 must keep v2's price, fee and policies/, 'naming why';
+    is solo_current($db)->{id}, $v2->{id}, 'Solo v2 is still current';
+    undef $db;
+};
+
 done_testing;
