@@ -117,4 +117,42 @@ subtest 'offer_ids limits which offers count' => sub {
     is_deeply $unmet->(), [], 'and so does a sibling holding a listed offer';
 };
 
+subtest 'before is exclusive' => sub {
+    my ( $s, $regular, $sibling, $early ) = priced_session();
+    my ( $parent, $kid1 ) = family();
+    is_deeply choosable( $s, holder_family_member_id => $kid1, at => $EARLY ), [ $regular->id ],
+        'at the deadline itself only the regular rate is left';
+    is_deeply choosable( $s, holder_family_member_id => $kid1, at => '2027-02-28T19:00:00-05:00' ),
+        [ $regular->id ], 'the same instant in another offset is past it too';
+    is_deeply choosable( $s, holder_family_member_id => $kid1, at => '2027-02-28T18:59:59-05:00' ),
+        [ $early->id, $regular->id ], 'a second before it is not';
+};
+
+subtest 'the holder itself does not qualify' => sub {
+    my ( $s, $regular, $sibling ) = priced_session();
+    my ( $parent, $kid1 ) = family();
+    hold( other_version(), $kid1, $parent );
+    is scalar $sibling->unmet_conditions( $db, { holder_family_member_id => $kid1, at => $AT } )->@*, 1,
+        "kid 1's own entitlement does not give kid 1 the sibling rate";
+};
+
+subtest 'an ended sibling entitlement does not qualify' => sub {
+    my ( $s, $regular, $sibling ) = priced_session();
+    my ( $parent, $kid1, $kid2 ) = family();
+    hold( other_version(), $kid1, $parent )->end( $db, 'refunded', 're_oc_ended', '2027-01-15T00:00:00Z' );
+    is scalar $sibling->unmet_conditions( $db, { holder_family_member_id => $kid2, at => $AT } )->@*, 1,
+        'kid 2 no longer meets the sibling condition';
+};
+
+subtest 'holder_is_offerer is never met here' => sub {
+    my $s       = make_session($db);
+    my $version = session_offer( $db, $s, conditions => [ { kind => 'holder_is_offerer' } ] );
+    my ( $parent, $kid1, $kid2 ) = family();
+    hold( other_version(), $kid1, $parent );
+    is scalar $version->unmet_conditions( $db,
+        { holder_family_member_id => $kid2, at => $AT, cart_offer_ids => [ $version->offer_id ] } )->@*, 1,
+        'it is unmet at checkout';
+    is_deeply choosable( $s, holder_family_member_id => $kid2 ), [], 'so nothing on the session is choosable';
+};
+
 done_testing;
