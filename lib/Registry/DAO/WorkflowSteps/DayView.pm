@@ -71,7 +71,7 @@ class Registry::DAO::WorkflowSteps::DayView :isa(Registry::DAO::WorkflowSteps::R
                 SELECT e.id, coalesce(up.name, u.username) AS booker, count(*) AS seats,
                        count(*) / ov.units_per_acceptance AS count,
                        EXISTS (SELECT 1 FROM entitlement_uses x
-                                WHERE x.entitlement_id = e.id AND x.occurrence_id = eu.resource_id) AS present
+                                WHERE x.entitlement_id = e.id AND x.event_id = ? AND x.mark = 'present') AS present
                   FROM entitlement_units eu
                   JOIN entitlements e ON e.id = eu.entitlement_id
                   JOIN offer_versions ov ON ov.id = e.offer_version_id
@@ -80,7 +80,7 @@ class Registry::DAO::WorkflowSteps::DayView :isa(Registry::DAO::WorkflowSteps::R
                  WHERE eu.resource_id = ? AND $in_effect
                  GROUP BY e.id, eu.resource_id, up.name, u.username, ov.units_per_acceptance
                  ORDER BY booker
-            }, $o->{id} )->hashes->to_array;
+            }, $resource->event_id, $o->{id} )->hashes->to_array;
             push $page{occurrences}->@*, $o;
         }
         return \%page;

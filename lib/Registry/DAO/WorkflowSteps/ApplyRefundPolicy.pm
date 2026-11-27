@@ -34,12 +34,9 @@ class Registry::DAO::WorkflowSteps::ApplyRefundPolicy :isa(Registry::DAO::Workfl
 
         my ( $cutoff, $until ) = defined $policy->{cutoff_at}
             ? ( $policy->{cutoff_at}, $policy->{cutoff_at} )
-            : ( $db->query( q{
-                  SELECT min(ev.time) - make_interval(hours => ?)
-                    FROM entitlement_units u JOIN resources r ON r.id = u.resource_id JOIN events ev ON ev.id = r.event_id
-                   WHERE u.entitlement_id = ?
-              }, $policy->{cutoff_hours}, $entitlement->id )->array->[0],
-                "$policy->{cutoff_hours} hours before the class starts" );
+            : ( $db->query( 'SELECT min(s) - make_interval(hours => ?) FROM unnest(?::timestamptz[]) s',
+                  $policy->{cutoff_hours}, [ map { $_->[0] } $entitlement->occurrence_windows($db)->@* ] )->array->[0],
+                "$policy->{cutoff_hours} hours before it starts" );
         return "This booking's offer gives a full refund only until $until, which has passed"
             unless $db->query( 'SELECT coalesce(?::timestamptz, clock_timestamp()) <= ?::timestamptz', $at, $cutoff )
                 ->array->[0];

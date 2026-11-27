@@ -7,6 +7,7 @@ use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
 use Test::More;
+use Test::Registry::Fork qw( forget_inherited_handles reap );
 use POSIX ();
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
@@ -17,6 +18,9 @@ use Registry::DAO::Offer;
 use Registry::DAO::OfferVersion;
 use Registry::DAO::Resource;
 use Registry::Utility::WorkflowProcessor;
+
+# A plan that is not instalments carries none of their fields.
+my @NOT_INSTALMENTS = ( count => undef, cadence => undef, surcharge_pct => undef );
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -142,6 +146,7 @@ sub publish_while_capacity_lowers ( $run, $capacity, @resource_ids ) {
     pipe( my $parent_reads, my $child_writes ) or die "pipe: $!";
     my $pid = fork() // die "fork: $!";
     unless ($pid) {
+        forget_inherited_handles();
         close $_ for $parent_writes, $parent_reads;
         readline $child_reads;
         my $bdao    = Registry::DAO->new( url => $uri, schema => 'clay_studio' );
@@ -165,7 +170,7 @@ sub publish_while_capacity_lowers ( $run, $capacity, @resource_ids ) {
     $parent_writes->flush;
     my $blocked = blocked_behind( $holder, $pid );
     $tx->commit;
-    waitpid $pid, 0;
+    reap($pid);
     return ( $blocked, do { local $/; readline $parent_reads } );
 }
 
@@ -182,7 +187,7 @@ subtest 'admin publishes a one time priced offer version' => sub {
     is $v->currency,             'usd',      'in the stated currency';
     is $v->units_per_acceptance, 2,          'two units per acceptance';
     is $v->per_booking_cap,      3,          'and a per-booking cap of three';
-    is_deeply $v->payment_plans($tdb), [ { id => 'one_time', kind => 'one_time', fraction => undef } ],
+    is_deeply $v->payment_plans($tdb), [ { id => 'one_time', kind => 'one_time', fraction => undef, @NOT_INSTALMENTS } ],
         'paid for once';
     is_deeply $v->policies,
         { refund => { kind => 'none' }, change => { kind => 'none' }, use => { kind => 'none' }, expiry => { kind => 'never' } },
@@ -431,6 +436,7 @@ subtest 'double publish leaves one version' => sub {
     pipe( my $child_reads, my $parent_writes ) or die "pipe: $!";
     my $pid = fork() // die "fork: $!";
     unless ($pid) {
+        forget_inherited_handles();
         close $parent_writes;
         readline $child_reads;
         my $bdao = Registry::DAO->new( url => $uri, schema => 'clay_studio' );
@@ -458,7 +464,7 @@ subtest 'double publish leaves one version' => sub {
     my $blocked = blocked_behind( $holder, $pid );
     ok $blocked, 'the second submission waits on the first one\'s lock';
     $tx->commit;
-    waitpid $pid, 0;
+    reap($pid);
     is $? >> 8, 0, 'the concurrent submission completes';
     is published_count(), $before + 1, 'two concurrent submissions publish one version';
 };
@@ -539,7 +545,7 @@ subtest 'publish offer helper drives the workflow' => sub {
         'offer-price'  => { price_cents => 900, currency => 'usd', units_per_acceptance => 1, per_booking_cap => 1 },
     } );
     is $version->price_cents, 900, 'the helper returns the version it published';
-    is_deeply $version->payment_plans($tdb), [ { id => 'one_time', kind => 'one_time', fraction => undef } ],
+    is_deeply $version->payment_plans($tdb), [ { id => 'one_time', kind => 'one_time', fraction => undef, @NOT_INSTALMENTS } ],
         'with the one-time plan its default offers';
     is $tdb->query( q{
         SELECT count(*) FROM workflow_runs r JOIN workflows w ON w.id = r.workflow_id
@@ -572,8 +578,8 @@ subtest 'platform publishes through the same workflow' => sub {
     };
     is_deeply $classes->($rdb), $classes->($tdb), 'through the same steps and step classes as a tenant';
 
-    is platform_solo_offer_version_id($dao), '9bc4069a-f0a7-0026-3a84-aeb0d0732995',
-        'the platform\'s current Solo version is solo-grants-workflow-set\'s';
+    is platform_solo_offer_version_id($dao), '2f570c64-dad4-c0aa-5848-3219eb752c76',
+        'the platform\'s current Solo version is solo-grants-session-workflows\'';
 };
 
 subtest 'publish capacity check refuses missing units without a warning' => sub {

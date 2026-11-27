@@ -10,10 +10,9 @@ use App::Sqitch;
 use Capture::Tiny qw( capture );
 use Test::PostgreSQL;
 use Mojo::Pg;
-use Test::Registry::Offers qw( offer_terms );
+use Test::Registry::Offers qw( published_as_migrated );
 use Registry::DAO::Tenant;
 use Registry::DAO::Resource;
-use Registry::DAO::Offer;
 use Registry::DAO::Entitlement;
 
 my $CHANGE   = 'workflow-run-entitlements';
@@ -105,19 +104,19 @@ subtest 'backfill creates no second product-design run right' => sub {
 };
 
 # A platform set version buying run rights (ADR 004 ruling (a)), as 6c2f will
-# publish through offer-publishing; built here to prove the set path.
+# publish through offer-publishing; built here to prove the set path. Its id.
 my $made = 0;
 sub run_resource ($slug) {
     my ($id) = $db->query( 'SELECT id FROM registry.resources WHERE name = ?', "run:$slug" )->arrays->flatten->each;
     return $id // Registry::DAO::Resource->create( $db, { name => "run:$slug", kind => 'unbounded' } )->id;
 }
 sub run_set (@slugs) {
-    return Registry::DAO::Offer->create( $db, { name => 'Run set ' . ++$made } )->draft( $db,
-        offer_terms( undef, resource_ids => [ map { run_resource($_) } @slugs ], price_cents => 0 ) )->publish($db);
+    return published_as_migrated( $db, 'Run set ' . ++$made,
+        resource_ids => [ map { run_resource($_) } @slugs ], price_cents => 0 );
 }
 sub grant ( $tenant, $version, %period ) {
     return Registry::DAO::Entitlement->create( $db, {
-        holder_tenant_id => $tenant->id, offer_version_id => $version->id,
+        holder_tenant_id => $tenant->id, offer_version_id => $version,
         payment_plan_id  => 'pay',       starts_at        => $PAST, %period,
     } );
 }
@@ -143,10 +142,9 @@ subtest 'run right granted by a non platform tenant ignored' => sub {
     my $own    = own(q{self_granting});
     $own->insert( 'tenants', { id => $studio->id, name => $studio->name, slug => $studio->slug } );
     my $r = Registry::DAO::Resource->create( $own, { name => 'run:program-creation', kind => 'unbounded' } );
-    my $v = Registry::DAO::Offer->create( $own, { name => 'Own run' } )
-        ->draft( $own, offer_terms( $r->id, price_cents => 0 ) )->publish($own);
+    my $v = published_as_migrated( $own, 'Own run', resource_id => $r->id, price_cents => 0 );
     Registry::DAO::Entitlement->create( $own,
-        { holder_tenant_id => $studio->id, offer_version_id => $v->id, payment_plan_id => 'pay', starts_at => $PAST } );
+        { holder_tenant_id => $studio->id, offer_version_id => $v, payment_plan_id => 'pay', starts_at => $PAST } );
     ok !may_run( $studio->id, 'program-creation' ), 'a right the studio records in its own schema';
     ok !Registry::DAO::Entitlement->may_run( $own, $studio->id, 'program-creation' ), 'even on its own connection';
 };
@@ -205,11 +203,11 @@ subtest 'a tenant cloned after deploy still writes after revert' => sub {
     my $own = own(q{xregistry});
     $own->insert( 'tenants', { id => $late->id, name => $late->name, slug => $late->slug } );
     my $r = Registry::DAO::Resource->create( $own, { name => 'own', kind => 'unbounded' } );
-    my $v = Registry::DAO::Offer->create( $own, { name => 'Own' } )
-        ->draft( $own, offer_terms( $r->id, price_cents => 0 ) )->publish($own);
+    # Written as this test's partial deploy stands; OfferVersion follows the head schema.
+    my $v = published_as_migrated( $own, 'Own', resource_id => $r->id, price_cents => 0 );
     lives_ok {
         Registry::DAO::Entitlement->create( $own,
-            { holder_tenant_id => $late->id, offer_version_id => $v->id, payment_plan_id => 'pay', starts_at => $PAST } )
+            { holder_tenant_id => $late->id, offer_version_id => $v, payment_plan_id => 'pay', starts_at => $PAST } )
     } 'an entitlement is recorded';
     is_deeply $db->query(q{SELECT n.nspname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
                             WHERE p.proname LIKE '%one_run_right'})->arrays->flatten->to_array, [],

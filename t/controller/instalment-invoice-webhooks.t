@@ -10,6 +10,7 @@ use utf8;
 use lib qw(lib t/lib);
 use experimental qw(defer signatures);
 use Test::More import => [qw( done_testing is ok like is_deeply subtest diag )];
+use Test::Registry::Fork qw( forget_inherited_handles reap );
 defer { done_testing };
 
 use Test::Registry::DB;
@@ -347,6 +348,7 @@ subtest 'concurrent payment_failed and invoice.paid for one invoice mark one row
     pipe( my $parent_reads, my $child_writes ) or die "pipe: $!";
     my $pid = fork() // die "fork: $!";
     unless ($pid) {
+        forget_inherited_handles();
         close $parent_reads;
         my $ok = eval {
             # The Mojo::Pg must outlive the handle -- ->db holds a weak reference.
@@ -376,7 +378,7 @@ subtest 'concurrent payment_failed and invoice.paid for one invoice mark one row
     close $child_writes;
     readline $parent_reads;
     deliver( 'invoice.payment_failed', invoice( 'in_race', 'pi_race' ) );
-    waitpid $pid, 0;
+    reap($pid);
 
     is $? >> 8, 0, 'the failed delivery waited on the paid transaction';
     is_deeply statuses(), [qw( completed completed pending )],

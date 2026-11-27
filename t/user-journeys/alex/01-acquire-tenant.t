@@ -52,10 +52,10 @@ my ($signup_wf) = $dao->find(Workflow => { slug => 'tenant-signup' });
 ok $signup_wf, 'tenant-signup workflow present in registry schema'
     or BAIL_OUT('tenant-signup workflow missing -- cannot walk funnel');
 
-# solo-grants-workflow-set publishes Solo v2, the platform's one current offer to tenants.
+# solo-grants-session-workflows publishes Solo v3, the platform's one current offer to tenants.
 # Nobody chooses a plan any more, so this is no longer an input to the walk --
 # it is what the tenant must come out holding. See #268.
-my $SOLO_V2 = '9bc4069a-f0a7-0026-3a84-aeb0d0732995';    # solo-grants-workflow-set's
+my $SOLO_V3 = '2f570c64-dad4-c0aa-5848-3219eb752c76';    # solo-grants-session-workflows'
 
 # ---------------------------------------------------------------------------
 # App setup: pin the app dao to the registry-context DAO so the workflow
@@ -309,7 +309,7 @@ subtest 'tenant row is billable' => sub {
     )->hash;
     ok $tenant_row, 'tenant row accessible for billing assertions';
 
-    is platform_entitlement_terms( $db, $slug )->{id}, $SOLO_V2,
+    is platform_entitlement_terms( $db, $slug )->{id}, $SOLO_V3,
         'tenant holds an entitlement to the platform offer that is on sale';
 
     ok !exists $tenant_row->{$_}, "no $_: the entitlement is what it holds, not a subscription"

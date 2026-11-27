@@ -48,8 +48,8 @@ my $plans = $step->prepare_pricing_data($db, $run)->{pricing_plans};
 subtest 'the signup page offers exactly the published Solo version' => sub {
     is_deeply [ map { $_->{plan_name} } @$plans ], ['Solo'], 'Solo alone is on offer'
         or diag 'got: ' . join( ', ', map { $_->{plan_name} } @$plans );
-    is $plans->[0]{id}, '9bc4069a-f0a7-0026-3a84-aeb0d0732995',
-        'as the version solo-grants-workflow-set publishes';
+    is $plans->[0]{id}, '2f570c64-dad4-c0aa-5848-3219eb752c76',
+        'as the version solo-grants-session-workflows publishes';
 };
 
 subtest 'an unpublished offer cannot be selected' => sub {

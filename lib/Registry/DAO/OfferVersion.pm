@@ -9,6 +9,7 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
     use Carp qw( croak );
     use Scalar::Util qw( blessed );
     use Mojo::JSON qw( to_json );
+    use DateTime;
     use Registry::DAO::Resource;
 
     field $id :param :reader;
@@ -42,7 +43,7 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
              WHERE r.id = ? OR e.project_id = ?
                 OR r.id IN (SELECT resource_id FROM offer_version_resources WHERE offer_version_id = ?)
              ORDER BY e.time, r.id
-        }, $resource_id, $class_project_id, $id )->hashes
+        }, $resource_id, $class_project_id, $id )->expand->hashes
             ->map( sub { Registry::DAO::Resource->new(%$_) } )->to_array;
     }
 
@@ -145,52 +146,91 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
 
     # The declared policy shapes: policy => kind => the field sets that kind
     # may carry, each field with its check. A policy must match one field set
-    # exactly; anything else is refused, never guessed at. A new kind arrives
-    # as a new entry here and the workflow step that applies it.
-    my $whole   = sub ($v) { defined $v && !ref $v && $v =~ /\A[0-9]+\z/ };
+    # exactly; anything else is refused, never guessed at. An optional field's
+    # check accepts its absence. A new kind arrives as a new entry here and the
+    # workflow step that applies it.
+    my $whole    = sub ($v) { defined $v && !ref $v && $v =~ /\A[0-9]+\z/ };
+    # Day and hour counts stop at ten years' worth, so no later cast overflows.
+    my $capped   = sub ($v) { $whole->($v) && length $v <= 4 && $v <= 3650 };
+    my $hours    = sub ($v) { $whole->($v) && length $v <= 5 && $v <= 87600 };
+    my $positive = sub ($v) { $capped->($v) && $v > 0 };
+    # An ISO 8601 instant with its offset that names a real date and time, as
+    # Postgres will read it: DateTime refuses 2027-02-30 and 25:00, and Postgres
+    # refuses offsets beyond 15:59.
     my $instant = sub ($v) {
-        defined $v && !ref $v
-            && $v =~ /\A\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d)?(?:Z|[+-]\d\d:\d\d)\z/;
+        return !!0 unless defined $v && !ref $v && $v =~ /\A
+            ([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2})(?::([0-9]{2}))?
+            (?:Z|[+-]([0-9]{2}):([0-9]{2}))\z/x;
+        my ( $y, $mo, $d, $h, $mi, $sec, $oh, $om ) = ( $1, $2, $3, $4, $5, $6 // 0, $7 // 0, $8 // 0 );
+        return !!0 if $oh > 15 || $om > 59;
+        return !!eval {
+            DateTime->new( year => $y, month => $mo, day => $d, hour => $h, minute => $mi, second => $sec );
+        };
     };
+    my $uuid = sub ($v) {
+        defined $v && !ref $v && $v =~ /\A[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\z/i;
+    };
+    my $offer_ids = sub ($v) { ref $v eq 'ARRAY' && @$v && !grep { !$uuid->($_) } @$v };
+    my $one_of    = sub (@ok) { sub ($v) { defined $v && !ref $v && grep { $_ eq $v } @ok } };
+    my $optional  = sub ($check) { sub ($v) { !defined $v || $check->($v) } };
+    my $approval  = $optional->( $one_of->(qw( required none )) );
     my %POLICY = (
         refund => {
-            none                          => [ {} ],
-            full_until_cutoff             => [ { cutoff_hours => $whole }, { cutoff_at => $instant } ],
-            keep_fee_with_admin_exception => [ {} ],
+            none                          => [ { approval => $approval } ],
+            full_until_cutoff             => [ { cutoff_hours => $hours,   approval => $approval },
+                                               { cutoff_at    => $instant, approval => $approval } ],
+            keep_fee_with_admin_exception => [ { approval => $approval } ],
         },
         change => {
             none   => [ {} ],
             window => [ {
-                window_hours => $whole,
+                window_hours => $hours,
                 fee_cents    => $whole,
-                # shortcut: only the same offer's occurrences, the day-one rule;
-                # other targets are a new value here when a product needs them.
-                targets => sub ($v) { ( $v // '' ) eq 'same_offer' },
+                targets      => sub ($v) {
+                    ref $v eq 'HASH'
+                        ? keys %$v == 1 && $offer_ids->( $v->{offer_ids} )
+                        : $one_of->(qw( same_offer same_program ))->($v);
+                },
+                price_difference => $optional->( $one_of->(qw( charge_and_refund charge_only same_price_only )) ),
+                approval         => $approval,
             } ],
         },
-        use    => { optional_attendance => [ {} ], none  => [ {} ] },
-        expiry => { end_of_occurrence   => [ {} ], never => [ {} ] },
+        use => {
+            optional_attendance => [ {} ],
+            none                => [ {} ],
+            makeup => [ { offer_id => $uuid, credit_days => $positive, max_per_term => $optional->($positive) } ],
+        },
+        missed_payment => { keep_and_owe => [ {} ], end => [ {} ], grace => [ { days => $positive } ] },
+        expiry         => { end_of_occurrence => [ {} ], never => [ {} ] },
     );
 
-    # True when $data, less its kind, has exactly $shape's fields, each passing.
+    # True when every field of $data, less its kind, is one of $shape's and
+    # present (never null), and each of $shape's checks passes.
     my $fits = sub ( $data, $shape ) {
         my %fields = %$data;
         delete $fields{kind};
-        keys %fields == keys %$shape
-            && !grep { !$shape->{$_} || !$shape->{$_}->( $fields{$_} ) } keys %fields;
+        !grep( { !$shape->{$_} || !defined $fields{$_} } keys %fields )
+            && !grep { !$shape->{$_}->( $fields{$_} ) } keys %$shape;
     };
 
     # Conditions are declared the same way: kind => its fields' checks.
-    my $uuid = sub ($v) {
-        defined $v && !ref $v && $v =~ /\A[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\z/i;
-    };
     my %CONDITION = (
-        # The sibling rate: the holder's family holds an entitlement to offer_id.
-        family_holds_entitlement => { offer_id => $uuid },
+        # The sibling rate: the holder's family holds an entitlement to one of
+        # offer_ids, or to any offer when it is absent.
+        family_holds_entitlement => { offer_ids => $optional->($offer_ids) },
+        # The early-bird rate: chosen only until at.
+        before => { at => $instant },
         # The platform's offer to itself: only the offerer may hold it, so it
         # is not offered to tenants.
         holder_is_offerer => {},
     );
+
+    # What a refund or change policy says about approval: absent is none,
+    # since a published version cannot gain the field.
+    sub approval_for ( $class, $policy ) { $policy->{approval} // 'none' }
+
+    # How a change policy treats a price difference: absent is same_price_only.
+    sub price_difference_for ( $class, $change ) { $change->{price_difference} // 'same_price_only' }
 
     sub _check_conditions ($conditions) {
         croak 'conditions must be a list' unless ref $conditions eq 'ARRAY';
@@ -214,6 +254,10 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
         }
     }
 
+    # A payment plan's fields; the database checks each against its kind.
+    # draft writes only those a plan names; NULL is the column default.
+    my @PLAN_FIELDS = qw( id kind fraction count cadence surcharge_pct );
+
     # Appends the offer's next version number as a draft. $terms names one
     # resource_id, one class_project_id, or resource_ids: the set it buys.
     sub draft ( $class, $db, $offer_id, $terms ) {
@@ -233,9 +277,13 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
                 $terms->{currency} // 'usd',
                 $terms->@{qw( units_per_acceptance per_booking_cap )},
                 to_json($policies), to_json($conditions), $offer_id )->expand->hash;
-            $db->insert( 'offer_version_payment_plans',
-                { offer_version_id => $row->{id}, $_->%{qw( id kind fraction )} } )
-                for ( $terms->{payment_plans} // [] )->@*;
+            for my $plan ( ( $terms->{payment_plans} // [] )->@* ) {
+                my %known = map { $_ => 1 } @PLAN_FIELDS;
+                croak sprintf "payment plan '%s' has unknown field '%s'", $plan->{id} // '', $_
+                    for grep { !$known{$_} } sort keys %$plan;
+                $db->insert( 'offer_version_payment_plans', { offer_version_id => $row->{id},
+                    $plan->%{ grep { exists $plan->{$_} } @PLAN_FIELDS } } );
+            }
             $db->insert( 'offer_version_resources', { offer_version_id => $row->{id}, resource_id => $_ } )
                 for ( $terms->{resource_ids} // [] )->@*;
             $row;
@@ -243,10 +291,91 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
         return $class->new(%$row);
     }
 
-    # The plans a customer chooses between, each { id, kind, fraction }.
+    # Whether a condition is met for $ctx at instant $at, by kind; and the
+    # sentence saying it is not. Instants are compared in Postgres, never as
+    # local dates.
+    my %MET = (
+        family_holds_entitlement => sub ( $db, $condition, $ctx, $at ) {
+            my $offer_ids = $condition->{offer_ids};
+            my %counts    = map { $_ => 1 } ( $offer_ids // [] )->@*;
+            my $holder    = $ctx->{holder_family_member_id};
+            # A child's own earlier line is not a sibling's.
+            return 1 if grep { ( $_->{family_member_id} // '' ) ne ( $holder // '' )
+                    && ( !$offer_ids || $counts{ $_->{offer_id} // '' } ) } ( $ctx->{cart_lines} // [] )->@*;
+            require Registry::DAO::Entitlement;
+            # Active and not yet over at $at: a sibling bought for a session
+            # that has not started yet counts.
+            my $in_effect = Registry::DAO::Entitlement->in_effect_sql( 'e', q{tstzrange(?::timestamptz, NULL)} );
+            return $db->query( qq{
+                SELECT EXISTS (SELECT 1 FROM family_members holder
+                    JOIN family_members sibling
+                      ON sibling.family_id = holder.family_id AND sibling.id <> holder.id
+                    JOIN entitlements e ON e.holder_family_member_id = sibling.id
+                   WHERE holder.id = ? AND $in_effect
+                     AND (?::uuid[] IS NULL OR e.offer_id = ANY (?::uuid[])))
+            }, $holder, $at, $offer_ids, $offer_ids )->array->[0];
+        },
+        before => sub ( $db, $condition, $ctx, $at ) {
+            $db->query( 'SELECT ?::timestamptz < ?::timestamptz', $at, $condition->{at} )->array->[0];
+        },
+        # Only the platform's offer to itself carries it; no checkout meets it.
+        holder_is_offerer => sub { 0 },
+    );
+    my %UNMET = (
+        family_holds_entitlement => sub ($c) { 'This price is for a child whose brother or sister already holds a place here.' },
+        before                   => sub ($c) { "This price could be chosen only until $c->{at}." },
+        holder_is_offerer        => sub ($c) { 'This offer is held only by the one who offers it.' },
+    );
+
+    # $ctx->{at}, refused unless an instant with its offset: a local time
+    # names no one moment.
+    my $at_of = sub ($ctx) {
+        my $at = $ctx->{at};
+        croak 'conditions are met or not at an instant with its offset, not ' . ( $at // 'nothing' )
+            unless $instant->($at);
+        return $at;
+    };
+
+    # A sentence for each of its conditions the child in $ctx does not meet at
+    # $ctx->{at}; none when it may choose this version. $ctx names
+    # holder_family_member_id, at (an instant with its offset) and cart_lines:
+    # the earlier lines of the cart, each { family_member_id, offer_id }.
+    method unmet_conditions ( $db, $ctx ) {
+        $db = $db->db if $db isa Registry::DAO;
+        my $at = $at_of->($ctx);
+        return [ map { $UNMET{ $_->{kind} }->($_) } grep {
+            my $met = $MET{ $_->{kind} // '' }
+                or croak "unknown condition kind '" . ( $_->{kind} // '' ) . "': it cannot be evaluated";
+            !$met->( $db, $_, $ctx, $at );
+        } @$conditions ];
+    }
+
+    # Every current version buying $resource_id, each { version, unmet }, by
+    # price, offer name, then id: the child in $ctx may choose those with no
+    # unmet conditions, and the first of them is preselected.
+    sub choosable_for ( $class, $db, $resource_id, $ctx ) {
+        $db = $db->db if $db isa Registry::DAO;
+        $at_of->($ctx);
+        # Narrowed here; buys stays the one coverage rule and the final word.
+        return [ map { { version => $_, unmet => $_->unmet_conditions( $db, $ctx ) } }
+                grep { $_->buys( $db, $resource_id ) }
+                $db->query( q{
+                    SELECT v.* FROM offer_versions v JOIN offers o ON o.id = v.offer_id
+                     WHERE v.published_at IS NOT NULL AND v.superseded_at IS NULL
+                       AND ( v.resource_id = ?
+                          OR v.id IN (SELECT offer_version_id FROM offer_version_resources WHERE resource_id = ?)
+                          OR v.class_project_id IN (SELECT e.project_id FROM resources r
+                                                      JOIN events e ON e.id = r.event_id
+                                                     WHERE r.id = ?) )
+                     ORDER BY v.price_cents, o.name, v.id
+                }, ($resource_id) x 3 )->expand->hashes->map( sub { $class->new(%$_) } )->each ];
+    }
+
+    # The plans a customer chooses between, each { id, kind, fraction, count,
+    # cadence, surcharge_pct }; a field its kind does not carry is undef.
     method payment_plans ($db) {
         $db = $db->db if $db isa Registry::DAO;
-        return $db->select( 'offer_version_payment_plans', [qw( id kind fraction )],
+        return $db->select( 'offer_version_payment_plans', [@PLAN_FIELDS],
             { offer_version_id => $id }, { -asc => 'id' } )->hashes->to_array;
     }
 
@@ -263,6 +392,15 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
                 unless @{ $self->payment_plans($db) };
             croak "offer $offer_id version $version has no refund policy"
                 unless exists $policies->{refund};
+            # What a missed instalment does is never left unspecified; the
+            # database refuses it too (offer_versions_instalments_need_missed_payment).
+            croak "offer $offer_id version $version offers instalments and has no missed_payment policy"
+                if !exists $policies->{missed_payment}
+                && grep { $_->{kind} eq 'instalments' } @{ $self->payment_plans($db) };
+            # A draft stored by raw SQL or before a shape was retired never
+            # passed draft's checks; nothing is published unchecked.
+            _check_policies($policies);
+            _check_conditions($conditions);
 
             # Retired first, or the one-current index refuses the publish. Only
             # an older version is retired, so publishing a stale draft over a

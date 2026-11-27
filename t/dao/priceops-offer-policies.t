@@ -104,7 +104,7 @@ subtest 'refund policy vocabulary is pinned' => sub {
 
 subtest 'sibling condition declared as data' => sub {
     my $program = new_offer('After-school pottery');
-    my $sibling = { kind => 'family_holds_entitlement', offer_id => $program->id };
+    my $sibling = { kind => 'family_holds_entitlement', offer_ids => [ $program->id ] };
     my $v = drafted( 'Sibling rate', conditions => [$sibling] );
     is_deeply $v->conditions, [$sibling],
         "the condition 'holder's family holds an entitlement to the program' round-trips";
@@ -125,7 +125,7 @@ subtest 'published policies and plans are immutable' => sub {
     my $v = $offer->draft( $db, offer_terms( $seat->id,
         payment_plans => [ { id => 'share', kind => 'percentage_of_sales', fraction => 0.025 } ],
         policies      => { refund => { kind => 'none' } },
-        conditions    => [ { kind => 'family_holds_entitlement', offer_id => $program->id } ],
+        conditions    => [ { kind => 'family_holds_entitlement', offer_ids => [ $program->id ] } ],
     ) )->publish($db);
     my $refused = qr/offer \Q@{[ $offer->id ]}\E version 1/;
 
@@ -241,9 +241,9 @@ subtest 'unknown condition kind refused' => sub {
     my $program = new_offer('Program');
     throws_ok { drafted( 'Early bird', conditions => [ { kind => 'early_bird', before => '2027-01-01' } ] ) }
         qr/unknown condition kind 'early_bird'/, 'an undeclared condition kind is refused';
-    throws_ok { drafted( 'Sloppy sibling', conditions => [ { kind => 'family_holds_entitlement' } ] ) }
-        qr/malformed condition 'family_holds_entitlement'/, 'a known kind missing its offer is refused';
-    throws_ok { drafted( 'Not a list', conditions => { kind => 'family_holds_entitlement', offer_id => $program->id } ) }
+    throws_ok { drafted( 'Sloppy sibling', conditions => [ { kind => 'family_holds_entitlement', offer_ids => [] } ] ) }
+        qr/malformed condition 'family_holds_entitlement'/, 'a known kind naming no offers is refused';
+    throws_ok { drafted( 'Not a list', conditions => { kind => 'family_holds_entitlement', offer_ids => [ $program->id ] } ) }
         qr/conditions must be a list/, 'conditions that are not a list are refused';
     is $db->query( q{SELECT count(*) FROM offers o JOIN offer_versions v ON v.offer_id = o.id
                       WHERE o.name IN ('Early bird', 'Sloppy sibling', 'Not a list')} )->array->[0],
@@ -254,7 +254,7 @@ subtest 'published child data insert or delete refused' => sub {
     my $program = new_offer('Term');
     my $offer   = new_offer('Term sibling rate');
     my $v = $offer->draft( $db, offer_terms( $seat->id,
-        conditions => [ { kind => 'family_holds_entitlement', offer_id => $program->id } ] ) )->publish($db);
+        conditions => [ { kind => 'family_holds_entitlement', offer_ids => [ $program->id ] } ] ) )->publish($db);
     my $refused = qr/offer \Q@{[ $offer->id ]}\E version 1/;
 
     throws_ok {

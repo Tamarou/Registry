@@ -54,7 +54,7 @@ my $run        = $processor->new_run( $workflow, {
 $processor->process_workflow_run_step( $run, $workflow->get_step( $db, { slug => $_ } ), {} )
     for qw( profile users );
 $processor->process_workflow_run_step( $run, $workflow->get_step( $db, { slug => 'review' } ),
-    { offer_version => '9bc4069a-f0a7-0026-3a84-aeb0d0732995' } );    # Solo v2
+    { offer_version => '2f570c64-dad4-c0aa-5848-3219eb752c76' } );    # Solo v3
 $processor->process_workflow_run_step( $run, $workflow->get_step( $db, { slug => 'complete' } ), {} );
 $db->query('SET search_path = registry, public');
 

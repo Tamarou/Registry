@@ -9,6 +9,7 @@ use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
 use Test::More;
+use Test::Registry::Fork qw( forget_inherited_handles reap );
 use Test::Registry::DB;
 use Test::Registry::Mojo;
 use Test::Registry::PricingProbe qw( give_tenant_terms );
@@ -229,6 +230,7 @@ sub waiting_until ( $want, $why ) {
 sub perform_in_child ($id) {
     my $pid = fork // die "fork: $!";
     return $pid if $pid;
+    forget_inherited_handles();
     $minion->perform_jobs( { id => $id } );
     POSIX::_exit(0);
 }
@@ -254,7 +256,7 @@ subtest 'concurrent drivers move money once' => sub {
         'the second driver waits on the first for the run, not inside a step of its own';
 
     $tx->commit;
-    waitpid $_, 0 for $c1, $c2;
+    reap($_) for $c1, $c2;
 
     is $minion->job($_)->info->{state}, 'finished', "job $_ finished"
         or diag explain $minion->job($_)->info->{result} for $j1, $j2;

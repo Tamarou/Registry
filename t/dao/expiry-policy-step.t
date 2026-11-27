@@ -10,6 +10,7 @@ use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Test::Registry::Helpers qw( import_all_workflows join_tenant );
+use Test::Registry::Sessions qw( make_session );
 use Registry::DAO;
 use Registry::DAO::OfferVersion;
 use Registry::DAO::Resource;
@@ -217,6 +218,18 @@ subtest 'expiry refused at publish when the offer changed binding' => sub {
     ok $again->( $run2, $open )->{errors}, 'end of occurrence on a now-unbound offer stays with an error';
     ok !published_version($run2), 'and publishes no version';
     is published_count(), $before, 'nothing is published';
+};
+
+subtest 'session offer expires at the end of the session' => sub {
+    my $session = make_session($tdb);
+    my ( $run, $result ) = walk( 'offer-basics' => { resource_id => $session->id },
+        'expiry-policy' => { expiry => 'end_of_occurrence' } );
+    ok $result->{'expiry-policy'} && !$result->{'expiry-policy'}{errors},
+        'the expiry-policy step accepts end of occurrence on a session' or diag explain $result->{'expiry-policy'};
+    my $version = published_version($run);
+    ok $version && $version->is_published, 'the offer publishes' or diag explain $result->{publish};
+    my ( undef, $never ) = walk( 'offer-basics' => { resource_id => $session->id }, 'expiry-policy' => { expiry => 'never' } );
+    ok $never->{'expiry-policy'}{errors}, 'and never stays with an error';
 };
 
 done_testing;

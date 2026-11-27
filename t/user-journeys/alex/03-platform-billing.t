@@ -51,8 +51,8 @@ $dao->import_workflows(['workflows/tenant-signup.yml']);
 my ($signup_wf) = $dao->find(Workflow => { slug => 'tenant-signup' });
 ok $signup_wf, 'tenant-signup workflow present in registry schema';
 
-# solo-grants-workflow-set publishes Solo v2, the platform's one current offer to tenants. See #268.
-my $SOLO_V2 = '9bc4069a-f0a7-0026-3a84-aeb0d0732995';    # solo-grants-workflow-set's
+# solo-grants-session-workflows publishes Solo v3, the platform's one current offer to tenants. See #268.
+my $SOLO_V3 = '2f570c64-dad4-c0aa-5848-3219eb752c76';    # solo-grants-session-workflows'
 
 # ---------------------------------------------------------------------------
 # App setup: pin the app dao to the registry-context DAO so the workflow
@@ -168,8 +168,8 @@ my $run_data = $run->data;
 # Assertion 1a: the run carries the preselected Solo version as the choice
 # ---------------------------------------------------------------------------
 subtest 'run data carries the chosen offer version' => sub {
-    is $run_data->{selected_offer_version}, $SOLO_V2,
-        'the preselected Solo v2 is the choice carried';
+    is $run_data->{selected_offer_version}, $SOLO_V3,
+        'the preselected Solo v3 is the choice carried';
 };
 
 # ---------------------------------------------------------------------------
@@ -205,8 +205,8 @@ subtest '#267: tenant holds an entitlement to the published platform offer' => s
     ok $tenant_row, 'provisioned tenant row found';
 
     # The tenant holds an entitlement to the offer on sale.
-    is platform_entitlement_terms( $db, $slug )->{id}, $SOLO_V2,
-        'the tenant holds an entitlement to Solo v2, the offer on sale';
+    is platform_entitlement_terms( $db, $slug )->{id}, $SOLO_V3,
+        'the tenant holds an entitlement to Solo v3, the offer on sale';
 };
 
 # ---------------------------------------------------------------------------

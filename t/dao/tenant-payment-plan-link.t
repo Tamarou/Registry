@@ -39,7 +39,7 @@ subtest 'a run with no choice yet quotes the preselected Solo version' => sub {
     });
 
     my $config = $step->get_subscription_config($db, $run);
-    is $config->{offer_version_id}, '9bc4069a-f0a7-0026-3a84-aeb0d0732995', 'Solo v2 is quoted';
+    is $config->{offer_version_id}, '2f570c64-dad4-c0aa-5848-3219eb752c76', 'Solo v3 is quoted';
     is $config->{plan_name}, 'Solo', 'by its offer name';
     is $config->{revenue_share_percent}, 2.5,
         'at its own rate, not the Free plan 0%';
@@ -59,7 +59,7 @@ subtest 'provisioning grants the published platform offer' => sub {
             admin_email           => "planadmin_$$\@test.example",
             admin_username        => "planadmin_$$",
             admin_user_type       => 'admin',
-            selected_offer_version => '9bc4069a-f0a7-0026-3a84-aeb0d0732995',
+            selected_offer_version => '2f570c64-dad4-c0aa-5848-3219eb752c76',
         },
     });
 
@@ -67,8 +67,8 @@ subtest 'provisioning grants the published platform offer' => sub {
     ok $result->{tenant}, 'tenant provisioned';
 
     my $terms = platform_entitlement_terms( $db, $slug );
-    is $terms->{id}, '9bc4069a-f0a7-0026-3a84-aeb0d0732995',
-        'tenant holds an entitlement to Solo v2, the published platform offer';
+    is $terms->{id}, '2f570c64-dad4-c0aa-5848-3219eb752c76',
+        'tenant holds an entitlement to Solo v3, the published platform offer';
     cmp_ok $terms->{fraction}, '==', 0.025, 'under its 2.5% revenue share';
 };
 

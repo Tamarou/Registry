@@ -39,7 +39,7 @@ $dao->current_tenant('registry');
 # The bootstrap seed's fixed ids.
 my $SOLO               = '00000000-0000-0000-0002-000000000001';
 my $SOLO_V1            = '00000000-0000-0000-0003-000000000001';
-my $SOLO_V2            = '9bc4069a-f0a7-0026-3a84-aeb0d0732995';    # solo-grants-workflow-set's
+my $SOLO_V3            = '2f570c64-dad4-c0aa-5848-3219eb752c76';    # solo-grants-session-workflows'
 my $SELF_OFFER         = '00000000-0000-0000-0003-000000000002';
 my $PAYMENT_PROCESSING = '00000000-0000-0000-0001-000000000001';
 
@@ -111,8 +111,8 @@ sub page_text () {
 
 subtest 'review page lists published offers with solo preselected' => sub {
     to_review();
-    is_deeply_list( choices(), [$SOLO_V2], 'Solo v2 is the one choice' );
-    is checked(), $SOLO_V2, 'and it is preselected';
+    is_deeply_list( choices(), [$SOLO_V3], 'Solo v3 is the one choice' );
+    is checked(), $SOLO_V3, 'and it is preselected';
     my $text = page_text();
     like $text, qr/Solo/, 'named from the offer';
     like $text, qr/\$0 a month, 2\.5% of each payment you take/, 'with its terms from the version';

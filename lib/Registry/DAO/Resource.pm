@@ -13,6 +13,7 @@ class Registry::DAO::Resource :isa(Registry::DAO::Object) {
     field $kind :param :reader;    # 'finite' or 'unbounded'
     field $capacity :param :reader = undef;
     field $event_id :param :reader = undef;    # the occurrence it is, if any
+    field $waitlist :param :reader = { kind => 'none' };    # none, or a queue with offer_hold_hours
     field $created_at :param :reader;
 
     sub table { 'resources' }
@@ -27,37 +28,85 @@ class Registry::DAO::Resource :isa(Registry::DAO::Object) {
               FROM events e JOIN projects p ON p.id = e.project_id
              WHERE e.id = ?
             RETURNING *
-        }, $event_id )->hash;
+        }, $event_id )->expand->hash;
         croak "no event $event_id here" unless $row;
         return $class->new(%$row);
     }
 
-    # The occurrence's start and end instants, read from its event: the one
-    # place they are computed.
-    method occurrence_window ($db) {
+    # A session: one finite resource of $data->{capacity} seats whose days are
+    # its events, one published event per date in $data->{days} (at least
+    # one), each at $data->{start} (HH:MM) in the location's zone for
+    # $data->{minutes}. A start that does not exist on a day (the spring DST
+    # gap) moves forward, by GenerateOccurrences' rule. In list context also
+    # returns those days as [ { asked, local_start } ], as that step reports them.
+    sub create_session ( $class, $db, $data ) {
         $db = $db->db if $db isa Registry::DAO;
-        croak "$name ($id) is not an occurrence" unless $event_id;
-        return $db->query( q{
-            SELECT time, time + duration * interval '1 minute' FROM events WHERE id = ?
-        }, $event_id )->array->@*;
+        require Registry::DAO::WorkflowSteps::GenerateOccurrences;
+        croak 'a session has at least one day' unless ref $data->{days} eq 'ARRAY' && $data->{days}->@*;
+        my $zone = $db->select( 'locations', 'time_zone', { id => $data->{location_id} } )->array
+            or croak "no location $data->{location_id} here";
+
+        my $tx      = $db->dbh->{AutoCommit} ? $db->begin : undef;
+        my $session = $class->create( $db, {
+            name     => $data->{name},
+            kind     => 'finite',
+            capacity => $data->{capacity},
+            waitlist => { -json => $data->{waitlist} // { kind => 'none' } },
+        } );
+        my @shifted;
+        for my $day ( $data->{days}->@* ) {
+            my $local = "$day $data->{start}";
+            my $slot  = Registry::DAO::WorkflowSteps::GenerateOccurrences->instant( $db, $local, $zone->[0] );
+            push @shifted, { asked => $local, local_start => $slot->{local_start} } if $slot->{shifted};
+            $db->insert( 'events', {
+                project_id => $data->{project_id}, location_id => $data->{location_id},
+                teacher_id => $data->{teacher_id}, time => $slot->{instant}, duration => $data->{minutes},
+                capacity   => $data->{capacity}, status => 'published', session_resource_id => $session->id,
+            } );
+        }
+        $tx->commit if $tx;
+        return wantarray ? ( $session, \@shifted ) : $session;
     }
 
-    # Whether a booking may take seats in this occurrence now: its event is
-    # published and still to start. Coverage (OfferVersion->covered_resources)
-    # ignores both, so the booking steps ask this as well.
+    # Its days (events) as { id, time, duration }, in time order; none unless
+    # it is a session.
+    method session_days ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        return $db->select( 'events', [qw( id time duration )], { session_resource_id => $id }, 'time' )
+            ->hashes->to_array;
+    }
+
+    method is_session ($db) { !!$self->session_days($db)->@* }
+
+    # The events it is: its occurrence's one, or a session's days. The one
+    # WHERE every window and sale question reads them through.
+    my $EVENTS = 'FROM events WHERE id = ? OR session_resource_id = ?';
+
+    # Its start and end instants: an occurrence's, or from a session's first
+    # day's start to its last day's end. The one place they are computed.
+    method occurrence_window ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        my @window = $db->query( "SELECT min(time), max(time + duration * interval '1 minute') $EVENTS",
+            $event_id, $id )->array->@*;
+        croak "$name ($id) is neither an occurrence nor a session" unless defined $window[0];
+        return @window;
+    }
+
+    # Whether a booking may take seats now: every one of its events is
+    # published and the first is still to start. Coverage
+    # (OfferVersion->covered_resources) ignores both, so the booking steps ask
+    # this as well.
     method on_sale ($db) {
         $db = $db->db if $db isa Registry::DAO;
-        return 0 unless $event_id;
-        return !!$db->query( q{
-            SELECT 1 FROM events WHERE id = ? AND status = 'published' AND clock_timestamp() < time
-        }, $event_id )->rows;
+        return !!$db->query( "SELECT bool_and(status = 'published') AND clock_timestamp() < min(time) $EVENTS",
+            $event_id, $id )->array->[0];
     }
 
     # The resource, its row locked until the caller's transaction ends: every
     # grant and hold takes this lock first, so capacity is read and claimed
     # with no other claim in between.
     sub locked ( $class, $db, $id ) {
-        my $row = $db->query( 'SELECT * FROM resources WHERE id = ? FOR UPDATE', $id )->hash;
+        my $row = $db->query( 'SELECT * FROM resources WHERE id = ? FOR UPDATE', $id )->expand->hash;
         croak "no resource $id here" unless $row;
         return $class->new(%$row);
     }

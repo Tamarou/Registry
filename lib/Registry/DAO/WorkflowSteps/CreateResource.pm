@@ -51,15 +51,15 @@ class Registry::DAO::WorkflowSteps::CreateResource :isa(Registry::DAO::WorkflowS
         push @errors, 'Capacity must be a whole number of at least one'
             if $finite && $f{capacity} !~ /\A[1-9][0-9]{0,8}\z/;
 
-        # Only a finite resource is an occurrence. Unqualified, so another
-        # tenant's occurrence names nothing here.
+        # Only a finite resource is an occurrence, and a session's day is
+        # none. Unqualified, so another tenant's occurrence names nothing here.
         my $event_id = $finite && length $f{event_id} ? $f{event_id} : undef;
         if ( defined $event_id ) {
             # The run's own resource doesn't count, so a resubmitted create finds it below.
             my $free = $event_id =~ $UUID ? $db->query( q{
                 SELECT NOT EXISTS (SELECT 1 FROM resources r
                                     WHERE r.event_id = e.id AND r.id IS DISTINCT FROM ?::uuid)
-                  FROM events e WHERE e.id = ?
+                  FROM events e WHERE e.id = ? AND e.session_resource_id IS NULL
             }, $run->data->{created_resource_id}, $event_id )->array : undef;
             push @errors, !$free ? 'Choose one of your occurrences'
                 : !$free->[0] ? 'That occurrence already has its resource' : ();
@@ -87,14 +87,15 @@ class Registry::DAO::WorkflowSteps::CreateResource :isa(Registry::DAO::WorkflowS
         return { resource_choice => { mode => 'create', resource_id => $created } };
     }
 
-    # Occurrences in this schema with no resource yet: one occurrence has at most one.
+    # Occurrences in this schema with no resource yet: one occurrence has at
+    # most one, and a session's day is no occurrence.
     method prepare_template_data ( $db, $run, $params = {} ) {
         return {
             classes     => [ Registry::DAO::Project->find( $db, {}, { -asc => 'name' } ) ],
             occurrences => $db->query( q{
             SELECT e.id, p.name || ', ' || to_char(e.time, 'YYYY-MM-DD HH24:MI') AS label
               FROM events e JOIN projects p ON p.id = e.project_id
-             WHERE NOT EXISTS (SELECT 1 FROM resources r WHERE r.event_id = e.id)
+             WHERE NOT EXISTS (SELECT 1 FROM resources r WHERE r.event_id = e.id) AND e.session_resource_id IS NULL
              ORDER BY e.time
             } )->hashes->to_array,
         };

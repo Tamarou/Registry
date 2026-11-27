@@ -7,6 +7,7 @@ use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
 use Test::More;
+use Test::Registry::Fork qw( forget_inherited_handles reap );
 use Test::Registry::DB;
 use Test::Registry::Mojo;
 use Test::Registry::Offers qw( offer_terms );
@@ -213,6 +214,7 @@ subtest 'concurrent sweeps expire once' => sub {
     pipe( my $parent_reads, my $child_writes )  or die "pipe: $!";
     my $pid = fork() // die "fork: $!";
     unless ($pid) {
+        forget_inherited_handles();
         close $parent_writes;
         close $parent_reads;
         readline $child_reads;
@@ -232,7 +234,7 @@ subtest 'concurrent sweeps expire once' => sub {
     sleep 1;    # let B read the same rows and block behind A
     $tx->commit;
     chomp( my $b = readline($parent_reads) // '' );
-    waitpid $pid, 0;
+    reap($pid);
     unlike $b, qr/^ERROR/, 'the second sweep did not fail';
 
     my %seen;

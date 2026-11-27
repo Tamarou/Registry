@@ -5,6 +5,7 @@ use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
 use Test::More;
+use Test::Registry::Fork qw( forget_inherited_handles reap );
 use POSIX ();
 
 use Test::Registry::DB;
@@ -18,7 +19,7 @@ use Registry::DAO::OfferVersion;
 use Registry::DAO::User;
 use Registry::Utility::WorkflowProcessor;
 use Registry::PriceOps::RevenueShare qw( revenue_share_fraction_for_tenant );
-use Test::Registry::Offers qw( offer_terms );
+use Test::Registry::Offers qw( offer_terms instalment_plan );
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
@@ -28,8 +29,8 @@ $dao->import_workflows( ['workflows/tenant-signup.yml'] );
 my ($workflow) = Registry::DAO::Workflow->find( $db, { slug => 'tenant-signup' } );
 my ($review)   = $workflow->get_step( $db, { slug => 'review' } );
 
-# Solo v2's fixed id (solo-grants-workflow-set) and the bootstrap's payment processing.
-my $SOLO_V2            = '9bc4069a-f0a7-0026-3a84-aeb0d0732995';    # solo-grants-workflow-set's
+# Solo v3's fixed id (solo-grants-session-workflows) and the bootstrap's payment processing.
+my $SOLO_V3            = '2f570c64-dad4-c0aa-5848-3219eb752c76';    # solo-grants-session-workflows'
 my $PAYMENT_PROCESSING = '00000000-0000-0000-0001-000000000001';
 my $SELF_OFFER = $db->query( q{SELECT id FROM registry.offer_versions
                                 WHERE conditions @> '[{"kind": "holder_is_offerer"}]' LIMIT 1} )->array->[0];
@@ -72,7 +73,7 @@ sub user_exists ($slug) { !!Registry::DAO::User->find( $db, { username => "${slu
 # A tenant row with no platform entitlement: a holder to accept for.
 sub bare_tenant ($slug) { Registry::DAO::Tenant->create( $db, { name => "Bare $slug", slug => $slug } ) }
 
-sub solo ( $holder_id, $plan = 'revenue_share', $version = $SOLO_V2 ) {
+sub solo ( $holder_id, $plan = 'revenue_share', $version = $SOLO_V3 ) {
     return { offer_version_id => $version, payment_plan_id => $plan, holder_tenant_id => $holder_id };
 }
 
@@ -85,6 +86,7 @@ sub while_blocked ( $adb, $tx, $code ) {
     pipe( my $parent_reads, my $child_writes ) or die "pipe: $!";
     my $pid = fork() // die "fork: $!";
     unless ($pid) {
+        forget_inherited_handles();
         close $parent_reads;
         my $out = eval { $code->( Registry::DAO->new( url => $uri )->db ) } // "child died: $@";
         print $child_writes $out;
@@ -100,7 +102,7 @@ sub while_blocked ( $adb, $tx, $code ) {
             ->array->[0];
     }
     $tx->commit;
-    waitpid $pid, 0;
+    reap($pid);
     return ( $blocked, do { local $/; readline $parent_reads } );
 }
 
@@ -116,14 +118,14 @@ subtest 'signup with solo grants stamped entitlement' => sub {
     for my $slug_ (qw( profile users )) {
         $processor->process_workflow_run_step( $run, $workflow->get_step( $db, { slug => $slug_ } ), {} );
     }
-    $processor->process_workflow_run_step( $run, $review, { offer_version => $SOLO_V2 } );
+    $processor->process_workflow_run_step( $run, $review, { offer_version => $SOLO_V3 } );
     $processor->process_workflow_run_step( $run, $workflow->get_step( $db, { slug => 'complete' } ), {} );
     ok $run->completed($db), 'the signup run completed';
 
     my $held = held($slug);
     is scalar @$held, 1, 'the new tenant holds one entitlement in registry';
     my $e = $held->[0] or return;
-    is $e->offer_version_id, $SOLO_V2,         'stamped with Solo v2';
+    is $e->offer_version_id, $SOLO_V3,         'stamped with Solo v3';
     is $e->payment_plan_id,  'revenue_share',  'under its percentage-of-sales plan';
     ok $e->is_in_effect($db), 'in effect now';
     is revenue_share_fraction_for_tenant( $db, $slug ), '0.025', 'its revenue share resolves to 2.5%';
@@ -131,7 +133,7 @@ subtest 'signup with solo grants stamped entitlement' => sub {
 
 subtest 'provisioning and acceptance commit together' => sub {
     my $slug = 'together_studio';
-    signup_run($slug)->process( $db, $review, { offer_version => $SOLO_V2 } );
+    signup_run($slug)->process( $db, $review, { offer_version => $SOLO_V3 } );
     my ($e) = held($slug)->@* or return fail 'no entitlement';
     my $xid = sub ( $table, $id ) { $db->query( "SELECT xmin::text FROM registry.$table WHERE id = ?", $id )->array->[0] };
     my $admin = Registry::DAO::User->find( $db, { username => "${slug}_admin" } );
@@ -144,7 +146,7 @@ subtest 'provisioning and acceptance commit together' => sub {
 subtest 're-run provisioning leaves one tenant and one entitlement' => sub {
     my $slug = 'rerun_studio';
     my $run  = signup_run($slug);
-    $run->process( $db, $review, { offer_version => $SOLO_V2 } );
+    $run->process( $db, $review, { offer_version => $SOLO_V3 } );
     my $again = eval { $review->_provision_tenant( $db, $run ) };
     is $@, '', 'provisioning the run again does not die';
     is $again && $again->{tenant}, tenant_id($slug), 'and answers with the same tenant';
@@ -207,11 +209,11 @@ subtest 'client holder version or plan fields ignored' => sub {
     my $run       = $processor->new_run( $workflow, { %{ signup_data($slug) }, %forged } );
     $processor->process_workflow_run_step( $run, $workflow->get_step( $db, { slug => $_ } ), \%forged )
         for qw( profile users );
-    $processor->process_workflow_run_step( $run, $review, { %forged, offer_version => $SOLO_V2 } );
+    $processor->process_workflow_run_step( $run, $review, { %forged, offer_version => $SOLO_V3 } );
 
     my ($e) = held($slug)->@* or return fail 'no entitlement';
     is $e->holder_tenant_id, tenant_id($slug), 'held by the new tenant';
-    is $e->offer_version_id, $SOLO_V2,         'stamped with the version the review step validated';
+    is $e->offer_version_id, $SOLO_V3,         'stamped with the version the review step validated';
     is $e->payment_plan_id,  'revenue_share',  'under that version\'s plan';
     is scalar held('victim_studio')->@*, 0, 'the named holder got nothing';
     is revenue_share_fraction_for_tenant( $db, $slug ), '0.025', 'at 2.5%, not a submitted rate';
@@ -234,6 +236,19 @@ subtest 'one time plan without payment creates nothing' => sub {
     my $err    = refusal_of( sub { Registry::DAO::Entitlement->accept( $db, solo( $t->id, 'pay', $fee->id ) ) } );
     isa_ok $err, 'Registry::DAO::Entitlement::Refused';
     like $err && $err->message, qr/one-time/, 'as a one-time plan';
+    is entitlement_count(), $before, 'no entitlement';
+};
+
+subtest 'instalments plan without payment creates nothing' => sub {
+    my $offer = Registry::DAO::Offer->create( $db, { name => 'Setup In Parts' } );
+    my $parts = $offer->draft( $db, offer_terms( $PAYMENT_PROCESSING,
+        payment_plans => [ instalment_plan() ],
+        policies      => { refund => { kind => 'none' }, missed_payment => { kind => 'keep_and_owe' } } ) )->publish($db);
+    my $t      = bare_tenant('instalments_holder');
+    my $before = entitlement_count();
+    my $err    = refusal_of( sub { Registry::DAO::Entitlement->accept( $db, solo( $t->id, 'parts', $parts->id ) ) } );
+    isa_ok $err, 'Registry::DAO::Entitlement::Refused';
+    like $err && $err->message, qr/accepted by paying for it/, 'as a paid-for plan';
     is entitlement_count(), $before, 'no entitlement';
 };
 
@@ -268,7 +283,7 @@ subtest 'failed provisioning leaves nothing behind' => sub {
     $db->query('ALTER TABLE registry.program_types ADD CONSTRAINT refuse_copy CHECK (false) NOT VALID');
     my $slug   = 'failing_studio';
     my $before = entitlement_count();
-    my $ok     = eval { signup_run($slug)->process( $db, $review, { offer_version => $SOLO_V2 } ); 1 };
+    my $ok     = eval { signup_run($slug)->process( $db, $review, { offer_version => $SOLO_V3 } ); 1 };
     $db->query('SET search_path = registry, public');
     $db->query('ALTER TABLE registry.program_types DROP CONSTRAINT refuse_copy');
     ok !$ok, 'provisioning failed';
@@ -278,22 +293,22 @@ subtest 'failed provisioning leaves nothing behind' => sub {
     is entitlement_count(), $before, 'no entitlement';
 };
 
-# Last: it supersedes Solo v2.
+# Last: it supersedes Solo v3.
 subtest 're-versioned solo refused and re-quoted with no tenant' => sub {
     my $slug   = 'reversioned_studio';
     my $run    = signup_run($slug);
     my $before = entitlement_count();
     my $adb    = Registry::DAO->new( url => $test_db->uri )->db;
     my $tx     = $adb->begin;
-    my $solo   = Registry::DAO::OfferVersion->find( $adb, { id => $SOLO_V2 } );
-    my $v2     = Registry::DAO::OfferVersion->draft( $adb, $solo->offer_id, offer_terms( $PAYMENT_PROCESSING,
+    my $solo   = Registry::DAO::OfferVersion->find( $adb, { id => $SOLO_V3 } );
+    my $next     = Registry::DAO::OfferVersion->draft( $adb, $solo->offer_id, offer_terms( $PAYMENT_PROCESSING,
         price_cents   => 0,
         payment_plans => [ { id => 'revenue_share', kind => 'percentage_of_sales', fraction => 0.03 } ],
     ) )->publish($adb);
 
     my ( $blocked, $child ) = while_blocked( $adb, $tx, sub ($cdb) {
         my $result = Registry::DAO::WorkflowRun->find( $cdb, { id => $run->id } )
-            ->process( $cdb, $review, { offer_version => $SOLO_V2 } );
+            ->process( $cdb, $review, { offer_version => $SOLO_V3 } );
         return join '; ', ( $result->{errors} // ['no errors'] )->@*;
     } );
     ok $blocked, 'the accept waited on the re-versioning';
@@ -304,11 +319,11 @@ subtest 're-versioned solo refused and re-quoted with no tenant' => sub {
     is entitlement_count(), $before, 'no entitlement';
 
     $run = Registry::DAO::WorkflowRun->find( $db, { id => $run->id } );
-    is $run->data->{selected_offer_version}, $v2->id, 'the run now carries Solo\'s current version';
+    is $run->data->{selected_offer_version}, $next->id, 'the run now carries Solo\'s current version';
     is $review->get_subscription_config( $db, $run )->{revenue_share_percent}, 3, 'and quotes its terms';
 
-    $run->process( $db, $review, { offer_version => $v2->id } );
-    is held($slug)->[0] && held($slug)->[0]->offer_version_id, $v2->id, 'accepting again grants the current version';
+    $run->process( $db, $review, { offer_version => $next->id } );
+    is held($slug)->[0] && held($slug)->[0]->offer_version_id, $next->id, 'accepting again grants the current version';
 };
 
 $test_db->cleanup_test_database;

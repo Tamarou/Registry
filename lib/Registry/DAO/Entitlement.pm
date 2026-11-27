@@ -25,6 +25,8 @@ class Registry::DAO::Entitlement :isa(Registry::DAO::Object) {
     field $payment_id :param :reader = undef;           # the payment that created it, set at insert
     field $payment_share_cents :param :reader = undef;  # its share of that payment
     field $terms_version :param :reader = undef;        # the /terms version its booker agreed to, set at insert
+    field $past_due_since :param :reader = undef;       # its earliest unpaid failed invoice's failure
+    field $transferred_from_entitlement_id :param :reader = undef;  # its predecessor, set at insert
 
     sub table { 'entitlements' }
 
@@ -32,9 +34,16 @@ class Registry::DAO::Entitlement :isa(Registry::DAO::Object) {
 
 C<state> is C<active> until end() moves it, once, to one ended state:
 C<expired> (its occurrence ended), C<refunded> (a full refund reported by
-Stripe) or C<dispute_lost> (a lost dispute). Ending records C<ended_at> and
-C<ended_reason> and closes the period at C<ended_at>. In effect at T means
-active and the period covers T (in_effect_sql).
+Stripe), C<dispute_lost> (a lost dispute), C<unpaid> (ended for a missed
+payment) or C<transferred> (moved to another offer, as a new entitlement
+naming it in C<transferred_from_entitlement_id>). Ending records C<ended_at>
+and C<ended_reason> and closes the period at C<ended_at>. In effect at T
+means active and the period covers T (in_effect_sql).
+
+Past due is not a state, because an ended state is final: it is a flag on an
+active entitlement: each failed Stripe invoice it owes is a row of
+C<entitlement_past_due_invoices>, and C<past_due_since> is the earliest of
+their failures. It keeps its units and stays in effect while past due.
 
 =cut
 
@@ -53,8 +62,8 @@ active and the period covers T (in_effect_sql).
     # starts_at (default now): the one way a schedule-type offer is accepted.
     # Throws Registry::DAO::Entitlement::Refused, creating nothing, when the
     # version is not published and current at this moment, does not offer the
-    # plan, the plan is one-time (an entitlement follows its payment, not an
-    # accept), the holder already has this offer in effect, or a tenant
+    # plan, the plan is one-time or instalments (an entitlement follows its
+    # payment, not an accept), the holder already has this offer in effect, or a tenant
     # holder already has platform terms for payment processing. Joins the
     # caller's transaction.
     sub accept ( $class, $db, $data ) {
@@ -77,8 +86,9 @@ active and the period covers T (in_effect_sql).
             { offer_version_id => $version_id, id => $plan_id // '' } )->array;
         $refuse->( sprintf "Offer version %s does not offer payment plan '%s'.", $version_id, $plan_id // '' )
             unless $kind;
-        $refuse->("Payment plan '$plan_id' is one-time: it is accepted by paying for it.")
-            if $kind->[0] eq 'one_time';
+        my %paid_for = ( one_time => 'one-time', instalments => 'instalments' );
+        $refuse->("Payment plan '$plan_id' is $paid_for{ $kind->[0] }: it is accepted by paying for it.")
+            if $paid_for{ $kind->[0] };
 
         # One phase of a schedule offer per holder at a time, as the exclusion
         # constraint has it; two accepts for one holder and offer take turns,
@@ -89,7 +99,7 @@ active and the period covers T (in_effect_sql).
             if $db->query( q{
                 SELECT EXISTS (SELECT 1 FROM entitlements
                     WHERE coalesce(holder_user_id, holder_family_member_id, holder_tenant_id) = ?
-                      AND offer_id = ? AND plan_kind <> 'one_time'
+                      AND offer_id = ? AND plan_kind NOT IN ('one_time', 'instalments')
                       AND in_effect && tstzrange(?::timestamptz, ?::timestamptz, '[)'))
             }, $holder, $offer_id, @row{qw( starts_at ends_at )} )->array->[0];
 
@@ -263,9 +273,91 @@ active and the period covers T (in_effect_sql).
         return __PACKAGE__->new(%$row);
     }
 
+    # [start, end] of each occurrence or session it holds units of, read
+    # through Resource->occurrence_window.
+    method occurrence_windows ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        return [ map { [ $_->occurrence_window($db) ] } grep { $_->event_id || $_->is_session($db) }
+                map { scalar Registry::DAO::Resource->find( $db, { id => $_ } ) }
+                $db->select( 'entitlement_units', 'DISTINCT resource_id', { entitlement_id => $id } )
+                ->arrays->flatten->each ];
+    }
+
+    # Records that it owes failed Stripe invoice $invoice_id, which failed at
+    # $failed_at (default now): past due until every invoice it owes is paid.
+    # Once per invoice. Croaks, recording nothing, unless it is active.
+    method mark_past_due ( $db, $invoice_id, $failed_at = undef ) {
+        $self->_past_due( $db, sub ($db) {
+            croak "entitlement $id is not active: an ended entitlement is not marked past due"
+                unless $db->select( 'entitlements', 1, { id => $id, state => 'active' } )->rows;
+            $db->query( q{
+                INSERT INTO entitlement_past_due_invoices (entitlement_id, invoice_id, failed_at)
+                VALUES (?, ?, coalesce(?::timestamptz, now())) ON CONFLICT DO NOTHING
+            }, $id, $invoice_id, $failed_at );
+        } );
+    }
+
+    # Records that invoice $invoice_id is paid: no longer past due once no
+    # invoice it owes remains. Another invoice clears nothing.
+    method clear_past_due ( $db, $invoice_id ) {
+        $self->_past_due( $db, sub ($db) {
+            $db->delete( 'entitlement_past_due_invoices', { entitlement_id => $id, invoice_id => $invoice_id } );
+        } );
+    }
+
+    # Runs $change to its owed invoices under its row lock, so concurrent
+    # marks and clears take turns, then sets past_due_since from what remains.
+    method _past_due ( $db, $change ) {
+        $db = $db->db if $db isa Registry::DAO;
+        my $tx = $db->dbh->{AutoCommit} ? $db->begin : undef;
+        $db->query( 'SELECT 1 FROM entitlements WHERE id = ? FOR UPDATE', $id );
+        $change->($db);
+        $past_due_since = $db->query( q{
+            UPDATE entitlements SET past_due_since =
+                (SELECT min(failed_at) FROM entitlement_past_due_invoices WHERE entitlement_id = ?)
+             WHERE id = ? RETURNING past_due_since
+        }, $id, $id )->array->[0];
+        $tx->commit if $tx;
+        return $self;
+    }
+
+    # Only an active entitlement is past due; an ended one keeps its owed
+    # invoices and past_due_since as history.
+    method is_past_due { return defined $past_due_since && $state eq 'active' ? 1 : 0 }
+
+    # It and the entitlements it was transferred from, oldest first.
+    method chain ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        return $db->query( q{
+            WITH RECURSIVE chain AS (
+                SELECT e.*, 0 AS depth FROM entitlements e WHERE e.id = ?
+                UNION ALL
+                SELECT p.*, c.depth + 1 FROM entitlements p JOIN chain c ON p.id = c.transferred_from_entitlement_id
+            )
+            SELECT * FROM chain ORDER BY depth DESC
+        }, $id )->expand->hashes->map( sub { delete $_->{depth}; __PACKAGE__->new(%$_) } )->to_array;
+    }
+
+    # What has been paid for it so far, over its chain: each entitlement's
+    # share of the payment that created it and its instalment and change
+    # payments that took money (refunded or not), less what was refunded
+    # against each.
+    method paid_cents ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        require Registry::DAO::Payment;
+        my @ids = map { $_->id } $self->chain($db)->@*;
+        return $db->query( q{
+            SELECT (SELECT coalesce(sum(payment_share_cents), 0) FROM entitlements WHERE id = ANY(?::uuid[]))
+                 + (SELECT coalesce(sum(amount_cents), 0) FROM payments
+                     WHERE entitlement_id = ANY(?::uuid[]) AND status = ANY(?))
+                 - (SELECT coalesce(sum(amount_cents), 0) FROM entitlement_refunds
+                     WHERE entitlement_id = ANY(?::uuid[]))
+        }, \@ids, \@ids, Registry::DAO::Payment->_settled_statuses, \@ids )->array->[0];
+    }
+
     # Ends as `expired` each active entitlement whose stamped expiry policy is
-    # end_of_occurrence and whose units are on an occurrence that has ended,
-    # at that occurrence's end. Its units are read under its row lock, so a
+    # end_of_occurrence and whose units are on an occurrence or session that
+    # has ended, at its end. Its units are read under its row lock, so a
     # change that moved it is followed and a concurrent sweep expires it once.
     # Returns the ids it expired.
     sub expire_ended_occurrences ( $class, $db ) {
@@ -282,39 +374,66 @@ active and the period covers T (in_effect_sql).
             my $tx = $db->dbh->{AutoCommit} ? $db->begin : undef;
             next unless $db->query( q{SELECT 1 FROM entitlements WHERE id = ? AND state = 'active' FOR UPDATE},
                 $id )->rows;
-            my @ends = map { ( $_->occurrence_window($db) )[1] }
-                grep { $_->event_id } map { scalar Registry::DAO::Resource->find( $db, { id => $_ } ) }
-                $db->select( 'entitlement_units', 'DISTINCT resource_id', { entitlement_id => $id } )
-                ->arrays->flatten->each;
+            my $entitlement = $class->find( $db, { id => $id } );
+            my @ends = map { $_->[1] } $entitlement->occurrence_windows($db)->@*;
             my ( $over, $ended ) = $db->query(
                 'SELECT max(e) <= now(), max(e) FROM unnest(?::timestamptz[]) e', \@ends )->array->@*;
             next unless $over;
-            scalar( $class->find( $db, { id => $id } ) )->end( $db, 'expired', 'occurrence ended', $ended );
+            $entitlement->end( $db, 'expired', 'occurrence ended', $ended );
             $tx->commit if $tx;
             push @expired, $id;
         }
         return \@expired;
     }
 
-    # Records that it was used at occurrence $occurrence_id, marked by
-    # $recorded_by. Use is optional attendance: nothing requires a use, and
-    # recording one changes no state, units, period or money. Throws
-    # Registry::DAO::Entitlement::Refused, recording nothing, unless it is in
-    # effect now, its stamped use policy is optional attendance, and it holds
-    # units of that occurrence. A second record of the pair keeps the first.
-    method record_use ( $db, $occurrence_id, $recorded_by = undef ) {
+    # Marks day $event_id $mark (present or absent), by $recorded_by: a day is
+    # its occurrence's event or one of its session's days. Marking changes no
+    # state, units, period or money; a second mark of the day replaces the
+    # first. Throws Registry::DAO::Entitlement::Refused, marking nothing,
+    # unless it is in effect now, its stamped use policy is optional
+    # attendance or makeup, and it holds units of that day's occurrence or
+    # session.
+    method mark_day ( $db, $event_id, $mark, $recorded_by = undef ) {
         $db = $db->db if $db isa Registry::DAO;
         my $refuse = sub ($why) { Registry::DAO::Entitlement::Refused->throw("$why\n") };
+        $refuse->('A day is marked present or absent.')
+            unless defined $mark && !ref $mark && ( $mark eq 'present' || $mark eq 'absent' );
         $refuse->('This booking is not in effect: it has ended or been refunded.')
             unless $self->is_in_effect($db);
+        my $use = ( $self->offer_version($db)->policies->{use} // {} )->{kind} // '';
         $refuse->("This booking's offer does not record attendance.")
-            unless ( ( $self->offer_version($db)->policies->{use} // {} )->{kind} // '' ) eq 'optional_attendance';
-        $refuse->('This booking holds no place in that occurrence.')
-            unless $self->units( $db, $occurrence_id )->@*;
-        $db->insert( 'entitlement_uses',
-            { entitlement_id => $id, occurrence_id => $occurrence_id, recorded_by => $recorded_by },
-            { on_conflict => undef } );
+            unless $use eq 'optional_attendance' || $use eq 'makeup';
+        my $held = $db->query( q{
+            SELECT u.resource_id FROM entitlement_units u
+              JOIN resources r ON r.id = u.resource_id
+              JOIN events ev ON ev.id = r.event_id OR ev.session_resource_id = r.id
+             WHERE u.entitlement_id = ? AND ev.id::text = ? LIMIT 1
+        }, $id, $event_id // '' )->array;
+        $refuse->('This booking holds no place in that occurrence or session.') unless $held;
+        $db->query( q{
+            INSERT INTO entitlement_uses (entitlement_id, occurrence_id, event_id, mark, recorded_by)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (entitlement_id, event_id) DO UPDATE
+               SET mark = EXCLUDED.mark, recorded_by = EXCLUDED.recorded_by, recorded_at = now()
+        }, $id, $held->[0], $event_id, $mark, $recorded_by );
         return $self;
+    }
+
+    # Its marks so far, as { event_id => present or absent }.
+    method day_marks ($db) {
+        $db = $db->db if $db isa Registry::DAO;
+        return { map { @$_ } $db->select( 'entitlement_uses', [qw( event_id mark )],
+            { entitlement_id => $id } )->arrays->each };
+    }
+
+    # Marks it present at in-studio occurrence $occurrence_id (a resource):
+    # mark_day on the occurrence's event.
+    method record_use ( $db, $occurrence_id, $recorded_by = undef ) {
+        $db = $db->db if $db isa Registry::DAO;
+        my $event = $db->query( 'SELECT event_id FROM resources WHERE id::text = ?', $occurrence_id // '' )->array;
+        Registry::DAO::Entitlement::Refused->throw("This booking holds no place in that occurrence.\n")
+            unless $event && $event->[0];
+        return $self->mark_day( $db, $event->[0], 'present', $recorded_by );
     }
 
     # Entitlements $payment_id created: what its refunds and disputes match.

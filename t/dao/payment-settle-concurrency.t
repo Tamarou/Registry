@@ -7,6 +7,7 @@ use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
 use Test::More;
+use Test::Registry::Fork qw( forget_inherited_handles reap );
 use Test::Registry::DB;
 use Mojo::Pg;
 use Registry::DAO::Payment;
@@ -45,6 +46,7 @@ subtest 'a second settle of the same increment records nothing' => sub {
     defined $pid or die "fork: $!";
 
     unless ($pid) {
+        forget_inherited_handles();
         # Child: wait for A to hold the lock, then settle the same seq. It
         # blocks on A's row lock and re-plans when A commits.
         close $parent_writes;
@@ -68,7 +70,7 @@ subtest 'a second settle of the same increment records nothing' => sub {
     $parent_writes->flush;
     sleep 1;              # let the child reach the lock and block on it
     $tx->commit;
-    waitpid $pid, 0;
+    reap($pid);
 
     my $row = $db->select('payments', '*', { id => $id })->expand->hash;
     is $row->{refunded_cents}, 3000,
