@@ -38,6 +38,14 @@ class Registry::DAO::WorkflowSteps::OfferConditions :isa(Registry::DAO::Workflow
         return;
     }
 
+    # Instant $at as a local 'YYYY-MM-DD HH:MI' at location $location_id.
+    sub local_of ( $class, $db, $at, $location_id ) {
+        my $local = $db->query( q{
+            SELECT to_char(?::timestamptz AT TIME ZONE time_zone, 'YYYY-MM-DD HH24:MI') FROM locations WHERE id = ?
+        }, $at, $location_id )->array;
+        return $local && $local->[0];
+    }
+
     method process ( $db, $form_data, $run = undef ) {
         my %f = map { $_ => ( ref $form_data->{$_} ? '' : $form_data->{$_} // '' ) } qw( sibling early_bird_until );
         return { stay => 1, errors => ['Say whether this price is for a sibling'] }
@@ -94,9 +102,8 @@ class Registry::DAO::WorkflowSteps::OfferConditions :isa(Registry::DAO::Workflow
             sibling     => !$sibling ? 'none' : $sibling->{offer_ids} ? 'offers' : 'any',
             sibling_ids => { map { $_ => 1 } ( $sibling && $sibling->{offer_ids} // [] )->@* },
             # Shown back in the location's zone, as it was entered.
-            early_bird_until => $before && $location ? $db->query( q{
-                SELECT to_char(?::timestamptz AT TIME ZONE time_zone, 'YYYY-MM-DD"T"HH24:MI') FROM locations WHERE id = ?
-            }, $before->{at}, $location )->array->[0] : '',
+            early_bird_until => $before && $location
+                ? ( __PACKAGE__->local_of( $db, $before->{at}, $location ) // '' ) =~ s/ /T/r : '',
         };
     }
 }

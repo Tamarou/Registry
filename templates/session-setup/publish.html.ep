@@ -51,7 +51,7 @@
     <dd><%= $name->( ( stash('one_time_payment') // {} )->{one_time} ) %></dd>
     <dt>Who may choose it</dt>
     % my @conditions = @{ stash('conditions') // [] };
-    <dd><%= @conditions ? join( '; ', map { $who{ $_->{kind} } . ( $_->{at} ? " $_->{at} (UTC)" : '' ) } @conditions ) : 'Anyone' %></dd>
+    <dd><%= @conditions ? join( '; ', map { $who{ $_->{kind} } . ( $_->{at} ? ' ' . ( stash('early_bird_local') // $_->{at} ) . q{ in the location's time} : '' ) } @conditions ) : 'Anyone' %></dd>
     <dt>Instalments</dt>
     <dd><%= $parts ? "$parts->{count} $parts->{cadence} payments" . ( $parts->{surcharge_pct} ? ", with a $parts->{surcharge_pct}% surcharge" : '' ) : 'Not offered' %></dd>
     % if ($parts) {

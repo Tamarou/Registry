@@ -91,6 +91,10 @@ sub publish_version ( $name, $cents, %conditions ) {
     like submit_step( 'use-policy', use => 'optional_attendance' ), qr{/expiry-policy\z}, 'use';
     like submit_step( 'expiry-policy', expiry => 'end_of_occurrence' ), qr{/publish\z}, 'expiry';
     $t->content_like( qr/Week 1/, 'the review names the sessions' );
+    if ( my $local = $conditions{early_bird_until} ) {
+        $local =~ s/T/ /;
+        $t->content_like( qr/Only until \Q$local\E in the location&#39;s time/, 'the review shows the early bird in local time' );
+    }
     like submit_step( 'publish', action => 'publish' ), qr{/complete\z}, "$name is published";
     $t->content_like( qr/\Q$name\E is published/ );
 }

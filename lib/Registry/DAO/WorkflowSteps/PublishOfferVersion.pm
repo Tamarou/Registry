@@ -197,8 +197,13 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
         my $price = $data->{offer_price} // {};
         my $basic = $data->{offer_basics} // {};
         my ( $id, $class_id ) = $basic->@{qw( resource_id class_project_id )};
+        my ($before) = grep { $_->{kind} eq 'before' } ( $data->{session_program} && $data->{conditions} // [] )->@*;
         return {
             %$data,
+            # An early bird in the program location's time, as it was entered.
+            early_bird_local => $before
+                ? Registry::DAO::WorkflowSteps::OfferConditions->local_of( $db, $before->{at}, $data->{session_program}{location_id} )
+                : undef,
             sessions      => [ map { Registry::DAO::Resource->find( $db, { id => $_ } ) // () } ( $basic->{resource_ids} // [] )->@* ],
             resource      => $id ? Registry::DAO::Resource->find( $db, { id => $id } ) : undef,
             class         => $class_id ? Registry::DAO::Project->find( $db, { id => $class_id } ) : undef,
