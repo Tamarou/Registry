@@ -53,13 +53,15 @@ class Registry::DAO::WaitlistEntry :isa(Registry::DAO::Object) {
     # Entry $entry_id's place in its line, from 1; undef unless it is waiting.
     sub position ( $class, $db, $entry_id ) {
         $db = $db->db if $db isa Registry::DAO;
-        return $db->query( q{
+        # No row unless it is waiting.
+        my $row = $db->query( q{
             SELECT count(*) FROM waitlist_entries e JOIN waitlist_entries o
                 ON o.resource_id = e.resource_id AND o.state = 'waiting'
                AND (o.joined_at, o.id) <= (e.joined_at, e.id)
              WHERE e.id = ? AND e.state = 'waiting'
             HAVING count(*) > 0
-        }, $entry_id )->array->[0];
+        }, $entry_id )->array;
+        return $row ? $row->[0] : undef;
     }
 
     sub waiting_count ( $class, $db, $resource_id ) {

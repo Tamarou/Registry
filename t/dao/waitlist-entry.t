@@ -27,7 +27,7 @@ sub child () {
         { child_name => 'Child ' . ++$made, birth_date => '2018-01-01', grade => '3' } )->id;
 }
 
-sub queue () { make_session( $db, waitlist => { kind => 'queue', offer_hold_hours => 48 } ) }
+sub queue () { scalar make_session( $db, waitlist => { kind => 'queue', offer_hold_hours => 48 } ) }
 
 sub join_queue ( $session, $child ) {
     return Registry::DAO::WaitlistEntry->join( $db,
@@ -135,6 +135,14 @@ subtest 'accept is refused unless the entry is offered' => sub {
     my $lapsed = $entry->offer( $db, held_seat($session) )->lapse($db);
     throws_ok { $lapsed->accept($db) } $REFUSED, 'nor can a lapsed one';
     is Registry::DAO::WaitlistEntry->find( $db, { id => $entry->id }, 'id' )->state, 'lapsed', 'it stays lapsed';
+};
+
+subtest 'an entry that is not waiting has no position' => sub {
+    my $session = queue();
+    my $offered = join_queue( $session, child() )->offer( $db, held_seat($session) );
+    my $left    = join_queue( $session, child() )->leave($db);
+    is Registry::DAO::WaitlistEntry->position( $db, $offered->id ), undef, 'an offered entry has none';
+    is Registry::DAO::WaitlistEntry->position( $db, $left->id ),    undef, 'nor has one that left';
 };
 
 done_testing;
