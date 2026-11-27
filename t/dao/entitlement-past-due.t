@@ -106,4 +106,33 @@ subtest 'chain lists predecessors oldest first' => sub {
     is $c->paid_cents($db), 3700, 'paid cents counts the chain';
 };
 
+subtest 'another invoice clears nothing' => sub {
+    my $e = seat();
+    $e->mark_past_due( $db, 'in_1' );
+    $e->clear_past_due( $db, 'in_other' );
+    $e = reread($e);
+    ok $e->is_past_due, 'still past due';
+    is $e->past_due_invoice_id, 'in_1', 'for the first invoice';
+};
+
+subtest 'marking past due twice for one invoice changes nothing' => sub {
+    my $e = seat();
+    $e->mark_past_due( $db, 'in_1' );
+    my $since = reread($e)->past_due_since;
+    $db->query("SELECT pg_sleep(0.01)");
+    $e->mark_past_due( $db, 'in_1' );
+    $e = reread($e);
+    is $e->past_due_since,      $since, 'past due since the first mark';
+    is $e->past_due_invoice_id, 'in_1', 'for the same invoice';
+};
+
+subtest 'a transfer link cannot be cleared once set' => sub {
+    my $from = seat();
+    $from->end( $db, 'transferred', 'moved' );
+    my $t = seat( transferred_from_entitlement_id => $from->id );
+    throws_ok { $db->update( 'entitlements', { transferred_from_entitlement_id => undef }, { id => $t->id } ) }
+        qr/keeps/, 'the database refuses';
+    is reread($t)->transferred_from_entitlement_id, $from->id, 'and the link stays';
+};
+
 done_testing;
