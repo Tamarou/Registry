@@ -28,11 +28,11 @@ my $version = session_offer( $db, $session );
 my $offer   = $db->select( 'offers', 'name', { id => $version->offer_id } )->hash->{name};
 my $flow    = Registry::DAO::Workflow->create( $db, { slug => 'er-flow', name => 'Request flow' } );
 
-# A request for $e (by default a new child's seat in the session), opened from a new run.
-sub request ( $kind = 'refund', $e = undef ) {
+# A new child's seat in the session.
+sub seat () {
     my $child = Registry::DAO::Family->add_child( $db, $parent->id,
         { child_name => 'Child ' . ++$made, birth_date => '2018-01-01', grade => '3' } );
-    $e //= Registry::DAO::Entitlement->grant( $db, {
+    return Registry::DAO::Entitlement->grant( $db, {
         holder_family_member_id => $child->id,
         payer_user_id           => $parent->id,
         offer_version_id        => $version->id,
@@ -41,12 +41,17 @@ sub request ( $kind = 'refund', $e = undef ) {
         resource_id             => $session->id,
         units                   => 1,
     } );
+}
+
+# A request for $e (by default a new seat), opened from a new run.
+sub request ( $kind = 'refund', $e = seat()->id, %more ) {
     return Registry::DAO::EntitlementRequest->open( $db, {
-        entitlement_id  => ref $e ? $e->id : $e,
+        entitlement_id  => $e,
         kind            => $kind,
         workflow_run_id => $flow->new_run($db)->id,
         outcome         => { amount_cents => 27000 + $made },
         requested_by    => $parent->id,
+        %more,
     } );
 }
 
@@ -111,6 +116,13 @@ subtest 'one entitlement has one pending request at a time' => sub {
             Registry::DAO::EntitlementRequest->pending($db)->@* ), 1, 'one pending request remains';
     $first->decide( $db, 'declined', $admin->id, 'no' );
     is request( 'refund', $first->entitlement_id )->state, 'pending', 'once decided, another may be opened';
+};
+
+subtest 'an outcome is an object' => sub {
+    my %not = ( null => undef, array => [27000], number => 27000 );
+    throws_ok { request( 'refund', seat()->id, outcome => $not{$_} ) } qr/entitlement_requests_outcome_check/,
+        "$_ as an outcome is refused"
+        for sort keys %not;
 };
 
 done_testing;

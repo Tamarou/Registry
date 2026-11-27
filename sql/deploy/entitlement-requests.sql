@@ -26,7 +26,8 @@ BEGIN
                 entitlement_id  uuid NOT NULL REFERENCES %1$I.entitlements (id),
                 kind            text NOT NULL CHECK (kind IN ('refund', 'change')),
                 workflow_run_id uuid NOT NULL UNIQUE REFERENCES %1$I.workflow_runs (id),
-                outcome         jsonb NOT NULL,
+                outcome         jsonb NOT NULL CONSTRAINT entitlement_requests_outcome_check
+                    CHECK (jsonb_typeof(outcome) = 'object'),
                 state           text NOT NULL DEFAULT 'pending'
                     CHECK (state IN ('pending', 'approved', 'declined')),
                 requested_by    uuid NOT NULL REFERENCES %1$I.users (id),
