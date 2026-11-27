@@ -157,4 +157,37 @@ subtest 'policy words describe approval, price difference and make-ups' => sub {
     unlike $words->('in_studio'), qr/reviewed|Moving/, 'an in-studio window says nothing of review or price';
 };
 
+subtest 'a makeup naming another tenant offer is refused' => sub {
+    my ( $run, $result ) = walk( 'offer-publishing', 'use-policy' => { use => 'makeup',
+        makeup_offer_id => $studio{pottery_studio}{makeup_offer_id}, credit_days => 30 } );
+    is errors_of( $result->{'use-policy'} ), 'Choose one of your current class offers for make-ups', 'the step refuses it';
+    ok !published($run), 'and nothing is published';
+
+    $run->update_data( $tdb, { use_policy => { use => 'makeup', offer_id => $studio{pottery_studio}{makeup_offer_id}, credit_days => 30 } } );
+    my $publish = $tdao->find( Workflow => { slug => 'offer-publishing' } )->get_step( $tdb, { slug => 'publish' } );
+    is errors_of( $publish->process( $tdb, { action => 'publish' }, $run ) ),
+        'Choose one of your current class offers for make-ups', 'and so does publish';
+};
+
+subtest 'a makeup naming an unknown offer is refused' => sub {
+    my ( $run, $result ) = walk( 'offer-publishing',
+        'use-policy' => { use => 'makeup', makeup_offer_id => $unknown, credit_days => 30 } );
+    is errors_of( $result->{'use-policy'} ), 'Choose one of your current class offers for make-ups', 'the step refuses it';
+    ok !published($run), 'and nothing is published';
+};
+
+subtest 'offer_ids naming an unknown offer is refused' => sub {
+    my ( $run, $result ) = walk( 'offer-publishing',
+        'change-policy' => { %WINDOW, targets => 'offer_ids', offer_ids => [ $studio{dance_studio}{makeup_offer_id}, $unknown ] } );
+    is errors_of( $result->{'change-policy'} ), 'Choose the offers a change may move to from your offers',
+        'the step refuses it';
+    ok !published($run), 'and nothing is published';
+
+    $run->update_data( $tdb, { change_policy => { kind => 'window', window_hours => 48, fee_cents => 1000,
+        targets => { offer_ids => [$unknown] }, price_difference => 'charge_only', approval => 'none' } } );
+    my $publish = $tdao->find( Workflow => { slug => 'offer-publishing' } )->get_step( $tdb, { slug => 'publish' } );
+    is errors_of( $publish->process( $tdb, { action => 'publish' }, $run ) ),
+        'Choose the offers a change may move to from your offers', 'and so does publish';
+};
+
 done_testing;
