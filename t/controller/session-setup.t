@@ -114,8 +114,8 @@ subtest 'an admin creates a program and a five day camp week' => sub {
     check_screen( $t, 'instalment-payment' );
     like submit_step( $t, 'instalment-payment', instalments => 'declined' ), qr{/refund-policy\z},
         'declining them passes the missed-payment step and asks about refunds';
-    like submit_step( $t, 'refund-policy', refund => 'none', approval => 'required' ), qr{/change-policy\z},
-        'refunds reviewed by an administrator, then changes';
+    like submit_step( $t, 'refund-policy', refund => 'none', approval => 'none' ), qr{/change-policy\z},
+        'no refunds, so nothing to approve, then changes';
     $t->element_exists( '#workflow-content input[name="price_difference"]', 'the change screen asks about a price difference' );
     like submit_step( $t, 'change-policy', change => 'none' ), qr{/use-policy\z}, 'no changes, then use';
     like submit_step( $t, 'use-policy', use => 'none' ), qr{/complete\z}, 'and the complete page';
@@ -125,7 +125,7 @@ subtest 'an admin creates a program and a five day camp week' => sub {
     } )->expand->hash->{data};
     is_deeply $run->{session_program}, { project_id => $program, location_id => $site->id }, 'the run records the program';
     is_deeply $run->{sessions}, [ $week->id ], 'and the session it made';
-    is_deeply $run->{refund_policy}, { kind => 'none', approval => 'required' }, 'and the refund policy with its approval';
+    is_deeply $run->{refund_policy}, { kind => 'none', approval => 'none' }, 'and the refund policy with its approval';
 };
 
 subtest 'offering instalments asks what a missed one does' => sub {

@@ -19,6 +19,8 @@ class Registry::DAO::WorkflowSteps::RefundPolicy :isa(Registry::DAO::WorkflowSte
         my $kind = $policy->{kind};
         return "Say whether a refund needs the studio's approval"
             unless ( $policy->{approval} // '' ) =~ /\A(?:required|none)\z/;
+        return 'With no refund there is nothing for the studio to approve'
+            if $kind eq 'none' && $policy->{approval} eq 'required';
         if ( $kind eq 'full_until_cutoff' ) {
             my $basic = ref $data->{offer_basics} eq 'HASH' ? $data->{offer_basics} : {};
             my $resource = $basic->{resource_id}

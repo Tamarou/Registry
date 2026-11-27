@@ -82,11 +82,13 @@ my %WINDOW = ( change => 'window', window_hours => 48, fee_cents => 1000 );
 my %version;
 
 subtest 'the refund policy step saves approval' => sub {
-    my ( $run, $result ) = walk( 'offer-publishing', 'refund-policy' => { refund => 'none', approval => 'required' } );
+    my %cutoff = ( kind => 'full_until_cutoff', cutoff_hours => 24, approval => 'required' );
+    my ( $run, $result ) = walk( 'offer-publishing',
+        'refund-policy' => { refund => 'full_until_cutoff', cutoff_hours => 24, approval => 'required' } );
     is errors_of( $result->{'refund-policy'} ), '', 'the step accepts approval required';
-    is_deeply $run->data->{refund_policy}, { kind => 'none', approval => 'required' }, 'and saves it';
+    is_deeply $run->data->{refund_policy}, \%cutoff, 'and saves it';
     my $version = published($run) or return fail 'publish: ' . errors_of( $result->{publish} );
-    is_deeply $version->policies->{refund}, { kind => 'none', approval => 'required' }, 'which is published';
+    is_deeply $version->policies->{refund}, \%cutoff, 'which is published';
     $version{refund} = $version;
 
     ( $run, $result ) = walk('offer-publishing');
@@ -193,6 +195,17 @@ subtest 'offer_ids naming an unknown offer is refused' => sub {
     my $publish = $tdao->find( Workflow => { slug => 'offer-publishing' } )->get_step( $tdb, { slug => 'publish' } );
     is errors_of( $publish->process( $tdb, { action => 'publish' }, $run ) ),
         'Choose the offers a change may move to from your offers', 'and so does publish';
+};
+
+subtest 'a refund of none needing approval is refused' => sub {
+    my $why = 'With no refund there is nothing for the studio to approve';
+    my ( $run, $result ) = walk( 'offer-publishing', 'refund-policy' => { refund => 'none', approval => 'required' } );
+    is errors_of( $result->{'refund-policy'} ), $why, 'the step refuses it';
+    ok !published($run), 'and nothing is published';
+
+    $run->update_data( $tdb, { refund_policy => { kind => 'none', approval => 'required' } } );
+    my $publish = $tdao->find( Workflow => { slug => 'offer-publishing' } )->get_step( $tdb, { slug => 'publish' } );
+    is errors_of( $publish->process( $tdb, { action => 'publish' }, $run ) ), $why, 'and so does publish';
 };
 
 subtest 'a retired offer as a change target is refused' => sub {
