@@ -35,4 +35,8 @@ subtest 'a plan that ends by the last day fits' => sub {
     ok fits( { count => 2, cadence => 'weekly' }, '2027-06-01', '2027-06-08' ), 'the last payment on the last day fits';
 };
 
+subtest 'a weekly plan past the last day does not fit' => sub {
+    ok !fits( { count => 4, cadence => 'weekly' }, '2027-06-01', '2027-06-11' );
+};
+
 done_testing;

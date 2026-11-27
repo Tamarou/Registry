@@ -93,4 +93,38 @@ subtest 'the missed-payment step is skipped without instalments' => sub {
     is $run->data->{missed_payment_policy}, undef, 'as undef';
 };
 
+sub versions_of ($name) {
+    return $db->query( 'SELECT count(*) FROM offer_versions v JOIN offers o ON o.id = v.offer_id WHERE o.name = ?',
+        "$name offer" )->array->[0];
+}
+
+subtest 'instalments without a missed-payment policy are refused' => sub {
+    my $run = session_run( 'Unsaid term', days_from_now(7), days_from_now(70) );
+    $run->process( $db, step('instalment-payment'), { instalments => 'offered', count => 2, cadence => 'monthly' } );
+    ok $run->data->{instalment_payment}, 'the run offers instalments';
+    is $run->data->{missed_payment_policy}, undef, 'and never reached the missed-payment step';
+    is errors_of( $publish->process( $db, { action => 'publish' }, $run ) ),
+        'Choose what happens when an instalment is missed', 'publishing is refused';
+    is versions_of('Unsaid term'), 0, 'and writes no version';
+    is errors_of( $run->process( $db, step('missed-payment-policy'), {} ) ),
+        'Choose what happens when an instalment is missed', 'the step itself refuses no answer';
+};
+
+subtest 'a weekly plan of four over a one week camp is refused' => sub {
+    my ( $first, $last ) = ( days_from_now(1), days_from_now(7) );
+    my $run  = session_run( 'Camp week', $first, $last );
+    my $why  = "A weekly plan of 4 payments bought today would end after $last, the last day of Camp week";
+    my $plan = { instalments => 'offered', count => 4, cadence => 'weekly' };
+    is errors_of( $run->process( $db, step('instalment-payment'), $plan ) ), $why, 'the instalment step refuses it';
+    is $run->data->{instalment_payment}, undef, 'and records no plan';
+
+    # The offer's session chosen after the plan, as a later step may: publish asks again.
+    $run->update_data( $db, {
+        instalment_payment    => { id => 'parts', count => 4, cadence => 'weekly', surcharge_pct => undef },
+        missed_payment_policy => { kind => 'end' },
+    } );
+    is errors_of( $publish->process( $db, { action => 'publish' }, $run ) ), $why, 'publishing is refused';
+    is versions_of('Camp week'), 0, 'and writes no version';
+};
+
 done_testing;
