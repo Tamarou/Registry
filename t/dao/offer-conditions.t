@@ -7,6 +7,7 @@ use 5.42.0;
 use warnings;
 use lib qw(lib t/lib);
 use Test::More;
+use Test::Exception;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
 use Test::Registry::Sessions qw( make_session session_offer );
@@ -31,14 +32,15 @@ sub family () {
     } 1, 2 );
 }
 
-# An active entitlement to $version held by child $kid, paid for by $parent.
-sub hold ( $version, $kid, $parent ) {
+# An active entitlement to $version held by child $kid, paid for by $parent,
+# in effect from $starts_at.
+sub hold ( $version, $kid, $parent, $starts_at = '2026-09-01T00:00:00Z' ) {
     return Registry::DAO::Entitlement->create( $db, {
         holder_family_member_id => $kid,
         payer_user_id           => $parent,
         offer_version_id        => $version->id,
         payment_plan_id         => 'pay',
-        starts_at               => '2026-09-01T00:00:00Z',
+        starts_at               => $starts_at,
     } );
 }
 
@@ -78,7 +80,7 @@ subtest 'the first child chooses early bird or regular' => sub {
 subtest 'a sibling earlier in the cart qualifies' => sub {
     my ( $s, $regular, $sibling, $early ) = priced_session();
     my ( $parent, $kid1, $kid2 ) = family();
-    is_deeply choosable( $s, holder_family_member_id => $kid2, cart_offer_ids => [ $regular->offer_id ] ),
+    is_deeply choosable( $s, holder_family_member_id => $kid2, cart_lines => [ { family_member_id => $kid1, offer_id => $regular->offer_id } ] ),
         [ $early->id, $sibling->id, $regular->id ], 'kid 2 may choose the sibling rate too';
 };
 
@@ -88,6 +90,24 @@ subtest 'a sibling bought earlier qualifies' => sub {
     hold( other_version(), $kid1, $parent );
     is_deeply $sibling->unmet_conditions( $db, { holder_family_member_id => $kid2, at => $AT } ), [],
         'kid 2 meets the sibling condition';
+};
+
+subtest 'a sibling bought for a later session qualifies' => sub {
+    my ( $s, $regular, $sibling ) = priced_session();
+    my ( $parent, $kid1, $kid2 ) = family();
+    hold( other_version(), $kid1, $parent, '2027-03-01T00:00:00Z' );
+    is_deeply $sibling->unmet_conditions( $db, { holder_family_member_id => $kid2, at => $AT } ), [],
+        "kid 2 meets the sibling condition before kid 1's session starts";
+};
+
+subtest 'a child does not qualify itself through its own earlier cart line' => sub {
+    my ( $s, $regular, $sibling, $early ) = priced_session();
+    my ( $parent, $kid1, $kid2 ) = family();
+    my $lines = [ { family_member_id => $kid1, offer_id => $regular->offer_id } ];
+    is_deeply choosable( $s, holder_family_member_id => $kid1, cart_lines => $lines ),
+        [ $early->id, $regular->id ], "kid 1's own line does not give kid 1 the sibling rate";
+    is_deeply choosable( $s, holder_family_member_id => $kid2, cart_lines => $lines ),
+        [ $early->id, $sibling->id, $regular->id ], 'the same line gives it to kid 2';
 };
 
 subtest 'a past due sibling entitlement still qualifies' => sub {
@@ -111,8 +131,8 @@ subtest 'offer_ids limits which offers count' => sub {
 
     hold( $other, $kid1, $parent );
     is scalar $unmet->()->@*, 1, 'a sibling holding another offer does not count';
-    is scalar $unmet->( cart_offer_ids => [ $other->offer_id ] )->@*, 1, 'nor does a cart line for another offer';
-    is_deeply $unmet->( cart_offer_ids => [ $club->offer_id ] ), [], 'a cart line for a listed offer does';
+    is scalar $unmet->( cart_lines => [ { family_member_id => $kid1, offer_id => $other->offer_id } ] )->@*, 1, 'nor does a cart line for another offer';
+    is_deeply $unmet->( cart_lines => [ { family_member_id => $kid1, offer_id => $club->offer_id } ] ), [], 'a cart line for a listed offer does';
     hold( $club, $kid1, $parent );
     is_deeply $unmet->(), [], 'and so does a sibling holding a listed offer';
 };
@@ -150,9 +170,28 @@ subtest 'holder_is_offerer is never met here' => sub {
     my ( $parent, $kid1, $kid2 ) = family();
     hold( other_version(), $kid1, $parent );
     is scalar $version->unmet_conditions( $db,
-        { holder_family_member_id => $kid2, at => $AT, cart_offer_ids => [ $version->offer_id ] } )->@*, 1,
+        { holder_family_member_id => $kid2, at => $AT, cart_lines => [ { family_member_id => $kid1, offer_id => $version->offer_id } ] } )->@*, 1,
         'it is unmet at checkout';
     is_deeply choosable( $s, holder_family_member_id => $kid2 ), [], 'so nothing on the session is choosable';
+};
+
+subtest 'an unknown condition kind is refused by name' => sub {
+    my ( $s, $regular ) = priced_session();
+    # A kind this code cannot evaluate, as a stored row could carry; never read as met or unmet.
+    my $odd = Registry::DAO::OfferVersion->new(
+        ( map { $_ => $regular->$_ } qw( id offer_id version resource_id price_cents currency
+            units_per_acceptance per_booking_cap policies published_at created_at ) ),
+        conditions => [ { kind => 'moon_phase' } ] );
+    throws_ok { $odd->unmet_conditions( $db, { at => $AT } ) } qr/unknown condition kind 'moon_phase'/,
+        'the refusal names the kind';
+};
+
+subtest 'an at with no offset is refused' => sub {
+    my ( $s, $regular, $sibling ) = priced_session();
+    throws_ok { $sibling->unmet_conditions( $db, { at => '2027-02-01T00:00:00' } ) } qr/instant with its offset/,
+        'a local time is not an instant';
+    throws_ok { Registry::DAO::OfferVersion->choosable_for( $db, $s->id, { at => '2027-02-01' } ) }
+        qr/instant with its offset/, 'nor is a date';
 };
 
 done_testing;

@@ -290,10 +290,14 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
         family_holds_entitlement => sub ( $db, $condition, $ctx, $at ) {
             my $offer_ids = $condition->{offer_ids};
             my %counts    = map { $_ => 1 } ( $offer_ids // [] )->@*;
-            return 1 if grep { !$offer_ids || $counts{$_} } ( $ctx->{cart_offer_ids} // [] )->@*;
+            my $holder    = $ctx->{holder_family_member_id};
+            # A child's own earlier line is not a sibling's.
+            return 1 if grep { ( $_->{family_member_id} // '' ) ne ( $holder // '' )
+                    && ( !$offer_ids || $counts{ $_->{offer_id} // '' } ) } ( $ctx->{cart_lines} // [] )->@*;
             require Registry::DAO::Entitlement;
-            my $in_effect = Registry::DAO::Entitlement->in_effect_sql( 'e',
-                q{tstzrange(?::timestamptz, ?::timestamptz, '[]')} );
+            # Active and not yet over at $at: a sibling bought for a session
+            # that has not started yet counts.
+            my $in_effect = Registry::DAO::Entitlement->in_effect_sql( 'e', q{tstzrange(?::timestamptz, NULL)} );
             return $db->query( qq{
                 SELECT EXISTS (SELECT 1 FROM family_members holder
                     JOIN family_members sibling
@@ -301,7 +305,7 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
                     JOIN entitlements e ON e.holder_family_member_id = sibling.id
                    WHERE holder.id = ? AND $in_effect
                      AND (?::uuid[] IS NULL OR e.offer_id = ANY (?::uuid[])))
-            }, $ctx->{holder_family_member_id}, $at, $at, $offer_ids, $offer_ids )->array->[0];
+            }, $holder, $at, $offer_ids, $offer_ids )->array->[0];
         },
         before => sub ( $db, $condition, $ctx, $at ) {
             $db->query( 'SELECT ?::timestamptz < ?::timestamptz', $at, $condition->{at} )->array->[0];
@@ -315,15 +319,27 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
         holder_is_offerer        => sub ($c) { 'This offer is held only by the one who offers it.' },
     );
 
+    # $ctx->{at}, refused unless an instant with its offset: a local time
+    # names no one moment.
+    my $at_of = sub ($ctx) {
+        my $at = $ctx->{at};
+        croak 'conditions are met or not at an instant with its offset, not ' . ( $at // 'nothing' )
+            unless $instant->($at);
+        return $at;
+    };
+
     # A sentence for each of its conditions the child in $ctx does not meet at
     # $ctx->{at}; none when it may choose this version. $ctx names
-    # holder_family_member_id, at (an instant) and cart_offer_ids: the offers
-    # of earlier cart lines for the family's other children.
+    # holder_family_member_id, at (an instant with its offset) and cart_lines:
+    # the earlier lines of the cart, each { family_member_id, offer_id }.
     method unmet_conditions ( $db, $ctx ) {
         $db = $db->db if $db isa Registry::DAO;
-        my $at = $ctx->{at} // croak 'conditions are met or not at an instant: no at given';
-        return [ map { $UNMET{ $_->{kind} }->($_) }
-                grep { !$MET{ $_->{kind} }->( $db, $_, $ctx, $at ) } @$conditions ];
+        my $at = $at_of->($ctx);
+        return [ map { $UNMET{ $_->{kind} }->($_) } grep {
+            my $met = $MET{ $_->{kind} // '' }
+                or croak "unknown condition kind '" . ( $_->{kind} // '' ) . "': it cannot be evaluated";
+            !$met->( $db, $_, $ctx, $at );
+        } @$conditions ];
     }
 
     # Every current version buying $resource_id, each { version, unmet }, by
@@ -331,13 +347,20 @@ class Registry::DAO::OfferVersion :isa(Registry::DAO::Object) {
     # unmet conditions, and the first of them is preselected.
     sub choosable_for ( $class, $db, $resource_id, $ctx ) {
         $db = $db->db if $db isa Registry::DAO;
+        $at_of->($ctx);
+        # Narrowed here; buys stays the one coverage rule and the final word.
         return [ map { { version => $_, unmet => $_->unmet_conditions( $db, $ctx ) } }
                 grep { $_->buys( $db, $resource_id ) }
                 $db->query( q{
                     SELECT v.* FROM offer_versions v JOIN offers o ON o.id = v.offer_id
                      WHERE v.published_at IS NOT NULL AND v.superseded_at IS NULL
+                       AND ( v.resource_id = ?
+                          OR v.id IN (SELECT offer_version_id FROM offer_version_resources WHERE resource_id = ?)
+                          OR v.class_project_id IN (SELECT e.project_id FROM resources r
+                                                      JOIN events e ON e.id = r.event_id OR e.session_resource_id = r.id
+                                                     WHERE r.id = ?) )
                      ORDER BY v.price_cents, o.name, v.id
-                } )->expand->hashes->map( sub { $class->new(%$_) } )->each ];
+                }, ($resource_id) x 3 )->expand->hashes->map( sub { $class->new(%$_) } )->each ];
     }
 
     # The plans a customer chooses between, each { id, kind, fraction }.
