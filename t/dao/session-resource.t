@@ -131,6 +131,47 @@ subtest 'refund cutoff counts back from the first day' => sub {
 
     is $refusal->( $before->(25) ), undef, '25 hours before the first day it is refunded';
     like $refusal->( $before->(23) ), qr/only until/, '23 hours before the first day it is refused';
+    like $refusal->( $before->(23) ), qr/24 hours before it starts/, 'in words that fit a session';
+};
+
+subtest 'an occurrence day cannot join a session' => sub {
+    my $s   = make_session($db);
+    my $day = $s->session_days($db)->[0];
+    # An ordinary occurrence with its own resource, at another hour of the same program and room.
+    my $event = $db->query( q{
+        INSERT INTO events (project_id, location_id, teacher_id, time, duration, capacity, status)
+        SELECT project_id, location_id, teacher_id, time + interval '1 hour', 60, 4, 'published' FROM events WHERE id = ?
+        RETURNING id
+    }, $day->{id} )->array->[0];
+    Registry::DAO::Resource->for_occurrence( $db, $event );
+
+    ok !eval { $db->query( 'UPDATE events SET session_resource_id = ? WHERE id = ?', $s->id, $event ); 1 },
+        'an event with an occurrence resource cannot become a session day';
+    is $db->dbh->state, '23514', 'refused as a check violation';
+    like $@, qr/session's day/, 'saying why';
+};
+
+subtest 'a session has at least one day' => sub {
+    my $before = $db->query('SELECT count(*) FROM resources')->array->[0];
+    ok !eval { make_session( $db, days => [] ); 1 }, 'a session of no days is refused';
+    like $@, qr/at least one day/, 'saying why';
+    is $db->query('SELECT count(*) FROM resources')->array->[0], $before, 'and no resource is made';
+};
+
+subtest 'a start in the spring gap is reported shifted' => sub {
+    my ( $s, $shifted ) = make_session( $db, days => [qw( 2027-03-14 2027-03-15 )], start => '02:30', minutes => 60 );
+    is_deeply $shifted, [ { asked => '2027-03-14 02:30', local_start => '2027-03-14 03:30' } ],
+        'the day whose 02:30 does not exist is reported at 03:30';
+    ok same_instant( $s->session_days($db)->[0]{time}, local_instant( '2027-03-14 03:30', 'America/New_York' ) ),
+        'and starts then';
+};
+
+subtest 'waitlist offer hours are capped' => sub {
+    ok !eval { make_session( $db, waitlist => { kind => 'queue', offer_hold_hours => 100000 } ); 1 },
+        'a hundred thousand hours is refused';
+    like $@, qr/waitlist/, 'by the waitlist check';
+    is make_session( $db, waitlist => { kind => 'queue', offer_hold_hours => 9999 } )->waitlist->{offer_hold_hours},
+        9999, 'four digits are kept';
 };
 
 done_testing;

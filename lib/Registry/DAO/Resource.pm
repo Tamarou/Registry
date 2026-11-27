@@ -34,10 +34,18 @@ class Registry::DAO::Resource :isa(Registry::DAO::Object) {
     }
 
     # A session: one finite resource of $data->{capacity} seats whose days are
-    # its events, one published event per date in $data->{days}, each at
-    # $data->{start} (HH:MM) in the location's zone for $data->{minutes}.
+    # its events, one published event per date in $data->{days} (at least
+    # one), each at $data->{start} (HH:MM) in the location's zone for
+    # $data->{minutes}. A start that does not exist on a day (the spring DST
+    # gap) moves forward, by GenerateOccurrences' rule. In list context also
+    # returns those days as [ { asked, local_start } ], as that step reports them.
     sub create_session ( $class, $db, $data ) {
         $db = $db->db if $db isa Registry::DAO;
+        require Registry::DAO::WorkflowSteps::GenerateOccurrences;
+        croak 'a session has at least one day' unless ref $data->{days} eq 'ARRAY' && $data->{days}->@*;
+        my $zone = $db->select( 'locations', 'time_zone', { id => $data->{location_id} } )->array
+            or croak "no location $data->{location_id} here";
+
         my $tx      = $db->dbh->{AutoCommit} ? $db->begin : undef;
         my $session = $class->create( $db, {
             name     => $data->{name},
@@ -45,17 +53,19 @@ class Registry::DAO::Resource :isa(Registry::DAO::Object) {
             capacity => $data->{capacity},
             waitlist => { -json => $data->{waitlist} // { kind => 'none' } },
         } );
+        my @shifted;
         for my $day ( $data->{days}->@* ) {
-            $db->query( q{
-                INSERT INTO events (project_id, location_id, teacher_id, time, duration, capacity, status, session_resource_id)
-                SELECT ?, l.id, ?, (?::date + ?::time) AT TIME ZONE l.time_zone, ?, ?, 'published', ?
-                  FROM locations l WHERE l.id = ?
-            }, $data->{project_id}, $data->{teacher_id}, $day, $data->{start}, $data->{minutes},
-                $data->{capacity}, $session->id, $data->{location_id} )->rows
-                or croak "no location $data->{location_id} here";
+            my $local = "$day $data->{start}";
+            my $slot  = Registry::DAO::WorkflowSteps::GenerateOccurrences->instant( $db, $local, $zone->[0] );
+            push @shifted, { asked => $local, local_start => $slot->{local_start} } if $slot->{shifted};
+            $db->insert( 'events', {
+                project_id => $data->{project_id}, location_id => $data->{location_id},
+                teacher_id => $data->{teacher_id}, time => $slot->{instant}, duration => $data->{minutes},
+                capacity   => $data->{capacity}, status => 'published', session_resource_id => $session->id,
+            } );
         }
         $tx->commit if $tx;
-        return $session;
+        return wantarray ? ( $session, \@shifted ) : $session;
     }
 
     # Its days (events) as { id, time, duration }, in time order; none unless
