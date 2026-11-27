@@ -24,7 +24,7 @@ $ENV{DB_URL} = $test_db->uri;
 import_all_workflows($dao);
 
 my %user;
-for my $role (qw( admin staff )) {
+for my $role (qw( admin staff parent )) {
     $user{$role} = Test::Registry::Fixtures::create_user( $dao,
         { username => "session_$role", name => "Session \u$role", email => "$role\@session.test", user_type => $role } );
     join_tenant( $dao, $user{$role}, $role );
@@ -68,11 +68,11 @@ my %WEEK = (
 );
 
 # A client on the sessions step of a new run, with its program created.
-sub on_sessions ($program) {
+sub on_sessions ( $program, $location = $site ) {
     my $t = client( $user{admin} );
     $t->get_ok('/session-setup')->status_is(200);
     check_screen( $t, 'program' );
-    like submit_step( $t, 'program', program_mode => 'create', program_name => $program, location_id => $site->id ),
+    like submit_step( $t, 'program', program_mode => 'create', program_name => $program, location_id => $location->id ),
         qr{/sessions\z}, 'on to the sessions';
     return $t;
 }
@@ -152,6 +152,15 @@ subtest 'a last day before the first is refused' => sub {
 
 subtest 'a queue without hours is refused' => sub {
     refused( 'Queue camp', qr/A queue needs the hours a freed seat is held for the next child/, offer_hold_hours => '' );
+};
+
+subtest 'a parent is refused as the teacher' => sub {
+    refused( 'Parent camp', qr/Choose a teacher from your staff and administrators/, teacher_id => $user{parent}->id );
+};
+
+subtest 'an unknown teacher is refused' => sub {
+    refused( 'Stranger camp', qr/Choose a teacher from your staff and administrators/,
+        teacher_id => '6f1c1f0e-3b7a-4d6e-9a51-2f0d8c4b7e13' );
 };
 
 done_testing;
