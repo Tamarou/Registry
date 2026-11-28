@@ -315,4 +315,19 @@ subtest 'a session that started while the parent paid is refunded, not booked' =
     like $told->{message}, qr/Session \d+ had already started/, 'the parent is told it had started';
 };
 
+subtest 'a schedule lost between the commit and its job is queued again' => sub {
+    my ( $s, $run, $payment ) = paid_mixed_cart();
+    drive($minion);
+    my ( undef, $sib_e ) = entitlements_of($payment)->@*;
+    # As if the process died after the COMMIT, before queueing the job.
+    $minion->job( $_->{id} )->remove for grep { $_->{args}[0] eq $sib_e->id } schedule_job_rows();
+    is schedule_jobs_for( $sib_e->id ), 0, 'no schedule job';
+
+    my $workflow = $dao->find( Workflow => { slug => 'session-checkout' } );
+    Test::Registry::Async::settle( $workflow->get_step( $db, { slug => 'done' } )->process( $db, {}, reload($run) ) );
+    is schedule_jobs_for( $sib_e->id ), 1, 'the decided checkout queues it again';
+    Test::Registry::Async::settle( $workflow->get_step( $db, { slug => 'done' } )->process( $db, {}, reload($run) ) );
+    is schedule_jobs_for( $sib_e->id ), 1, 'once';
+};
+
 done_testing;

@@ -29,6 +29,9 @@ class Registry::DAO::WorkflowSteps::CompleteSessionCheckout :isa(Registry::DAO::
             ->expand->hash->{data} // {};
         if ( ref $data->{checkout_outcome} eq 'HASH' ) {
             $tx->commit if $tx;
+            # A schedule whose job was never queued (the process died after
+            # the COMMIT) is queued now; enqueue skips one already waiting.
+            $self->_schedule( $db, $run, $data->{owed_payment_id}, $data->{checkout_outcome} );
             return $self->_refund( $db, $run, $data->{checkout_outcome} );
         }
 
@@ -155,7 +158,8 @@ class Registry::DAO::WorkflowSteps::CompleteSessionCheckout :isa(Registry::DAO::
         my $payment = defined $payment_id && !ref $payment_id && $payment_id =~ $UUID
             && Registry::DAO::Payment->find( $db, { id => $payment_id } ) or return;
         my $slug = $payment->metadata->{tenant_slug};
-        my @scheduled = map { $outcome->{booked}{ _key($_) } // () } grep { $_->{kind} eq 'instalments' } $payment->metadata->{lines}->@*;
+        my @scheduled = grep { !Registry::DAO::Payment->instalment_schedule_of( $db, $_ ) }
+            map { $outcome->{booked}{ _key($_) } // () } grep { $_->{kind} eq 'instalments' } $payment->metadata->{lines}->@*;
         for my $eid (@scheduled) {
             try { Registry::Job::InstalmentSchedule->enqueue( Registry::Job::InstalmentSchedule->minion,
                     instalment_schedule => $eid, $slug ) }
