@@ -81,7 +81,11 @@ subtest 'Stripe return GET completes the run instead of re-rendering payment' =>
 
     is Registry::DAO::Payment->find( $db, { id => $payment->id } )->status, 'completed',
         'the returned intent settled the charge';
-    is step_of($run), 'payment', 'and the run moved past its payment';
+    # Past payment, the controller completes the checkout at once: it has
+    # nothing to ask until the cart is booked.
+    is step_of($run), 'complete', 'and the run moved past its payment and booked the cart';
+    is Registry::DAO::WorkflowRun->find( $db, { id => $run->id } )->next_step($db)->slug, 'done',
+        'leaving the done page to show';
 };
 
 subtest 'an ordinary GET with no Stripe params still renders the form' => sub {
