@@ -140,36 +140,71 @@ subtest 'schedule params carry the entitlement id' => sub {
         "the schedule names the child's entitlement it bills for";
 };
 
-# Stripe bills a schedule from its start's day of the month, clamped to
-# shorter months: started on the checkout date, Jan 31 bills Feb 28, Mar 31,
-# Apr 30, as Instalments::due_dates says. Started on part two's date (Feb 28)
-# it would bill Mar 28. So the schedule starts on the checkout date with a $0
-# period for the part already paid, and every phase keeps that anchor.
-subtest 'the schedule starts on the checkout date so month-end due dates are kept' => sub {
-    my $params = Registry::DAO::Payment::instalment_schedule_params( {
-        customer          => 'cus_probe',
-        payment_method    => 'pm_probe',
-        revenue_share_pct => 2.5,
-        currency          => 'usd',
-        product           => 'prod_probe',
-        cadence           => 'monthly',
-        entitlement_id    => 'ent_probe',
-        first_date        => '2027-01-31',
-        instalments       => [
+# Stripe bills on its billing cycle anchor's day, clamped to shorter months
+# ("a billing cycle anchor date of January 31 bills ... February 28 ..., then
+# March 31, April 30"), and a schedule's anchor is when it starts. Started on
+# part two's due date the anchor is that day: exact when counting on from it
+# gives the stored dates (weekly, or a day of the month up to the 28th).
+# Otherwise only a start on the checkout date itself, with a $0 period for
+# the part paid then, anchors on the right day. Never backdated.
+use Registry::PriceOps::Instalments ();
+sub start_for ( $cadence, $first, $today, $count = 4 ) {
+    my $parts = Registry::PriceOps::Instalments::parts( 10000, { count => $count, cadence => $cadence }, $first );
+    return Registry::DAO::Payment::instalment_schedule_start( $cadence, $parts, $today );
+}
+
+subtest 'a schedule starts on part two when its dates count on from there' => sub {
+    is start_for( weekly    => '2027-01-31', '2027-01-31' ), 'second_due', 'weekly';
+    is start_for( monthly   => '2027-01-15', '2027-01-20' ), 'second_due', 'a monthly plan on the 15th';
+    is start_for( quarterly => '2027-01-28', '2027-02-01' ), 'second_due', 'a quarterly plan on the 28th';
+    is start_for( monthly   => '2027-03-30', '2027-03-30', 2 ), 'second_due',
+        'and a month-end plan whose dates never pass a shorter month';
+};
+
+subtest 'a month-end schedule starts now, on its checkout date, or not at all' => sub {
+    is start_for( monthly   => '2027-01-31', '2027-01-31' ), 'now', 'scheduled on the checkout date: now';
+    is start_for( quarterly => '2027-11-30', '2027-11-30' ), 'now', 'quarterly too';
+    is start_for( monthly   => '2027-01-31', '2027-02-01' ), undef,
+        'a day later, no start makes Stripe charge Feb 28 then Mar 31';
+};
+
+subtest 'nothing starts on or after part two is due' => sub {
+    is start_for( weekly  => '2027-01-31', '2027-02-07' ), undef, 'on the day';
+    is start_for( monthly => '2027-01-15', '2027-03-01' ), undef, 'or later';
+};
+
+sub params_starting ( $start ) {
+    return Registry::DAO::Payment::instalment_schedule_params( {
+        customer => 'cus_probe', payment_method => 'pm_probe', revenue_share_pct => 2.5,
+        currency => 'usd', product => 'prod_probe', cadence => 'monthly', entitlement_id => 'ent_probe',
+        start    => $start,
+        instalments => [
             { amount_cents => 3333, due_date => '2027-02-28' },
             { amount_cents => 3334, due_date => '2027-03-31' },
         ],
     } );
-    is $params->{start_date}, Registry::DAO::Payment::_epoch_for_date('2027-01-31'),
-        'it starts on the checkout date, not the second due date';
-    is_deeply [ map { [ $params->{"phases[$_][items][0][price_data][unit_amount]"},
-                        $params->{"phases[$_][iterations]"},
-                        $params->{"phases[$_][items][0][price_data][recurring][interval]"},
-                        $params->{"phases[$_][items][0][price_data][recurring][interval_count]"} ] } 0 .. 2 ],
-        [ [ 0, 1, month => 1 ], [ 3333, 1, month => 1 ], [ 3334, 1, month => 1 ] ],
-        'a $0 period for the part paid at checkout, then parts two and three on the same interval';
-    ok !( grep { /billing_cycle_anchor/ } keys %$params ), 'and no phase resets the anchor';
-    ok !exists $params->{'phases[3][iterations]'}, 'three phases at most, however many parts';
+}
+
+sub shape ( $params ) {
+    my @phases = grep { exists $params->{"phases[$_][iterations]"} } 0 .. 9;
+    return [ map { [ $params->{"phases[$_][items][0][price_data][unit_amount]"},
+                     $params->{"phases[$_][iterations]"},
+                     $params->{"phases[$_][proration_behavior]"} ] } @phases ];
+}
+
+subtest 'started on part two, the schedule bills parts two to n from then' => sub {
+    my $params = params_starting('second_due');
+    is $params->{start_date}, Registry::DAO::Payment::_epoch_for_date('2027-02-28'), "on part two's due date";
+    is_deeply shape($params), [ [ 3333, 1, 'none' ], [ 3334, 1, 'none' ] ], 'with no proration at any phase';
+    ok !( grep { /billing_cycle_anchor|backdate/ } keys %$params ), 'and nothing moves the anchor';
+};
+
+subtest 'started now, a $0 period for the part paid at checkout keeps the anchor' => sub {
+    my $params = params_starting('now');
+    is $params->{start_date}, 'now', 'now, not a past date';
+    is_deeply shape($params), [ [ 0, 1, 'none' ], [ 3333, 1, 'none' ], [ 3334, 1, 'none' ] ],
+        'one $0 period, then parts two and three, never prorated';
+    ok !( grep { /billing_cycle_anchor|backdate/ } keys %$params ), 'and nothing moves the anchor';
 };
 
 subtest 'a tenant with no revenue share still gets its money' => sub {
@@ -214,7 +249,7 @@ my $plan_pct = Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tena
 
 # A child's cart charge, paid, and the entitlement it made: $100 in three
 # monthly parts, so the schedule covers 3333 and 3334.
-sub checkout (%o) { instalment_checkout( $db, slug => $seller, %o ) }
+sub checkout (%o) { instalment_checkout( $db, slug => $seller, first_date => '2027-03-15', %o ) }
 
 # Runs $code with the four Stripe calls recorded rather than sent; listing
 # the customer's schedules answers @$listed.
@@ -261,11 +296,11 @@ subtest 'schedule is made on the tenant account with fee percent and no transfer
     ok !( grep { /transfer_data/ } keys %$params ), 'and nothing is transferred';
     is $params->{customer}, 'cus_one', "billed to the checkout charge's customer";
     is $params->{'default_settings[default_payment_method]'}, 'pm_one', 'on the card it saved';
-    is_deeply [ map { $params->{"phases[$_][items][0][price_data][unit_amount]"} } 0 .. 2 ],
-        [ 0, 3333, 3334 ], 'a $0 period for part one, then parts two to n, from the charge line';
+    is_deeply [ map { $params->{"phases[$_][items][0][price_data][unit_amount]"} } 0, 1 ],
+        [ 3333, 3334 ], 'parts two to n, from the charge line';
     is $params->{start_date},
-        Registry::DAO::Payment::_epoch_for_date( $c->{line}{parts}[0]{due_date} ),
-        'starting on the checkout date';
+        Registry::DAO::Payment::_epoch_for_date( $c->{line}{parts}[1]{due_date} ),
+        "starting on part two's due date";
 };
 
 # Lets the Connect webhook tell an invoice from a schedule it has not recorded
@@ -508,7 +543,7 @@ sub seller_made_schedule_is_refused ( $listed_fee, $listed_phases ) {
 }
 
 subtest 'a listed schedule naming this entitlement but taking no fee is not adopted' => sub {
-    seller_made_schedule_is_refused( undef, [ {}, {}, {} ] );
+    seller_made_schedule_is_refused( undef, [ {}, {} ] );
 };
 
 subtest 'a listed schedule naming this entitlement with the wrong phases is not adopted' => sub {
@@ -666,7 +701,7 @@ subtest 'a retry that finds the entitlement ended cancels the schedule an attemp
 subtest 'a retry past due date two cancels the schedule an attempt made' => sub {
     my $c  = checkout();
     my $at = made_then_crashed($c);
-    $db->query( q{UPDATE payments SET metadata = jsonb_set(metadata, '{lines,0,parts,1,due_date}', '"2000-01-01"')
+    $db->query( q{UPDATE payments SET metadata = jsonb_set(metadata, '{lines,0,parts,1,due_date}', '"2026-01-01"')
                    WHERE id = ?}, $c->{payment}->id );
     with_keyed_stripe( sub {
         Registry::DAO::Payment->find( $db, { id => $c->{payment}->id } )

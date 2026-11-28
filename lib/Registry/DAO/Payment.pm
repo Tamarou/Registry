@@ -138,15 +138,11 @@ field $_stripe_client = undef;
     # present to satisfy a card challenge and the card is saved; this covers
     # what is left, charged automatically against that card.
     #
-    # Stripe bills a schedule on its start's day of the month, clamped to
-    # shorter months (a Jan 31 start bills Feb 28, Mar 31, Apr 30), which is
-    # how Instalments::due_dates counts from the checkout date. Started on
-    # part two's date instead, Feb 28 would bill Mar 28. So given
-    # `first_date` (the checkout date, part one's) the schedule starts then,
-    # with a $0 period for the part already paid, and no phase resets the
-    # anchor: Stripe charges exactly the stored due dates, in at most three
-    # phases however many parts. Without it, the schedule starts on part
-    # two's date.
+    # `start` is instalment_schedule_start's choice. `second_due` starts it on
+    # part two's due date. `now` starts it at once (on the checkout date) with
+    # a $0 period for the part already paid, so its anchor is the checkout
+    # day. Either way no phase prorates or moves the anchor, so Stripe charges
+    # the stored due dates, in at most three phases however many parts.
     sub instalment_schedule_params ( $args ) {
         my $recurring = $RECURRING{ $args->{cadence} // '' }
             or die "no Stripe interval for cadence '" . ( $args->{cadence} // '' ) . "'\n";
@@ -156,12 +152,12 @@ field $_stripe_client = undef;
 
         my $phases = instalment_phases(
             $instalments, $currency, $args->{description} // 'Enrollment' );
-        unshift @$phases, { %{ $phases->[0] }, unit_amount => 0, iterations => 1 }
-            if $args->{first_date};
+        my $now = ( $args->{start} // '' ) eq 'now';
+        unshift @$phases, { %{ $phases->[0] }, unit_amount => 0, iterations => 1 } if $now;
 
         my %params = (
             customer   => $args->{customer},
-            start_date => _epoch_for_date( $args->{first_date} // $instalments->[0]{due_date} ),
+            start_date => $now ? 'now' : _epoch_for_date( $instalments->[0]{due_date} ),
 
             # It ends. An instalment plan is a fixed number of charges, and a
             # schedule that renewed would bill a family for a camp that finished
@@ -193,6 +189,7 @@ field $_stripe_client = undef;
         for my $i ( 0 .. $#$phases ) {
             my $p = $phases->[$i];
             $params{"phases[$i][iterations]"} = $p->{iterations};
+            $params{"phases[$i][proration_behavior]"} = 'none';
             $params{"phases[$i][items][0][price_data][currency]"}    = $p->{currency};
             $params{"phases[$i][items][0][price_data][unit_amount]"} = $p->{unit_amount};
             # A product id, not product_data. Stripe refuses inline product
@@ -215,6 +212,29 @@ field $_stripe_client = undef;
         my $subtotal = $invoice->{subtotal};
         return ( $invoice->{billing_reason} // '' ) eq 'subscription_create'
             && defined $subtotal && !ref $subtotal && $subtotal eq '0' ? 1 : 0;
+    }
+
+    # How a schedule for $parts (part one paid at checkout) on $cadence must
+    # start, made on UTC date $today, for Stripe to charge exactly the stored
+    # due dates: 'second_due', 'now', or undef when no start can.
+    #
+    # Stripe bills on its anchor's day, clamped to shorter months ("a billing
+    # cycle anchor date of January 31 bills ... February 28 ..., then March
+    # 31, April 30"), and a schedule anchors where it starts. From part two's
+    # date that is exact when counting on from it gives the stored dates:
+    # weekly, or a day of the month a shorter month never clamps. A Jan 31
+    # plan's Feb 28 would go on to Mar 28, so it starts now, which anchors on
+    # the 31st only on the checkout date itself. Never backdated: Stripe bills
+    # the elapsed time of a past start. Nothing starts once part two is due,
+    # as it could bill a missed period at once.
+    sub instalment_schedule_start ( $cadence, $parts, $today ) {
+        my @later = @{$parts}[ 1 .. $#$parts ];
+        return undef if !@later || $today ge $later[0]{due_date};
+        require Registry::PriceOps::Instalments;
+        my $counted = Registry::PriceOps::Instalments::due_dates(
+            { count => scalar @later, cadence => $cadence }, $later[0]{due_date} );
+        return 'second_due' if "@$counted" eq join ' ', map { $_->{due_date} } @later;
+        return $today eq $parts->[0]{due_date} ? 'now' : undef;
     }
 
     # YYYY-MM-DD to an epoch second, which is what Stripe takes. Noon UTC rather
@@ -303,12 +323,13 @@ field $_stripe_client = undef;
         my $now  = Registry::DAO::Entitlement->find( $raw, { id => $eid } );
         my $gone = __PACKAGE__->schedule_cancelled( $raw, $id, $eid ) || !$now || $now->state ne 'active';
 
-        # A schedule made on or after part two's due date could bill a missed
-        # period at once. So nothing is made, and the studio arranges the
-        # rest by hand.
+        # No start makes Stripe charge the stored dates (part two is already
+        # due, or a month-end plan was not scheduled on its checkout date): so
+        # nothing is made, and the studio arranges the rest by hand.
         my @today = gmtime;
-        my $late  = sprintf( '%04d-%02d-%02d', $today[5] + 1900, $today[4] + 1, $today[3] )
-            ge $remaining[0]{due_date};
+        my $start = instalment_schedule_start( $plan->{cadence}, \@parts,
+            sprintf( '%04d-%02d-%02d', $today[5] + 1900, $today[4] + 1, $today[3] ) );
+        my $late  = !$start;
 
         if ( $gone || $late ) {
             # An earlier attempt may have made one at Stripe and died before
@@ -321,8 +342,8 @@ field $_stripe_client = undef;
             my ($session) = @{ $raw->select( 'resources', 'name', { id => $line->{resource_id} } )->array // [] };
             require Registry::DAO::Notification;
             Registry::DAO::Notification->alert_admins( $raw, 'Instalments need arranging by hand',
-                sprintf( 'The instalments for %s in %s were not scheduled at Stripe before the second '
-                       . 'was due (%s), so Registry has not scheduled them%s: arrange the remaining %d '
+                sprintf( 'The instalments for %s in %s could not be scheduled at Stripe to charge on '
+                       . 'their due dates (the next was due %s), so Registry has not scheduled them%s: arrange the remaining %d '
                        . 'payments with the family by hand. (Entitlement %s.)',
                     $child // 'a child', $session // 'a session', $remaining[0]{due_date},
                     ( $stopped ? ' and has cancelled the schedule an earlier attempt left at Stripe' : '' ),
@@ -338,9 +359,10 @@ field $_stripe_client = undef;
         my $card = $intent->{payment_method}
             or die "payment $id saved no card\n";
 
-        # The $0 opening phase, then the parts' (instalment_schedule_params).
+        # A $0 opening phase when it starts now, then the parts'
+        # (instalment_schedule_params).
         my $schedule = $self->_schedule_at_stripe( $client, $customer, $pct, $eid,
-            1 + @{ instalment_phases( \@remaining, lc $currency, $description ) } );
+            ( $start eq 'now' ) + @{ instalment_phases( \@remaining, lc $currency, $description ) } );
         $schedule ||= $client->create_subscription_schedule( {
             %{ instalment_schedule_params( {
                 customer          => $customer,
@@ -356,7 +378,7 @@ field $_stripe_client = undef;
                     _idempotency_key           => "instalment_schedule:$eid:product",
                 })->{id},
                 instalments       => \@remaining,
-                first_date        => $parts[0]{due_date},
+                start             => $start,
             } ) },
             _idempotency_key => "instalment_schedule:$eid:schedule",
         } );

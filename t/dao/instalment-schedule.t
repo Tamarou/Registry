@@ -106,10 +106,10 @@ subtest 'rows two to n carry the entitlement and due dates' => sub {
         'and the checkout charge carries no instalment columns';
 
     my $monthly = instalment_checkout( $db, slug => $seller, count => 3, cadence => 'monthly',
-        first_date => '2027-01-31' );
+        first_date => '2027-01-15' );
     with_stripe( sub { $monthly->{payment}->schedule_instalments_for( $db, $monthly->{entitlement} ) } );
-    is_deeply [ map { $_->{due_date} } rows($monthly)->@* ], [qw( 2027-02-28 2027-03-31 )],
-        'monthly due dates anchor to the first date';
+    is_deeply [ map { $_->{due_date} } rows($monthly)->@* ], [qw( 2027-02-15 2027-03-15 )],
+        'monthly due dates count from the first date';
 };
 
 sub cancelled ($c) {
@@ -117,7 +117,7 @@ sub cancelled ($c) {
 }
 
 subtest 'cancelling records the entitlement before asking stripe' => sub {
-    my $c = instalment_checkout( $db, slug => $seller );
+    my $c = instalment_checkout( $db, slug => $seller, first_date => '2027-03-15' );
     my $schedule;
     with_stripe( sub { $schedule = $c->{payment}->schedule_instalments_for( $db, $c->{entitlement} ) } );
 
@@ -137,7 +137,7 @@ subtest 'cancelling records the entitlement before asking stripe' => sub {
 };
 
 subtest 'a second job run inserts nothing' => sub {
-    my $c = instalment_checkout( $db, slug => $seller );
+    my $c = instalment_checkout( $db, slug => $seller, first_date => '2027-03-15' );
     my ( $first, $second );
     with_stripe( sub { $first = $c->{payment}->schedule_instalments_for( $db, $c->{entitlement} ) } );
     my $before = rows($c);
@@ -153,7 +153,7 @@ subtest 'a second job run inserts nothing' => sub {
 };
 
 subtest 'a second cancel does nothing' => sub {
-    my $c = instalment_checkout( $db, slug => $seller );
+    my $c = instalment_checkout( $db, slug => $seller, first_date => '2027-03-15' );
     my $calls = with_stripe( sub {
         $c->{payment}->schedule_instalments_for( $db, $c->{entitlement} );
         Registry::DAO::Payment->find( $db, { id => $c->{payment}->id } )
@@ -165,7 +165,7 @@ subtest 'a second cancel does nothing' => sub {
 };
 
 subtest 'a cancel before the schedule job runs leaves nothing to schedule' => sub {
-    my $c = instalment_checkout( $db, slug => $seller );
+    my $c = instalment_checkout( $db, slug => $seller, first_date => '2027-03-15' );
     my ( $cancelled, $scheduled );
     my $calls = with_stripe( sub {
         $cancelled = $c->{payment}->cancel_instalment_schedule( $db, $c->{entitlement} );
@@ -181,7 +181,7 @@ subtest 'a cancel before the schedule job runs leaves nothing to schedule' => su
 };
 
 subtest 'an ended entitlement is not scheduled' => sub {
-    my $c = instalment_checkout( $db, slug => $seller );
+    my $c = instalment_checkout( $db, slug => $seller, first_date => '2027-03-15' );
     $c->{entitlement}->end( $db, 'unpaid', 'dropped' );
     my $scheduled;
     my $calls = with_stripe( sub {
@@ -194,7 +194,7 @@ subtest 'an ended entitlement is not scheduled' => sub {
 };
 
 subtest 'a cancel waits for a schedule being made, then cancels it' => sub {
-    my $c   = instalment_checkout( $db, slug => $seller );
+    my $c   = instalment_checkout( $db, slug => $seller, first_date => '2027-03-15' );
     my $db2 = $t_db->db->db;
     my $waited;
     my $calls = with_stripe(
@@ -215,7 +215,7 @@ subtest 'a cancel waits for a schedule being made, then cancels it' => sub {
 
 subtest 'a released schedule has its subscription cancelled and admins told' => sub {
     my $admin = Test::Registry::Fixtures::create_user( $db, { username => 'released-admin', user_type => 'admin' } );
-    my $c = instalment_checkout( $db, slug => $seller );
+    my $c = instalment_checkout( $db, slug => $seller, first_date => '2027-03-15' );
     my $schedule;
     with_stripe( sub { $schedule = $c->{payment}->schedule_instalments_for( $db, $c->{entitlement} ) } );
 
@@ -253,4 +253,20 @@ subtest 'a job run after due date two creates no schedule and alerts admins' => 
     my $told = $db->select( 'notifications', [qw( subject message )], { user_id => $admin->id } )->hashes;
     is $told->size, 1, 'the admins are told';
     like $told->[0]{message}, qr/\Q$child\E.*\Q$session\E.*by hand/s, 'to arrange the child\'s instalments by hand';
+};
+
+# Stripe can only charge Feb 28 then Mar 31 from an anchor on the 31st, set
+# by starting on the checkout date itself. Run any later, the dates Stripe
+# would charge are not the ones the family was shown.
+subtest 'a month-end plan not scheduled on its checkout date is arranged by hand' => sub {
+    my $admin = Test::Registry::Fixtures::create_user( $db, { username => 'month-end-admin', user_type => 'admin' } );
+    my $c = instalment_checkout( $db, slug => $seller, cadence => 'monthly', first_date => '2027-01-31' );
+    my $scheduled;
+    my $calls = with_stripe( sub { $scheduled = $c->{payment}->schedule_instalments_for( $db, $c->{entitlement} ) } );
+    is $scheduled, undef, 'nothing is scheduled';
+    is_deeply [ grep { $_->[0] =~ /\Acreate_/ } @$calls ], [], 'nothing is made at Stripe';
+    is_deeply rows($c), [], 'or recorded';
+    my $told = $db->select( 'notifications', ['message'], { user_id => $admin->id } )->hashes;
+    is $told->size, 1, 'the admins are told';
+    like $told->[0]{message}, qr/by hand/, 'to arrange them by hand';
 };

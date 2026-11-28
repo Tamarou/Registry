@@ -22,9 +22,16 @@ my $platform = Registry::Service::Stripe->from_env;
 my $stripe;
 my @schedules;
 my @customers;
+my @clocks;
 END {
     local $?;
     my $s = $stripe or return;
+
+    # Deleting a test clock deletes its customers and their schedules.
+    for my $id (@clocks) {
+        eval { $s->_await( $s->_request_async( 'DELETE', "test_helpers/test_clocks/$id" ) ); 1 }
+            or warn "# could not delete $id: $@";
+    }
 
     # Schedules first: a customer with a live schedule cannot be deleted.
     for my $id (@schedules) {
@@ -76,32 +83,59 @@ my $product = $stripe->_await( $stripe->create_product_async({
 }) );
 like $product->{id}, qr/^prod_/, 'a product for the session being sold';
 
-# Registry's request for a child's parts after the first, made on the
-# tenant's account as schedule_instalments_for makes it: from the checkout
-# date $first, with the entitlement it bills for. $parts defaults to $100 in
-# $count on $cadence -- the uneven case, 33.33 / 33.33 / 33.34 for three.
-my $ENTITLEMENT = '00000000-0000-4000-8000-0000000000e1';
-sub made_schedule ( $cadence, $first, $count = 3, $parts = undef ) {
-    $parts //= Registry::PriceOps::Instalments::parts( 10000,
-        { count => $count, cadence => $cadence }, $first );
-    my $params = Registry::DAO::Payment::instalment_schedule_params({
-        product           => $product->{id},
-        customer          => $customer->{id},
-        payment_method    => $pm->{id},
-        revenue_share_pct => 2.5,
-        currency          => 'usd',
-        description       => 'Summer Camp',
-        cadence           => $cadence,
-        entitlement_id    => $ENTITLEMENT,
-        first_date        => $first,
-        instalments       => [ @{$parts}[ 1 .. $#$parts ] ],
-    });
-    my $schedule = eval { $stripe->create_subscription_schedule($params) };
-    ok $schedule, "the $cadence schedule was created" or do { diag $@; return };
-    like $schedule->{id}, qr/^sub_sched_/, 'and Stripe gave it an id';
-    push @schedules, $schedule->{id};
-    return $schedule;
+sub api ( $method, $path, $params = {} ) { $stripe->_await( $stripe->_request_async( $method, $path, $params ) ) }
+sub noon ($ymd) { Registry::DAO::Payment::_epoch_for_date($ymd) }
+sub ymd ($epoch) { my @t = gmtime $epoch; sprintf '%04d-%02d-%02d', $t[5] + 1900, $t[4] + 1, $t[3] }
+
+# A customer with a saved card on a test clock frozen at $at, on the tenant's
+# account, so Stripe's own billing can be run forward to each due date.
+sub clocked_customer ($at) {
+    my $clock = api( POST => 'test_helpers/test_clocks', { frozen_time => $at, name => 'registry instalments' } );
+    push @clocks, $clock->{id};
+    my $cus = $stripe->create_customer( { test_clock => $clock->{id}, 'metadata[purpose]' => 'registry-test-suite' } );
+    my $card = api( POST => 'payment_methods', { type => 'card', 'card[token]' => 'tok_visa' } );
+    api( POST => "payment_methods/$card->{id}/attach", { customer => $cus->{id} } );
+    return ( $clock, $cus->{id}, $card->{id} );
 }
+
+sub advance ( $clock, $to ) {
+    api( POST => "test_helpers/test_clocks/$clock->{id}/advance", { frozen_time => $to } );
+    for ( 1 .. 120 ) {
+        return if api( GET => "test_helpers/test_clocks/$clock->{id}" )->{status} eq 'ready';
+        sleep 2;
+    }
+    die "test clock $clock->{id} did not reach " . ymd($to) . "\n";
+}
+
+# Registry's schedule for a child's $100 in $count on $cadence, made at 13:00
+# UTC on the checkout date $first as schedule_instalments_for makes it, then
+# run by a test clock past each later due date. Returns the schedule and,
+# for each invoice Stripe raised other than the $0 opening one, [ its date,
+# its subtotal, how many proration lines it has ].
+my $ENTITLEMENT = '00000000-0000-4000-8000-0000000000e1';
+sub billed ( $cadence, $first, $count = 3 ) {
+    my $parts = Registry::PriceOps::Instalments::parts( 10000, { count => $count, cadence => $cadence }, $first );
+    my $start = Registry::DAO::Payment::instalment_schedule_start( $cadence, $parts, $first );
+    my ( $clock, $cus, $card ) = clocked_customer( noon($first) + 3600 );
+    my $made = $stripe->create_subscription_schedule( Registry::DAO::Payment::instalment_schedule_params( {
+        product => $product->{id}, customer => $cus, payment_method => $card,
+        revenue_share_pct => 2.5, currency => 'usd', description => 'Summer Camp',
+        cadence => $cadence, entitlement_id => $ENTITLEMENT, start => $start,
+        instalments => [ @{$parts}[ 1 .. $#$parts ] ],
+    } ) );
+    advance( $clock, noon( $_->{due_date} ) + 2 * 3600 ) for @{$parts}[ 1 .. $#$parts ];
+
+    my $sub = $stripe->retrieve_subscription_schedule( $made->{id} )->{subscription};
+    $sub = $sub->{id} if ref $sub;
+    my $invoices = $stripe->list_invoices( { subscription => $sub, limit => 100 } )->{data} // [];
+    return ( $made, $parts, [ map { [ ymd( $_->{created} ), $_->{subtotal},
+                  scalar grep { $_->{proration} } @{ $_->{lines}{data} // [] } ] }
+        sort { $a->{created} <=> $b->{created} }
+        grep { !Registry::DAO::Payment::is_opening_invoice($_) } @$invoices ] );
+}
+
+# What the family was shown: each later part's due date and amount, unprorated.
+sub shown ($parts) { [ map { [ $_->{due_date}, $_->{amount_cents}, 0 ] } @{$parts}[ 1 .. $#$parts ] ] }
 
 # Each phase's price, as Stripe stored it: [ unit_amount, interval, interval_count ].
 sub stored_prices ( $schedule ) {
@@ -111,75 +145,55 @@ sub stored_prices ( $schedule ) {
     } @{ $schedule->{phases} // [] } ];
 }
 
-# Each phase's [ start, end ] as UTC dates, as Stripe worked them out: a
-# phase's start is the day it charges.
-sub ymd ($epoch) { my @t = gmtime $epoch; sprintf '%04d-%02d-%02d', $t[5] + 1900, $t[4] + 1, $t[3] }
-sub phase_dates ( $schedule ) {
-    return [ map { [ ymd( $_->{start_date} ), ymd( $_->{end_date} ) ] } @{ $schedule->{phases} // [] } ];
-}
-
 my $schedule;
 subtest 'stripe accepts a weekly schedule on a connected account' => sub {
-    $schedule = made_schedule( 'weekly', '2027-01-31' ) or return;
+    my ( $made, $parts, $charged ) = eval { billed( weekly => '2027-01-31' ) };
+    ok $made, 'the weekly schedule was created and run' or do { diag $@; return };
+    $schedule = $made;
 
-    is $schedule->{end_behavior}, 'cancel',
-        'it ends after the instalments rather than renewing';
-    is $schedule->{metadata}{entitlement_id}, $ENTITLEMENT, "it names the child's entitlement";
-
-    # What the money does, read back from Stripe rather than from our own hash.
-    is $stripe->retrieve_subscription_schedule( $schedule->{id} )->{id}, $schedule->{id},
-        'it is found on the tenant account';
-    ok !$schedule->{default_settings}{transfer_data},
-        'with no transfer: each charge is already the tenant\'s';
-    is $schedule->{default_settings}{application_fee_percent} + 0, 2.5,
-        'and our revenue share is the application fee';
-    is_deeply stored_prices($schedule), [ [ 0, 'week', 1 ], [ 3333, 'week', 1 ], [ 3334, 'week', 1 ] ],
-        'a $0 week for the part paid at checkout, then the even share and the remainder, every week';
-    is_deeply phase_dates($schedule),
-        [ [qw( 2027-01-31 2027-02-07 )], [qw( 2027-02-07 2027-02-14 )], [qw( 2027-02-14 2027-02-21 )] ],
-        'charging on the stored due dates';
+    is $made->{end_behavior}, 'cancel', 'it ends after the instalments rather than renewing';
+    is $made->{metadata}{entitlement_id}, $ENTITLEMENT, "it names the child's entitlement";
+    ok !$made->{default_settings}{transfer_data}, "with no transfer: each charge is already the tenant's";
+    is $made->{default_settings}{application_fee_percent} + 0, 2.5, 'and our revenue share is the application fee';
+    is_deeply stored_prices($made), [ [ 3333, 'week', 1 ], [ 3334, 'week', 1 ] ],
+        'the even share and the remainder, every week';
+    is_deeply $charged, shown($parts), 'Stripe charged each part on its stored due date, unprorated';
 };
 
 subtest 'stripe accepts a quarterly schedule on a connected account' => sub {
-    my $quarterly = made_schedule( 'quarterly', '2027-01-31' ) or return;
-    is_deeply stored_prices($quarterly), [ [ 0, 'month', 3 ], [ 3333, 'month', 3 ], [ 3334, 'month', 3 ] ],
-        'billed every three months, not every month';
-    is_deeply phase_dates($quarterly),
-        [ [qw( 2027-01-31 2027-04-30 )], [qw( 2027-04-30 2027-07-31 )], [qw( 2027-07-31 2027-10-31 )] ],
-        'on the stored due dates, back to the 31st after April 30';
+    my ( $made, $parts, $charged ) = eval { billed( quarterly => '2027-01-31' ) };
+    ok $made, 'the quarterly schedule was created and run' or do { diag $@; return };
+    is_deeply stored_prices($made), [ [ 0, 'month', 3 ], [ 3333, 'month', 3 ], [ 3334, 'month', 3 ] ],
+        'a $0 opening quarter, then every three months, not every month';
+    is_deeply $charged, shown($parts), 'charged Apr 30 and Jul 31, as Instalments::due_dates has them';
 };
 
-# Distinct amounts, so each part is its own phase and every charge date shows.
 subtest 'stripe charges month-end instalments on their stored due dates' => sub {
-    my $monthly = made_schedule( 'monthly', '2027-01-31', 4, [
-        { amount_cents => 2999, due_date => '2027-01-31' },
-        { amount_cents => 3000, due_date => '2027-02-28' },
-        { amount_cents => 3001, due_date => '2027-03-31' },
-        { amount_cents => 3002, due_date => '2027-04-30' },
-    ] ) or return;
-    is_deeply phase_dates($monthly), [
-        [qw( 2027-01-31 2027-02-28 )], [qw( 2027-02-28 2027-03-31 )],
-        [qw( 2027-03-31 2027-04-30 )], [qw( 2027-04-30 2027-05-31 )],
-    ], 'Feb 28, Mar 31 and Apr 30, as Instalments::due_dates has them';
+    my ( $made, $parts, $charged ) = eval { billed( monthly => '2027-01-31', 4 ) };
+    ok $made, 'started on the checkout date' or do { diag $@; return };
+    is_deeply $charged, shown($parts), 'Feb 28, Mar 31 and Apr 30, unprorated';
 };
 
-# The job runs after checkout, so the checkout date's noon is often already
-# past: the schedule is backdated into its $0 period.
-subtest 'stripe accepts a schedule backdated to the checkout date' => sub {
-    my $first = ymd( time - 86400 );
-    my $parts = Registry::PriceOps::Instalments::parts( 10000, { count => 3, cadence => 'weekly' }, $first );
-    my $backdated = made_schedule( 'weekly', $first, 3, $parts ) or return;
-    is_deeply [ map { $_->[0] } @{ phase_dates($backdated) } ], [ map { $_->{due_date} } @$parts ],
-        'each phase still starts on its stored due date';
+subtest 'stripe charges a mid-month plan from part two on its stored due dates' => sub {
+    my ( $made, $parts, $charged ) = eval { billed( monthly => '2027-01-15' ) };
+    ok $made, 'started on part two' or do { diag $@; return };
+    is_deeply $charged, shown($parts), 'Feb 15 and Mar 15, unprorated';
 };
 
 subtest 'stripe accepts fifty-two weekly parts' => sub {
     my $first = '2027-01-31';
     my $parts = Registry::PriceOps::Instalments::parts( 5200, { count => 52, cadence => 'weekly' }, $first );
-    my $weekly = made_schedule( 'weekly', $first, 52, $parts ) or return;
-    is scalar @{ $weekly->{phases} }, 2, 'in two phases: the $0 week and fifty-one equal parts';
-    is_deeply phase_dates($weekly)->[1],
-        [ $parts->[1]{due_date}, ymd( Registry::DAO::Payment::_epoch_for_date( $parts->[-1]{due_date} ) + 7 * 86400 ) ],
+    my $made = eval { $stripe->create_subscription_schedule( Registry::DAO::Payment::instalment_schedule_params( {
+        product => $product->{id}, customer => $customer->{id}, payment_method => $pm->{id},
+        revenue_share_pct => 2.5, currency => 'usd', cadence => 'weekly', entitlement_id => $ENTITLEMENT,
+        start => Registry::DAO::Payment::instalment_schedule_start( weekly => $parts, $first ),
+        instalments => [ @{$parts}[ 1 .. $#$parts ] ],
+    } ) ) };
+    ok $made, 'it was created' or do { diag $@; return };
+    push @schedules, $made->{id};
+    is scalar @{ $made->{phases} }, 1, 'in one phase of fifty-one equal parts';
+    is_deeply [ map { ymd($_) } @{ $made->{phases}[0] }{qw( start_date end_date )} ],
+        [ $parts->[1]{due_date}, ymd( noon( $parts->[-1]{due_date} ) + 7 * 86400 ) ],
         'from the second due date to a week after the last';
 };
 

@@ -46,7 +46,7 @@ $t->app->log->on( message => sub ( $log, $level, @lines ) { push @logs, [ $level
 
 # A child's paid checkout in three parts, and the $task job for its
 # entitlement, queued as checkout queues it.
-sub queued ( $task, $c = instalment_checkout( $tdb, slug => $slug ) ) {
+sub queued ( $task, $c = instalment_checkout( $tdb, slug => $slug, first_date => '2027-03-15' ) ) {
     Registry::Job::InstalmentSchedule->enqueue( $minion, $task, $c->{entitlement}->id, $slug );
     my $job = $minion->jobs( { tasks => [$task], notes => [ $c->{entitlement}->id ] } )->next;
     return ( $c, $job );
@@ -145,10 +145,10 @@ subtest 'a replayed 500 under the key: a retry finds the schedule Stripe made an
     my $ran = run_against_replayed_500( $job, 'Stripe api_error: An unknown error occurred',
         [ { id => 'sub_sched_other', status => 'active', metadata => { entitlement_id => 'someone-else' } },
           { id => 'sub_sched_made',  status => 'not_started', metadata => { entitlement_id => $eid },
-            # Our fee in the three phases we send ($0, then 3333, 3334), so it is ours to adopt.
+            # Our fee in the two phases we send (3333, 3334), so it is ours to adopt.
             default_settings => { application_fee_percent => 100
                 * Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant( $db, $slug ) },
-            phases => [ {}, {}, {} ] } ] );
+            phases => [ {}, {} ] } ] );
 
     is $ran->{info}{state}, 'finished', 'the job finishes';
     is scalar @{ $ran->{keys} }, 1, 'after one create, answered 500';
@@ -195,7 +195,7 @@ subtest 'each job says when it had nothing to do' => sub {
     like $minion->job( $cancel->{id} )->info->{result}, qr/had no instalment schedule to cancel/,
         'a cancel with no schedule says there was nothing to cancel';
 
-    my $one_time = instalment_checkout( $tdb, slug => $slug );
+    my $one_time = instalment_checkout( $tdb, slug => $slug, first_date => '2027-03-15' );
     $tdb->query( q{UPDATE payments SET metadata = jsonb_set(metadata, '{lines,0,kind}', '"one_time"') WHERE id = ?},
         $one_time->{payment}->id );
     my ( undef, $schedule ) = queued( 'instalment_schedule', $one_time );
