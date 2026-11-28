@@ -420,6 +420,15 @@ sub with_keyed_stripe ( $code, %on ) {
         if ( my $hook = delete $on{schedule_made} ) { $hook->() }
         return $schedule;
     };
+    local *Registry::Service::Stripe::retrieve_subscription_schedule = sub ( $s, $id ) {
+        my ($at) = grep { $_->{id} eq $id } @stripe_schedules;
+        return $at;
+    };
+    local *Registry::Service::Stripe::cancel_subscription_schedule = sub ( $s, $id, $p = {} ) {
+        my ($at) = grep { $_->{id} eq $id } @stripe_schedules;
+        $at->{status} = 'canceled';
+        return $at;
+    };
     $code->();
     return [ grep { $_->[0] eq 'sub_sched' } @made ];
 }
@@ -609,4 +618,60 @@ subtest 'a retry sends the name the first run stamped, not the offer name now' =
     is_deeply [ map { $_->[2]{name} } grep { $_->[0] eq 'create_product' } @$retry ], [$name],
         'the retry names the product as the first run did';
     is $retry->[3][2]{'phases[0][items][0][price_data][product]'}, 'prod_one', 'and bills against it';
+};
+
+sub status_at_stripe ( $id ) { ( map { $_->{status} } grep { $_->{id} eq $id } @stripe_schedules )[0] }
+
+# Attempt one makes the schedule at Stripe and dies before its COMMIT: no
+# row records it. Whatever then stops the retry must still cancel it, or
+# Stripe charges parts two to n for a child who has gone.
+sub made_then_crashed ( $c ) {
+    my $made = with_keyed_stripe(
+        sub { eval { schedule($c); 1 } },
+        schedule_made => sub { die "worker lost\n" },
+    );
+    is scalar @$made, 1, 'attempt one left a schedule at Stripe';
+    is scheduled_rows($c), 0, 'with nothing recorded';
+    return $made->[0][1];
+}
+
+subtest 'a schedule an attempt made before it died is cancelled when the family drops' => sub {
+    my $c  = checkout();
+    my $at = made_then_crashed($c);
+
+    with_keyed_stripe( sub {
+        Registry::DAO::Payment->find( $db, { id => $c->{payment}->id } )
+            ->cancel_instalment_schedule( $db, $c->{entitlement} );
+    } );
+    is status_at_stripe($at), 'canceled', 'the cancel finds it at Stripe and cancels it';
+
+    my $retried;
+    my $made = with_keyed_stripe( sub {
+        $retried = Registry::Job::InstalmentSchedule->new->create_for( $db, $c->{entitlement} );
+    } );
+    is $retried, undef, 'the retry schedules nothing';
+    is_deeply $made, [], 'and makes nothing at Stripe';
+    is scheduled_rows($c), 0, 'or here';
+};
+
+subtest 'a retry that finds the entitlement ended cancels the schedule an attempt made' => sub {
+    my $c  = checkout();
+    my $at = made_then_crashed($c);
+    $c->{entitlement}->end( $db, 'unpaid', 'dropped' );
+    with_keyed_stripe( sub { Registry::Job::InstalmentSchedule->new->create_for( $db, $c->{entitlement} ) } );
+    is status_at_stripe($at), 'canceled', 'the schedule at Stripe is cancelled';
+    is scheduled_rows($c), 0, 'and nothing is recorded';
+};
+
+subtest 'a retry past due date two cancels the schedule an attempt made' => sub {
+    my $c  = checkout();
+    my $at = made_then_crashed($c);
+    $db->query( q{UPDATE payments SET metadata = jsonb_set(metadata, '{lines,0,parts,1,due_date}', '"2000-01-01"')
+                   WHERE id = ?}, $c->{payment}->id );
+    with_keyed_stripe( sub {
+        Registry::DAO::Payment->find( $db, { id => $c->{payment}->id } )
+            ->schedule_instalments_for( $db, $c->{entitlement} );
+    } );
+    is status_at_stripe($at), 'canceled', 'the schedule at Stripe is cancelled';
+    is scheduled_rows($c), 0, 'and nothing is recorded';
 };

@@ -289,25 +289,33 @@ field $_stripe_client = undef;
 
         require Registry::DAO::Entitlement;
         # A cancel (which takes this lock too) or an end that came first wins:
-        # nothing is made to bill a child who has gone.
-        return undef if __PACKAGE__->schedule_cancelled( $raw, $id, $eid )
-            || Registry::DAO::Entitlement->find( $raw, { id => $eid } )->state ne 'active';
+        # nothing is made to bill a child who has gone. A deleted one is gone.
+        my $now  = Registry::DAO::Entitlement->find( $raw, { id => $eid } );
+        my $gone = __PACKAGE__->schedule_cancelled( $raw, $id, $eid ) || !$now || $now->state ne 'active';
 
-        # Started on the checkout date (instalment_schedule_params), a schedule
-        # made on or after part two's due date could bill a missed period at
-        # once. So nothing is made, and the studio arranges the rest by hand.
+        # A schedule made on or after part two's due date could bill a missed
+        # period at once. So nothing is made, and the studio arranges the
+        # rest by hand.
         my @today = gmtime;
-        if ( sprintf( '%04d-%02d-%02d', $today[5] + 1900, $today[4] + 1, $today[3] ) ge $remaining[0]{due_date} ) {
+        my $late  = sprintf( '%04d-%02d-%02d', $today[5] + 1900, $today[4] + 1, $today[3] )
+            ge $remaining[0]{due_date};
+
+        if ( $gone || $late ) {
+            # An earlier attempt may have made one at Stripe and died before
+            # recording it: cancelled, so nothing bills.
+            my $stopped = $self->_cancel_unrecorded( $client, $eid );
             $txn->commit;
+            return undef if $gone;
             my ($child) = @{ $raw->select( 'family_members', 'child_name',
                 { id => $entitlement->holder_family_member_id } )->array // [] };
             my ($session) = @{ $raw->select( 'resources', 'name', { id => $line->{resource_id} } )->array // [] };
             require Registry::DAO::Notification;
             Registry::DAO::Notification->alert_admins( $raw, 'Instalments need arranging by hand',
                 sprintf( 'The instalments for %s in %s were not scheduled at Stripe before the second '
-                       . 'was due (%s), so Registry has not scheduled them: arrange the remaining %d '
+                       . 'was due (%s), so Registry has not scheduled them%s: arrange the remaining %d '
                        . 'payments with the family by hand. (Entitlement %s.)',
                     $child // 'a child', $session // 'a session', $remaining[0]{due_date},
+                    ( $stopped ? ' and has cancelled the schedule an earlier attempt left at Stripe' : '' ),
                     scalar @remaining, $eid ),
                 { entitlement_id => $eid } );
             return undef;
@@ -403,7 +411,13 @@ field $_stripe_client = undef;
         }, $eid, $id, $eid );
         my $schedule = __PACKAGE__->instalment_schedule_of( $raw, $eid );
         $txn->commit;
-        return undef unless $schedule;
+
+        # None recorded: an attempt may still have made one at Stripe before
+        # it died, which the schedule job will no longer record.
+        unless ($schedule) {
+            $self->_cancel_unrecorded( $self->stripe_client, $eid );
+            return undef;
+        }
 
         my $client = $self->stripe_client;
         my $at     = $client->retrieve_subscription_schedule($schedule);
@@ -413,8 +427,22 @@ field $_stripe_client = undef;
             $self->_cancel_released( $raw, $client, $eid, $schedule, $at->{released_subscription} );
             return $schedule;
         }
-        $client->cancel_subscription_schedule( $schedule, instalment_cancel_params($eid) );
+        $client->cancel_subscription_schedule( $schedule, instalment_cancel_params( $eid, $schedule ) );
         return $schedule;
+    }
+
+    # Cancels every live schedule at Stripe naming entitlement $eid on this
+    # charge's customer: ones an attempt made and died before recording. How
+    # many it cancelled.
+    # shortcut: reads the customer's first 100 schedules, as _schedule_at_stripe.
+    method _cancel_unrecorded ( $client, $eid ) {
+        my $customer = $client->retrieve_payment_intent($stripe_payment_intent_id)->{customer}
+            or return 0;
+        my @live = grep {
+            ( $_->{metadata}{entitlement_id} // '' ) eq $eid && ( $_->{status} // '' ) =~ /\A(?:not_started|active)\z/
+        } @{ $client->list_subscription_schedules( { customer => $customer, limit => 100 } )->{data} // [] };
+        $client->cancel_subscription_schedule( $_->{id}, instalment_cancel_params( $eid, $_->{id} ) ) for @live;
+        return scalar @live;
     }
 
     # A released schedule no longer bills, but the subscription it let go of
@@ -436,8 +464,8 @@ field $_stripe_client = undef;
     # The cancel request for entitlement $eid's schedule. No proration and no
     # final invoice: what a family is owed back is the refund policy's call
     # on what it paid, not a credit Stripe works out.
-    sub instalment_cancel_params ( $eid ) {
-        return { prorate => 'false', invoice_now => 'false', _idempotency_key => "cancel_schedule:$eid" };
+    sub instalment_cancel_params ( $eid, $schedule ) {
+        return { prorate => 'false', invoice_now => 'false', _idempotency_key => "cancel_schedule:$eid:$schedule" };
     }
 
     # Entitlement $eid's schedule name as payment $payment_id first stamped

@@ -131,7 +131,7 @@ subtest 'cancelling records the entitlement before asking stripe' => sub {
     is $cancel->[2], $schedule, "the child's own schedule";
     is_deeply $cancel->[1], [ $c->{entitlement}->id ],
         'with the entitlement already recorded in cancelled_schedules when it is asked';
-    is $cancel->[3]{_idempotency_key}, 'cancel_schedule:' . $c->{entitlement}->id,
+    is $cancel->[3]{_idempotency_key}, 'cancel_schedule:' . $c->{entitlement}->id . ":$schedule",
         'under a key named for the entitlement';
     is_deeply cancelled($c), [ $c->{entitlement}->id ], 'and the record stays';
 };
@@ -175,7 +175,8 @@ subtest 'a cancel before the schedule job runs leaves nothing to schedule' => su
     is $cancelled, undef, 'the cancel found no schedule';
     is_deeply cancelled($c), [ $c->{entitlement}->id ], 'but recorded the entitlement';
     is $scheduled, undef, 'so the schedule job, run after it, schedules nothing';
-    is_deeply $calls, [], 'without asking Stripe';
+    is_deeply [ grep { $_->[0] =~ /\A(?:create|cancel)_/ } @$calls ], [],
+        'making and cancelling nothing at Stripe, where nothing was made';
     is_deeply rows($c), [], 'and records no instalment';
 };
 
@@ -187,7 +188,8 @@ subtest 'an ended entitlement is not scheduled' => sub {
         $scheduled = $c->{payment}->schedule_instalments_for( $db, $c->{entitlement} );
     } );
     is $scheduled, undef, 'nothing is scheduled';
-    is_deeply $calls, [], 'Stripe is not asked';
+    is_deeply [ grep { $_->[0] =~ /\A(?:create|cancel)_/ } @$calls ], [],
+        'nothing is made or cancelled at Stripe, where nothing was made';
     is_deeply rows($c), [], 'and no instalment is recorded';
 };
 
@@ -242,7 +244,8 @@ subtest 'a job run after due date two creates no schedule and alerts admins' => 
         $scheduled = $c->{payment}->schedule_instalments_for( $db, $c->{entitlement} );
     } );
     is $scheduled, undef, 'nothing is scheduled';
-    is_deeply $calls, [], 'Stripe is not asked';
+    is_deeply [ grep { $_->[0] =~ /\A(?:create|cancel)_/ } @$calls ], [],
+        'nothing is made or cancelled at Stripe, where nothing was made';
     is_deeply rows($c), [], 'and no instalment is recorded';
 
     my $child   = $db->select( 'family_members', 'child_name', { id => $c->{line}{family_member_id} } )->array->[0];

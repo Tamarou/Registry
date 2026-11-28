@@ -185,7 +185,13 @@ subtest 'a cancel that fails once is retried until Stripe cancels' => sub {
 
 subtest 'each job says when it had nothing to do' => sub {
     my ( $c, $cancel ) = queued('cancel_instalment_schedule');
-    run($cancel);
+    {
+        # Stripe holds nothing for it either.
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::retrieve_payment_intent = sub ( $s, $pi ) { { id => $pi, customer => 'cus_sr' } };
+        local *Registry::Service::Stripe::list_subscription_schedules = sub ( $s, $p ) { { data => [] } };
+        run($cancel);
+    }
     like $minion->job( $cancel->{id} )->info->{result}, qr/had no instalment schedule to cancel/,
         'a cancel with no schedule says there was nothing to cancel';
 

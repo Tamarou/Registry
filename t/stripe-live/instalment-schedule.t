@@ -192,7 +192,7 @@ subtest 'stripe updates and then cancels a schedule as Registry asks' => sub {
     is $updated->{metadata}{entitlement_id}, $ENTITLEMENT, 'and keeps the entitlement';
 
     my $cancelled = $stripe->cancel_subscription_schedule( $id,
-        Registry::DAO::Payment::instalment_cancel_params($ENTITLEMENT) );
+        Registry::DAO::Payment::instalment_cancel_params( $ENTITLEMENT, $id ) );
     is $cancelled->{status}, 'canceled', 'the cancel Registry sends is accepted';
     @schedules = grep { $_ ne $id } @schedules;    # cleanup has nothing left to cancel
 };
