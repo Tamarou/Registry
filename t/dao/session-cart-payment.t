@@ -15,6 +15,7 @@ use Test::Registry::Sessions qw( make_session session_offer held_cart );
 use Test::Registry::Offers qw( instalment_plan );
 use Test::Registry::Async qw( settle );
 use Mojo::Promise;
+use Registry::DAO::Entitlement;
 use Registry::DAO::FamilyMember;
 use Registry::DAO::Payment;
 use Registry::DAO::WorkflowRun;
@@ -280,6 +281,29 @@ subtest 'a declined intent already cancelled is replaced by a new charge' => sub
     is scalar @$intents, 1, 'for one new intent';
     isnt data_of($run)->{owed_payment_id}, $declined->id, 'on a new payment row';
     is Registry::DAO::Payment->find( $db, { id => $declined->id } )->status, 'failed', 'the declined one stays failed';
+};
+
+# The contract with the instalment schedule (Task 15): it finds an
+# entitlement's line on this row by child and session, and bills the
+# customer the saved card is on.
+subtest "the charge's lines are the ones the instalment schedule reads" => sub {
+    my ( $run, $pay ) = mixed_cart();
+    my $payment = $pay->owed_payment( $db, $run )->{payment};
+    ok $payment->saves_card, 'the row saves the card, with no instalment_seq';
+    for my $line ( $payment->metadata->{lines}->@* ) {
+        my $entitlement = Registry::DAO::Entitlement->grant( $db, {
+            holder_family_member_id => $line->{family_member_id},
+            payer_user_id           => $parent->id,
+            offer_version_id        => $line->{offer_version_id},
+            payment_plan_id         => $line->{payment_plan_id},
+            starts_at               => 'now',
+            resource_id             => $line->{resource_id},
+            units                   => 1,
+            payment_id              => $payment->id,
+            payment_share_cents     => $line->{share_cents},
+        } );
+        is_deeply $payment->_line_for( $db, $entitlement ), $line, "the $line->{kind} child's line is found";
+    }
 };
 
 done_testing;
