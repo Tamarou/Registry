@@ -44,6 +44,14 @@ class Registry::DAO::WorkflowSteps::OfferPrice :isa(Registry::DAO::WorkflowStep)
         return;
     }
 
+    # Why $cents is no price for the offer the run describes, or nothing: a
+    # session run's offer is sold through a checkout that charges, so $0 is
+    # refused there (other offers may still be free). Publish asks again.
+    sub price_refusal ( $class, $data, $cents ) {
+        return 'A session needs a price above $0' if $data->{session_program} && $cents == 0;
+        return;
+    }
+
     method process ( $db, $form_data, $run = undef ) {
         my %f = map { $_ => ( ref $form_data->{$_} ? '' : $form_data->{$_} // '' ) }
             qw( price_cents currency units_per_acceptance per_booking_cap );
@@ -58,6 +66,10 @@ class Registry::DAO::WorkflowSteps::OfferPrice :isa(Registry::DAO::WorkflowStep)
         push @errors, 'The per-booking cap must be a whole number of at least one'
             unless $f{per_booking_cap} =~ $positive;
 
+        if ( $f{price_cents} =~ $whole ) {
+            my $no_price = __PACKAGE__->price_refusal( $run ? $run->data : {}, $f{price_cents} );
+            push @errors, $no_price if $no_price;
+        }
         my $why = $f{units_per_acceptance} =~ $positive
             && __PACKAGE__->refusal( $db, $run ? $run->data : {}, $f{units_per_acceptance} );
         push @errors, $why if $why;

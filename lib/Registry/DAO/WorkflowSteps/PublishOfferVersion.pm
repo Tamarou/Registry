@@ -56,7 +56,8 @@ class Registry::DAO::WorkflowSteps::PublishOfferVersion :isa(Registry::DAO::Work
                 // Registry::DAO::WorkflowSteps::OfferConditions->refusal( $db, $data, $data->{conditions} );
             return { stay => 1, errors => [$why] } if $why;
         }
-        $why = Registry::DAO::WorkflowSteps::OfferPrice->refusal( $db, $data, $price->{units_per_acceptance} );
+        $why = Registry::DAO::WorkflowSteps::OfferPrice->refusal( $db, $data, $price->{units_per_acceptance} )
+            // Registry::DAO::WorkflowSteps::OfferPrice->price_refusal( $data, $price->{price_cents} // 0 );
         return { stay => 1, errors => [$why] } if $why;
 
         # From the run, as the refund-policy step recorded it, never this form;
