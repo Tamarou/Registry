@@ -171,4 +171,32 @@ subtest 'one lapsed hold refuses the whole charge' => sub {
     is scalar @{ payments_of($run) }, 0, 'and no payment row is written';
 };
 
+# What a faulty hold step could write: shares that still sum to the amount.
+subtest 'a share that disagrees with its price is refused with no row written' => sub {
+    my @cases = (
+        [ 'a one-time share off its price', sub ($l) { $l->[0]{share_cents} -= 100; $l->[1]{share_cents} += 100;
+                                                       $l->[1]{parts}[0]{amount_cents} += 100 } ],
+        [ 'instalment parts re-split', sub ($l) { $l->[1]{parts}[1]{amount_cents} += 100;
+                                                  $l->[1]{parts}[2]{amount_cents} -= 100 } ],
+        [ 'an instalment share off its first part', sub ($l) { $l->[0]{share_cents} += 100; $l->[1]{share_cents} -= 100 } ],
+        [ 'a due date moved', sub ($l) { $l->[1]{parts}[2]{due_date} = '2099-01-01' } ],
+        [ 'a part dropped', sub ($l) { pop $l->[1]{parts}->@* } ],
+    );
+    for my $case (@cases) {
+        my ( $name, $tamper ) = @$case;
+        my ( $run, $pay ) = mixed_cart();
+        my $owed = data_of($run)->{owed_payment};
+        $tamper->( $owed->{lines} );
+        my $sum = 0;
+        $sum += $_->{share_cents} for $owed->{lines}->@*;
+        is $sum, $owed->{amount_cents}, "$name: the shares still sum";
+        $run->update_data( $db, { owed_payment => $owed } );
+
+        my ( $out, $customers, $intents ) = charge( $run, $pay );
+        is_deeply $out->{errors}, ['A price in this cart cannot be sold.'], "$name: refused";
+        is scalar @{ payments_of($run) }, 0, "$name: no payment row";
+        is scalar(@$customers) + scalar(@$intents), 0, "$name: nothing sent to Stripe";
+    }
+};
+
 done_testing;

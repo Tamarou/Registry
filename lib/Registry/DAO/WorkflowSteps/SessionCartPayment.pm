@@ -7,6 +7,8 @@ use Object::Pad;
 
 class Registry::DAO::WorkflowSteps::SessionCartPayment :isa(Registry::DAO::WorkflowSteps::OneTimePayment) {
     use Data::Dumper ();
+    use Registry::DAO::OfferVersion;
+    use Registry::PriceOps::Instalments qw( parts );
     use Registry::DAO::WorkflowSteps::Payment;
 
     my $UUID  = qr/\A[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\z/i;
@@ -52,14 +54,11 @@ class Registry::DAO::WorkflowSteps::SessionCartPayment :isa(Registry::DAO::Workf
 
         if ( my $why = $self->payer_and_seller_refusal( $db, $run ) ) { return refuse($why) }
 
-        # Each line's plan is one of its version's own, of the kind it says, published.
+        # Each line's plan is one of its version's own, of the kind it says,
+        # published, and its share (and an instalment line's parts) is what
+        # that price and plan make: the hold step is not taken on trust.
         for my $line (@$lines) {
-            return refuse('A price in this cart cannot be sold.')
-                unless $db->query( q{
-                    SELECT 1 FROM offer_version_payment_plans p
-                      JOIN offer_versions v ON v.id = p.offer_version_id
-                     WHERE v.id = ? AND p.id = ? AND p.kind = ? AND v.published_at IS NOT NULL
-                }, $line->@{qw( offer_version_id payment_plan_id kind )} )->rows;
+            return refuse('A price in this cart cannot be sold.') unless $self->line_is_priced( $db, $line );
         }
 
         return $self->open_or_create_payment( $db, $run, {
@@ -67,6 +66,28 @@ class Registry::DAO::WorkflowSteps::SessionCartPayment :isa(Registry::DAO::Workf
             offer_version_id => undef,
             metadata         => { lines => $lines, description => 'Session booking' },
         } );
+    }
+
+    # line_is_priced($db, $line) -> bool
+    #
+    # A one-time line's share is its version's price; an instalment line's
+    # parts are Instalments::parts of that price and plan from its first due
+    # date, and its share is the first part.
+    method line_is_priced ( $db, $line ) {
+        my $version = Registry::DAO::OfferVersion->find( $db, { id => $line->{offer_version_id} } );
+        return 0 unless $version && defined $version->published_at;
+        my ($plan) = grep { $_->{id} eq $line->{payment_plan_id} && $_->{kind} eq $line->{kind} }
+            $version->payment_plans($db)->@*;
+        return 0 unless $plan;
+        return $line->{share_cents} == $version->price_cents && !defined $line->{parts}
+            if $plan->{kind} eq 'one_time';
+        return 0 unless $plan->{kind} eq 'instalments';
+        my $parts = $line->{parts};
+        return 0 unless ref $parts eq 'ARRAY' && @$parts && ref $parts->[0] eq 'HASH';
+        my $first = $parts->[0]{due_date};
+        return 0 unless _plain($first) && $first =~ /\A[0-9]{4}-[0-9]{2}-[0-9]{2}\z/a;
+        my $want = eval { parts( $version->price_cents, $plan, $first ) } or return 0;
+        return $line->{share_cents} == $want->[0]{amount_cents} && _canonical($parts) eq _canonical($want);
     }
 
     # Every line's seat is held while the cart is charged.
