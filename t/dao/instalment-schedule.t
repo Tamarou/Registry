@@ -62,6 +62,7 @@ sub with_stripe ( $code, $seen = sub { undef }, %on ) {
         return { id => $id, status => $status{$id} // 'active' };
     };
     local *Registry::Service::Stripe::cancel_subscription = sub ( $s, $id, $p = {} ) {
+        die "Stripe api_error: An unknown error occurred\n" if $on{cancel_fails} && $on{cancel_fails}--;
         push @calls, [ cancel_subscription => $seen->(), $id, $p ];
         $status{$id} = 'canceled';
         return { id => $id, status => 'canceled' };
@@ -269,4 +270,25 @@ subtest 'a month-end plan not scheduled on its checkout date is arranged by hand
     my $told = $db->select( 'notifications', ['message'], { user_id => $admin->id } )->hashes;
     is $told->size, 1, 'the admins are told';
     like $told->[0]{message}, qr/by hand/, 'to arrange them by hand';
+};
+
+# Told before Stripe is asked, and recorded, so neither a failed cancel nor
+# a failure after it leaves the admins untold, or told twice.
+subtest 'admins hear of a released schedule before its subscription is cancelled, once' => sub {
+    my $admin = Test::Registry::Fixtures::create_user( $db, { username => 'retried-release-admin', user_type => 'admin' } );
+    my $c = instalment_checkout( $db, slug => $seller, first_date => '2027-03-15' );
+    with_stripe( sub { $c->{payment}->schedule_instalments_for( $db, $c->{entitlement} ) } );
+    my $told = sub {
+        $db->query( q{SELECT count(*) FROM notifications WHERE user_id = ? AND message LIKE ?},
+            $admin->id, '%' . $c->{entitlement}->id . '%' )->array->[0];
+    };
+    my $died;
+    my $calls = with_stripe( sub {
+        eval { $c->{payment}->cancel_instalment_schedule( $db, $c->{entitlement} ); 1 } or $died = $@;
+        $c->{payment}->cancel_instalment_schedule( $db, $c->{entitlement} );
+    }, $told, released => 1, cancel_fails => 1 );
+    like $died, qr/api_error/, 'the first cancel failed at Stripe';
+    my ($cancel) = grep { $_->[0] eq 'cancel_subscription' } @$calls;
+    is $cancel->[1], 1, 'the admins had been told when the retry cancelled the subscription';
+    is $told->(), 1, 'once';
 };

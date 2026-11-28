@@ -484,13 +484,28 @@ field $_stripe_client = undef;
         $sub = $sub->{id} if ref $sub eq 'HASH';
         return unless defined $sub && !ref $sub;
         return if ( $client->retrieve_subscription($sub)->{status} // '' ) =~ /\A(?:canceled|incomplete_expired)\z/;
+
+        # Told first, and recorded with the telling, so a cancel that fails
+        # and is retried, or anything after it, neither skips nor repeats it.
+        my $tx = $db->begin;
+        my $first = $db->query( q{
+            UPDATE payments
+               SET metadata = jsonb_set( COALESCE(metadata, '{}'), '{released_alerted}',
+                       COALESCE(metadata->'released_alerted', '[]') || to_jsonb(?::text) )
+             WHERE id = ?
+               AND NOT COALESCE(metadata->'released_alerted', '[]') @> jsonb_build_array(?::text)
+        }, $eid, $id, $eid )->rows;
+        if ($first) {
+            require Registry::DAO::Notification;
+            Registry::DAO::Notification->alert_admins( $db, 'A released instalment schedule is being cancelled',
+                "The instalment schedule $schedule for entitlement $eid had been released in Stripe, so its "
+              . "subscription $sub went on billing by itself. Registry is cancelling that subscription; "
+              . 'check what the family was charged since the release.',
+                { entitlement_id => $eid } );
+        }
+        $tx->commit;
+
         $client->cancel_subscription( $sub, { _idempotency_key => "cancel_subscription:$eid" } );
-        require Registry::DAO::Notification;
-        Registry::DAO::Notification->alert_admins( $db, 'A released instalment schedule was cancelled',
-            "The instalment schedule $schedule for entitlement $eid had been released in Stripe, so its "
-          . "subscription $sub went on billing by itself. Registry has cancelled that subscription; "
-          . 'check what the family was charged since the release.',
-            { entitlement_id => $eid } );
     }
 
     # The cancel request for entitlement $eid's schedule. No proration and no
