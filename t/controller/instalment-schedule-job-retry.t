@@ -298,4 +298,19 @@ subtest 'when that cancel fails too, the admins are told the family may still be
     unlike $alerts->[0]{message}, qr/will not be charged/, 'and not that it will not be';
 };
 
+# Nothing to cancel, and no reason to ask Stripe: a pay-in-full child, or a
+# charge made on no Stripe account.
+subtest 'a cancel for an entitlement not paid in instalments asks Stripe nothing' => sub {
+    my $one_time = instalment_checkout( $tdb, slug => $slug, first_date => '2027-03-15' );
+    $tdb->query( q{UPDATE payments SET metadata = jsonb_set(metadata, '{lines,0,kind}', '"one_time"') WHERE id = ?},
+        $one_time->{payment}->id );
+    my $unpaid_online = instalment_checkout( $tdb, first_date => '2027-03-15' );
+    for my $c ( $one_time, $unpaid_online ) {
+        my ( undef, $job ) = queued( 'cancel_instalment_schedule', $c );
+        my $info = run($job);    # Stripe is not stubbed: any call would fail the job
+        is $info->{state}, 'finished', 'the cancel finishes';
+        like $info->{result}, qr/had no instalment schedule to cancel/, 'with nothing to cancel';
+    }
+};
+
 done_testing;

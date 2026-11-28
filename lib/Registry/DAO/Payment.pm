@@ -446,8 +446,12 @@ field $_stripe_client = undef;
 
         # None recorded: an attempt may still have made one at Stripe before
         # it died, which the schedule job will no longer record.
+        # Only a charge on a Stripe account with an instalments line for this
+        # child can have had one made: anything else asks Stripe nothing.
         unless ($schedule) {
-            $self->_cancel_unrecorded( $self->stripe_client, $eid );
+            my $line = $self->_line_for( $raw, $entitlement );
+            $self->_cancel_unrecorded( $self->stripe_client, $eid )
+                if $line && ( $line->{kind} // '' ) eq 'instalments' && ( $metadata // {} )->{stripe_account_id};
             return undef;
         }
 
