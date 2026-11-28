@@ -64,6 +64,14 @@ field $entitlement_id :param :reader = undef;
 # site, so nothing has to remember that the pair is all-or-nothing.
 method is_instalment { return defined $instalment_seq ? 1 : 0 }
 
+# True when the card is kept for later off-session charges: an instalment row,
+# or a session cart's charge with any child paying in instalments.
+method saves_card {
+    return 1 if $self->is_instalment;
+    my $lines = ref $metadata eq 'HASH' ? $metadata->{lines} : undef;
+    return ( ref $lines eq 'ARRAY' && grep { ref $_ eq 'HASH' && ( $_->{kind} // '' ) eq 'instalments' } @$lines ) ? 1 : 0;
+}
+
 field $_stripe_client = undef;
     
     ADJUST {
@@ -912,7 +920,7 @@ field $_stripe_client = undef;
     method _intent_params ($db, $args, $customer_id = undef) {
         die "an instalment intent needs a Stripe customer; resolve one before "
           . "building the params\n"
-          if $self->is_instalment && !$customer_id;
+          if $self->saves_card && !$customer_id;
 
         return {
             amount            => $amount_cents,
@@ -927,7 +935,7 @@ field $_stripe_client = undef;
             # cardholder can satisfy a challenge. A schedule created later
             # against a card that was never saved off-session fails on its first
             # invoice, weeks after anyone is watching.
-            ( $self->is_instalment
+            ( $self->saves_card
                 ? ( setup_future_usage => 'off_session',
                     customer           => $customer_id )
                 : () ),
@@ -1037,7 +1045,7 @@ field $_stripe_client = undef;
             # Blocking resolver here on purpose: this wrapper only runs where
             # no loop is running. The async path above uses the deferring one.
             my $customer_id =
-              $self->is_instalment ? $self->_stripe_customer_for($db) : undef;
+              $self->saves_card ? $self->_stripe_customer_for($db) : undef;
             $intent = $self->stripe_client->create_payment_intent(
                 $self->_intent_params( $db, $args, $customer_id )
             );
@@ -2645,7 +2653,7 @@ SQL
         # Only an instalment needs one. Resolving unconditionally would mint a
         # Stripe customer for every one-off enrolment, which is a cost and a
         # mess rather than a bug -- and is what the one-off subtest pins.
-        my $customer = $self->is_instalment
+        my $customer = $self->saves_card
             ? $self->_stripe_customer_async($db)
             : Mojo::Promise->resolve(undef);
 

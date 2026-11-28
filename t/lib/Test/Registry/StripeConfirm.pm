@@ -135,6 +135,13 @@ package Test::Registry::StripeConfirm {
             sleep 2;
         }
     }
+
+    # The PaymentMethod $pm_id as $account holds it: its customer, once a
+    # confirmation saved it for later use.
+    sub payment_method {
+        my ($pm_id, $account) = @_;
+        return _get("/payment_methods/$pm_id", $account);
+    }
 }
 
 1;

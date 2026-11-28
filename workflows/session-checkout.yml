@@ -34,3 +34,11 @@ steps:
     label: Hold
     description: Hold the seats while you pay
     class: Registry::DAO::WorkflowSteps::HoldSessionSeats
+
+  # Charges owed_payment, as HoldSessionSeats wrote it, while every line's hold
+  # is live: one direct charge on the studio's account with Solo's fee. A cart
+  # with an instalment child saves the card for the later instalments.
+  - slug: payment
+    label: Payment
+    description: Pay for the cart
+    class: Registry::DAO::WorkflowSteps::SessionCartPayment

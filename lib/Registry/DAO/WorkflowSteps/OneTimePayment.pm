@@ -92,26 +92,7 @@ method owed_payment ( $db, $run ) {
     return refuse('The amount owed must be a whole number of cents above zero.')
         unless defined $amount && !ref $amount && $amount =~ /\A[1-9][0-9]{0,7}\z/;
 
-    my $user_id = $run->data->{user_id};
-    return refuse('Nobody is signed in to pay.')
-        unless defined $user_id && !ref $user_id && $user_id =~ $UUID;
-
-    # The seller is the tenant the run is in, and the charge is made on its own
-    # account; there is no fallback to the platform's. Without the platform's
-    # key (unset or empty) nothing can be charged, so no row is written either.
-    unless ( $ENV{STRIPE_SECRET_KEY} ) {
-        warn "one-time payment refused: STRIPE_SECRET_KEY is not set\n";
-        return refuse($UNAVAILABLE);
-    }
-    my $slug = $run->data->{__tenant_slug};
-    my $row  = defined $slug && !ref $slug
-        ? $db->query( 'SELECT * FROM registry.tenants WHERE slug = ?', $slug )->hash
-        : undef;
-    unless ( $row && Registry::DAO::Tenant->new(%$row)->stripe_connect_ready ) {
-        warn sprintf "one-time payment refused: tenant '%s' is not Stripe Connect ready\n",
-            $slug // '(unknown)';
-        return refuse($UNAVAILABLE);
-    }
+    if ( my $why = $self->payer_and_seller_refusal( $db, $run ) ) { return refuse($why) }
 
     # One of the version's own plans, published, in this schema.
     return refuse('The offer this payment is for cannot be sold.')
@@ -121,15 +102,53 @@ method owed_payment ( $db, $run ) {
              WHERE v.id = ? AND p.id = ? AND v.published_at IS NOT NULL
         }, $version, $plan )->rows;
 
-    # This run's open payment is reused, so a second submit sends the same
-    # idempotency key and Stripe makes one intent. One that no longer matches
-    # what is owed is refused rather than re-priced under the same key.
-    # shortcut: a changed amount dead-ends the run; cancel and rotate as the
-    # cart step does if a prior step ever re-prices an owed payment.
+    return $self->open_or_create_payment( $db, $run, {
+        amount_cents     => $amount,
+        offer_version_id => $version,
+        metadata         => { payment_plan_id => $plan },
+    } );
+}
+
+# payer_and_seller_refusal($db, $run) -> refusal | undef
+#
+# A signed-in payer, the platform's key, and a seller ready to be charged.
+# The seller is the tenant the run is in, and the charge is made on its own
+# account; there is no fallback to the platform's. Without the platform's
+# key (unset or empty) nothing can be charged, so no row is written either.
+method payer_and_seller_refusal ( $db, $run ) {
+    my $user_id = $run->data->{user_id};
+    return 'Nobody is signed in to pay.'
+        unless defined $user_id && !ref $user_id && $user_id =~ $UUID;
+    unless ( $ENV{STRIPE_SECRET_KEY} ) {
+        warn "one-time payment refused: STRIPE_SECRET_KEY is not set\n";
+        return $UNAVAILABLE;
+    }
+    my $slug = $run->data->{__tenant_slug};
+    my $row  = defined $slug && !ref $slug
+        ? $db->query( 'SELECT * FROM registry.tenants WHERE slug = ?', $slug )->hash
+        : undef;
+    unless ( $row && Registry::DAO::Tenant->new(%$row)->stripe_connect_ready ) {
+        warn sprintf "one-time payment refused: tenant '%s' is not Stripe Connect ready\n",
+            $slug // '(unknown)';
+        return $UNAVAILABLE;
+    }
+    return undef;
+}
+
+# open_or_create_payment($db, $run, { amount_cents, offer_version_id, metadata })
+#   -> { payment => Payment } | { errors => [...] }
+#
+# This run's open payment is reused, so a second submit sends the same
+# idempotency key and Stripe makes one intent. One that no longer matches
+# what is owed is refused rather than re-priced under the same key.
+# shortcut: a changed amount dead-ends the run; cancel and rotate as the
+# cart step does if a prior step ever re-prices an owed payment.
+method open_or_create_payment ( $db, $run, $row ) {
+    my $owed = $run->data->{owed_payment};
     if ( my $open = $self->_run_payment( $db, $run ) ) {
         if ( $open->status eq 'pending' || $open->status eq 'processing' ) {
-            return refuse('What is owed changed after this payment was started.')
-                unless _matches( $open, $owed );
+            return { errors => ['What is owed changed after this payment was started.'] }
+                unless $self->_matches( $open, $owed );
             return { payment => $open };
         }
     }
@@ -138,24 +157,24 @@ method owed_payment ( $db, $run ) {
     my $purpose     = $owed->{purpose};
     my $payment = eval {
         Registry::DAO::Payment->create( $db, {
-            user_id          => $user_id,
-            amount_cents     => $amount,
-            offer_version_id => $version,
-            metadata         => {
+            user_id      => $run->data->{user_id},
+            amount_cents => $row->{amount_cents},
+            offer_version_id => $row->{offer_version_id},
+            metadata     => {
                 workflow_id     => $run->workflow_id,
                 workflow_run_id => $run->id,
-                tenant_slug     => $slug,
-                payment_plan_id => $plan,
+                tenant_slug     => $run->data->{__tenant_slug},
                 description     => ( defined $description && !ref $description && length $description )
                     ? $description : 'Payment',
                 ( defined $purpose && !ref $purpose ? ( purpose => $purpose ) : () ),
+                $row->{metadata}->%*,
             },
         } );
     };
     unless ($payment) {
         # A seller with no platform entitlement dies in create, before any row.
         warn "one-time payment refused for run @{[ $run->id ]}: " . ( $@ =~ s/\s+\z//r ) . "\n";
-        return refuse($UNAVAILABLE);
+        return { errors => [$UNAVAILABLE] };
     }
 
     $run->update_data( $db, { owed_payment_id => $payment->id } );
@@ -172,11 +191,11 @@ method owed_payment ( $db, $run ) {
 # in flight and no number of posts holds the seats longer.
 method hold_for_charge ( $db, $run ) {
     $db = $db->db if $db isa Registry::DAO;
-    my $owed    = $run->data->{owed_payment};
-    my $hold_id = ref $owed eq 'HASH' ? $owed->{hold_id} : undef;
-    return undef unless defined $hold_id;
+    my $owed     = $run->data->{owed_payment};
+    my @hold_ids = ref $owed eq 'HASH' ? $self->held_for( $owed ) : ();
+    return undef unless @hold_ids;
     my $lapsed = 'The seats held for this payment were let go. Nothing has been charged.';
-    return $lapsed unless !ref $hold_id && $hold_id =~ $UUID;
+    return $lapsed if grep { !defined || ref || !/$UUID/ } @hold_ids;
 
     my $tx = $db->dbh->{AutoCommit} ? $db->begin : undef;
     # The run's row first, as the change steps lock it: whether a payment
@@ -184,20 +203,24 @@ method hold_for_charge ( $db, $run ) {
     my $started = $db->query( q{SELECT data->>'owed_payment_id' FROM workflow_runs WHERE id = ? FOR UPDATE},
         $run->id )->array->[0];
     my $live = Registry::PriceOps::Hold->live_sql('holds');
-    my $hold = $db->query( "SELECT $live AS live FROM holds WHERE id = ? AND workflow_run_id = ? FOR UPDATE",
-        $hold_id, $run->id )->hash;
-    unless ( $hold && $hold->{live} ) {
+    my $refusal;
+    for my $hold_id ( sort @hold_ids ) {
+        my $hold = $db->query( "SELECT $live AS live FROM holds WHERE id = ? AND workflow_run_id = ? FOR UPDATE",
+            $hold_id, $run->id )->hash;
+        next if $hold && $hold->{live};
         $db->query( q{UPDATE holds SET state = 'released' WHERE id = ? AND state = 'held'}, $hold_id ) if $hold;
-        $tx->commit if $tx;
-        return $hold ? 'The seats held for this payment lapsed. Nothing has been charged.' : $lapsed;
+        $refusal //= $hold ? 'The seats held for this payment lapsed. Nothing has been charged.' : $lapsed;
     }
     # Never past twice the lifetime it was placed with, however often this runs.
     $db->query( q{UPDATE holds SET expires_at = greatest(expires_at, placed_at + 2 * lifetime)
-                   WHERE id = ? AND lifetime IS NOT NULL}, $hold_id )
-        unless defined $started;
+                   WHERE id = ANY(?::uuid[]) AND lifetime IS NOT NULL}, \@hold_ids )
+        unless defined $started || defined $refusal;
     $tx->commit if $tx;
-    return undef;
+    return $refusal;
 }
+
+# The holds what is owed is for: the one a prior step names, if any.
+method held_for ($owed) { defined $owed->{hold_id} ? ( $owed->{hold_id} ) : () }
 
 # The person's return from Stripe. The intent must be the one stored on this
 # run's payment, for its amount (Payment::_apply_intent).
@@ -217,10 +240,10 @@ method _returned ( $db, $run, $intent_id ) {
 method _paid ( $db, $run ) {
     my $payment = $self->_run_payment( $db, $run ) or return 0;
     my $owed    = $run->data->{owed_payment};
-    return ref $owed eq 'HASH' && $payment->status eq 'completed' && _matches( $payment, $owed );
+    return ref $owed eq 'HASH' && $payment->status eq 'completed' && $self->_matches( $payment, $owed );
 }
 
-sub _matches ( $payment, $owed ) {
+method _matches ( $payment, $owed ) {
     return ( $payment->amount_cents // '' ) eq ( $owed->{amount_cents} // "\0" )
         && ( $payment->offer_version_id // '' ) eq ( $owed->{offer_version_id} // "\0" )
         && ( $payment->metadata->{payment_plan_id} // '' ) eq ( $owed->{payment_plan} // "\0" );

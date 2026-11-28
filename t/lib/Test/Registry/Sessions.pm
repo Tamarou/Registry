@@ -6,7 +6,7 @@ use warnings;
 package Test::Registry::Sessions;
 
 use Exporter 'import';
-our @EXPORT_OK = qw( make_session session_offer cart_run add_cart_line cart_at_hold );
+our @EXPORT_OK = qw( make_session session_offer cart_run add_cart_line cart_at_hold held_cart );
 
 use Test::Registry::Fixtures;
 use Test::Registry::Offers qw( offer_terms );
@@ -81,6 +81,18 @@ sub cart_at_hold ( $dao, $payer_id, @lines ) {
         terms_version_shown => Registry::Terms::VERSION } );
     die "checkout refused: $out->{errors}[0]\n" if $out->{errors};
     return ( $run, $dao->find( Workflow => { slug => 'session-checkout' } )->get_step( $db, { slug => 'hold' } ) );
+}
+
+# held_cart($dao, $payer_id, @lines): a run as cart_at_hold makes it, sold by
+# $dao's schema's tenant, with every line's seat held and the cart's charge
+# owed, and its payment step. Dies if the hold refuses.
+sub held_cart ( $dao, $payer_id, @lines ) {
+    my ( $run, $hold ) = cart_at_hold( $dao, $payer_id, @lines );
+    my $db = $dao->db;
+    $run->update_data( $db, { __tenant_slug => $dao->schema } );
+    my $out = $run->process( $db, $hold, {} );
+    die "hold refused: $out->{errors}[0]\n" if $out->{errors};
+    return ( $run, $dao->find( Workflow => { slug => 'session-checkout' } )->get_step( $db, { slug => 'payment' } ) );
 }
 
 1;
