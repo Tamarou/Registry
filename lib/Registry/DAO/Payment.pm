@@ -334,7 +334,7 @@ field $_stripe_client = undef;
         if ( $gone || $late ) {
             # An earlier attempt may have made one at Stripe and died before
             # recording it: cancelled, so nothing bills.
-            my $stopped = $self->_cancel_unrecorded( $client, $eid );
+            my $stopped = @{ $self->_cancel_unrecorded( $client, $eid ) };
             $txn->commit;
             return undef if $gone;
             my ($child) = @{ $raw->select( 'family_members', 'child_name',
@@ -463,18 +463,30 @@ field $_stripe_client = undef;
         return $schedule;
     }
 
+    # Cancels every live schedule at Stripe naming $entitlement that no row
+    # records: ones an attempt made and died before recording. The ids it
+    # cancelled; dies naming any it could not. For the schedule job's last
+    # failed attempt, so a schedule nobody records cannot bill on.
+    method cancel_unrecorded_schedules ( $db, $entitlement ) {
+        my $raw = ($db isa Registry::DAO) ? $db->db : $db;
+        return [] if __PACKAGE__->instalment_schedule_of( $raw, $entitlement->id );
+        return $self->_cancel_unrecorded( $self->stripe_client, $entitlement->id );
+    }
+
     # Cancels every live schedule at Stripe naming entitlement $eid on this
-    # charge's customer: ones an attempt made and died before recording. How
-    # many it cancelled.
+    # charge's customer. The ids it cancelled; dies naming any it could not.
     # shortcut: reads the customer's first 100 schedules, as _schedule_at_stripe.
     method _cancel_unrecorded ( $client, $eid ) {
         my $customer = $client->retrieve_payment_intent($stripe_payment_intent_id)->{customer}
-            or return 0;
-        my @live = grep {
+            or return [];
+        my @live = map { $_->{id} } grep {
             ( $_->{metadata}{entitlement_id} // '' ) eq $eid && ( $_->{status} // '' ) =~ /\A(?:not_started|active)\z/
         } @{ $client->list_subscription_schedules( { customer => $customer, limit => 100 } )->{data} // [] };
-        $client->cancel_subscription_schedule( $_->{id}, instalment_cancel_params( $eid, $_->{id} ) ) for @live;
-        return scalar @live;
+        for my $schedule (@live) {
+            try { $client->cancel_subscription_schedule( $schedule, instalment_cancel_params( $eid, $schedule ) ) }
+            catch ($e) { die "could not cancel Stripe schedule $schedule: $e" }
+        }
+        return \@live;
     }
 
     # A released schedule no longer bills, but the subscription it let go of

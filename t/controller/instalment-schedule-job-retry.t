@@ -214,7 +214,8 @@ subtest 'the last failed attempt alerts admins' => sub {
     is_deeply [ sort keys %{ { map { $_ => 1 } @{ $ran->{keys} } } } ],
         [ 'instalment_schedule:' . $c->{entitlement}->id . ':schedule' ],
         'every one under the same key: never a new key';
-    is scalar @{ $ran->{lists} }, 10, 'each attempt first looked for a schedule Stripe made';
+    is scalar @{ $ran->{lists} }, 11,
+        'each attempt first looked for a schedule Stripe made, and the last looked again to cancel one';
     is_deeply scheduled($c), [], 'nothing is recorded';
 
     my $alerts = alerts_for($c);
@@ -242,6 +243,59 @@ subtest 'the last failed cancel attempt alerts admins' => sub {
     my $alerts = alerts_for($c);
     is scalar @$alerts, 1, "the tenant's admin is alerted once";
     like $alerts->[0]{subject}, qr/could not be cancelled/, 'that the instalments were not cancelled';
+};
+
+# Stripe makes the schedule on every attempt (the first; later ones adopt
+# it), but recording it here dies every time: a trigger refuses the rows.
+# The cancel at Stripe answers $cancel. Runs $job to its end.
+sub made_but_never_recorded ( $c, $job, $cancel ) {
+    my $eid = $c->{entitlement}->id;
+    $tdb->query( q{CREATE OR REPLACE FUNCTION refuse_rows() RETURNS trigger LANGUAGE plpgsql AS
+        $$ BEGIN IF NEW.entitlement_id::text = TG_ARGV[0] THEN RAISE EXCEPTION 'disk full'; END IF; RETURN NEW; END $$} );
+    $tdb->query( qq{CREATE TRIGGER refuse_rows_$$ BEFORE INSERT ON payments FOR EACH ROW EXECUTE FUNCTION refuse_rows('$eid')} );
+    my @at;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::retrieve_payment_intent = sub ( $s, $pi ) {
+        return { id => $pi, customer => 'cus_sr', payment_method => 'pm_sr' };
+    };
+    local *Registry::Service::Stripe::create_product = sub ( $s, $p ) { { id => 'prod_sr' } };
+    local *Registry::Service::Stripe::list_subscription_schedules = sub ( $s, $p ) { { data => [@at] } };
+    local *Registry::Service::Stripe::create_subscription_schedule = sub ( $s, $p ) {
+        push @at, { id => 'sub_sched_unrecorded', status => 'not_started', customer => 'cus_sr',
+            metadata => { entitlement_id => $eid },
+            default_settings => { application_fee_percent => $p->{'default_settings[application_fee_percent]'} },
+            phases => [ map { {} } grep { /\Aphases\[\d+\]\[iterations\]\z/ } keys %$p ] };
+        return $at[-1];
+    };
+    local *Registry::Service::Stripe::cancel_subscription_schedule = sub ( $s, $id, $p = {} ) {
+        die "Stripe api_error: An unknown error occurred\n" unless $cancel eq 'works';
+        $_->{status} = 'canceled' for grep { $_->{id} eq $id } @at;
+        return { id => $id, status => 'canceled' };
+    };
+    my $info = run($job);
+    $tdb->query(qq{DROP TRIGGER refuse_rows_$$ ON payments});
+    return ( $info, \@at );
+}
+
+subtest 'a schedule made but never recorded is cancelled after the last attempt' => sub {
+    my ( $c, $job ) = queued('instalment_schedule');
+    my ( $info, $at ) = made_but_never_recorded( $c, $job, 'works' );
+    is $info->{state}, 'failed', 'the job ends failed';
+    is $at->[0]{status}, 'canceled', 'and the schedule left at Stripe is cancelled';
+    my $alerts = alerts_for($c);
+    is scalar @$alerts, 1, 'the admins are told once';
+    like $alerts->[0]{message}, qr/cancelled.*will not be charged/s, 'that it was cancelled, so nothing more is charged';
+};
+
+subtest 'when that cancel fails too, the admins are told the family may still be charged' => sub {
+    my ( $c, $job ) = queued('instalment_schedule');
+    my ( $info, $at ) = made_but_never_recorded( $c, $job, 'fails' );
+    is $at->[0]{status}, 'not_started', 'the schedule at Stripe is still live';
+    my $alerts = alerts_for($c);
+    is scalar @$alerts, 1, 'the admins are told once';
+    like $alerts->[0]{message}, qr/may still be charged/, 'that the family may still be charged';
+    like $alerts->[0]{message}, qr/sub_sched_unrecorded/, 'naming the schedule';
+    unlike $alerts->[0]{message}, qr/will not be charged/, 'and not that it will not be';
 };
 
 done_testing;

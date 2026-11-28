@@ -18,9 +18,14 @@ class Registry::Job::InstalmentSchedule {
             none    => 'has no instalments to schedule',
             subject => 'Instalments could not be scheduled',
             told    => 'Registry could not set up the remaining instalments of entitlement %s '
-                     . '(tenant %s) at Stripe, so the family has paid instalment one and will '
+                     . '(tenant %s) at Stripe%s, so the family has paid instalment one and will '
                      . 'not be charged the rest. Collect them by hand, or ask Registry support '
                      . 'to schedule them.',
+            # When a schedule Stripe made could not be cancelled either.
+            live    => 'Registry could not record the remaining instalments of entitlement %s '
+                     . '(tenant %s), and could not cancel what Stripe had made (%s), so the '
+                     . 'family may still be charged by Stripe for them. Cancel that schedule in '
+                     . "the studio's Stripe dashboard before collecting anything by hand.",
         },
         cancel_instalment_schedule => {
             act     => 'cancel_instalment_schedule',
@@ -28,7 +33,7 @@ class Registry::Job::InstalmentSchedule {
             none    => 'had no instalment schedule to cancel',
             subject => 'Instalments could not be cancelled',
             told    => 'Registry could not cancel the remaining instalments of entitlement %s '
-                     . '(tenant %s) at Stripe, so the family may still be charged for them. '
+                     . '(tenant %s) at Stripe%s, so the family may still be charged for them. '
                      . "Cancel the schedule in the studio's Stripe dashboard, or ask Registry "
                      . 'support to cancel it.',
         },
@@ -78,7 +83,7 @@ class Registry::Job::InstalmentSchedule {
         try { $schedule_id = $self->act_on( $dao->db, $entitlement, $TASK{$task}{act} ) }
         catch ($e) {
             # Minion counts attempts down on each retry: one left is the last.
-            $self->_alert( $job, $dao->db, $task, $entitlement_id, $slug, $e )
+            $self->_alert( $job, $dao->db, $task, $entitlement, $slug, $e )
                 if $job->info->{attempts} <= 1;
             die $e;
         }
@@ -104,9 +109,26 @@ class Registry::Job::InstalmentSchedule {
 
     # Both who can act: the tenant's admins, whose family it is, and the
     # platform's operators, who can re-run the job once Stripe recovers.
-    method _alert ( $job, $db, $task, $entitlement_id, $slug, $err ) {
+    method _alert ( $job, $db, $task, $entitlement, $slug, $err ) {
+        my $entitlement_id = $entitlement->id;
+
+        # A schedule an attempt made at Stripe but never recorded would bill
+        # on unseen: cancelled before the admins are told the family will not
+        # be charged, and if it cannot be, they are told it may be.
+        my ( $message, $cancelled ) = ( $TASK{$task}{told}, '' );
+        if ( $task eq 'instalment_schedule' ) {
+            try {
+                my $payment = $entitlement->payment($db);
+                my $ids = $payment ? $payment->cancel_unrecorded_schedules( $db, $entitlement ) : [];
+                $cancelled = " (it cancelled the schedule Stripe had made, @$ids)" if @$ids;
+            }
+            catch ($e) {
+                ( $cancelled = "$e" ) =~ s/\s+\z//;
+                $message = $TASK{$task}{live};
+            }
+        }
         Registry::DAO::Notification->alert_admins( $db, $TASK{$task}{subject},
-            sprintf( $TASK{$task}{told}, $entitlement_id, $slug ),
+            sprintf( $message, $entitlement_id, $slug, $cancelled ),
             { entitlement_id => $entitlement_id } );
         $job->app->log->error( "$task for entitlement $entitlement_id (tenant $slug) "
               . 'failed its last attempt: '
