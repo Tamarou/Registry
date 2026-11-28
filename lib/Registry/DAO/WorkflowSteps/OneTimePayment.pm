@@ -63,7 +63,7 @@ method process ( $db, $form_data, $run = undef ) {
 method _retire_intent ( $db, $run, $payment ) {
     my $client    = $payment->stripe_client;
     my $intent_id = $payment->stripe_payment_intent_id;
-    return $client->cancel_payment_intent_async( $intent_id, "pi-cancel:$intent_id" )->then(
+    return $client->cancel_payment_intent_async( $intent_id, { _idempotency_key => "pi-cancel:$intent_id" } )->then(
         sub (@) { 0 },
         sub (@) {
             $client->retrieve_payment_intent_async($intent_id)->then( sub ($intent) {

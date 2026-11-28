@@ -297,7 +297,7 @@ sub b3_rows ($run) {
             'the declined charge is recorded as failed';
 
         my @cancelled;
-        local *Registry::Service::Stripe::cancel_payment_intent_async = sub ($s, $id, $key = undef) {
+        local *Registry::Service::Stripe::cancel_payment_intent_async = sub ($s, $id, $p = {}) {
             push @cancelled, $id;
             return Mojo::Promise->resolve({ id => $id, status => 'canceled' });
         };

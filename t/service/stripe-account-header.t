@@ -68,7 +68,9 @@ subtest 'bound client passes idempotency keys through' => sub {
 
     is $seen->[0]->header('Idempotency-Key'), 'ik_pi', 'payment intent keeps its idempotency key';
     is $seen->[1]->header('Idempotency-Key'), 'ik_re', 'refund keeps its idempotency key';
-    is_deeply accounts_sent($seen), ['acct_header_test', 'acct_header_test'], 'both name the account';
+    $client->cancel_payment_intent_async( 'pi_local', { _idempotency_key => 'ik_cancel' } )->wait;
+    is $seen->[2]->header('Idempotency-Key'), 'ik_cancel', 'an intent cancel keeps its idempotency key';
+    is_deeply accounts_sent($seen), [ ('acct_header_test') x 3 ], 'each names the account';
 };
 
 subtest 'for_account refuses undef or empty account' => sub {

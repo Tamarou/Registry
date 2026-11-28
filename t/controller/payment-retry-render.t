@@ -50,7 +50,7 @@ local *Registry::Service::Stripe::create_payment_intent_async = sub ( $self, $p 
     Mojo::Promise->resolve( { id => 'pi_try_' . @secrets, client_secret => $secrets[-1] } );
 };
 # Paying again after a decline cancels the declined intent first.
-local *Registry::Service::Stripe::cancel_payment_intent_async = sub ( $self, $id, $key = undef ) {
+local *Registry::Service::Stripe::cancel_payment_intent_async = sub ( $self, $id, $p = {} ) {
     Mojo::Promise->resolve( { id => $id, status => 'canceled' } );
 };
 local *Registry::Service::Stripe::retrieve_payment_intent_async = sub ( $self, $id ) {

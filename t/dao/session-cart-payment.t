@@ -221,8 +221,8 @@ subtest 'a retry after a decline cancels the declined intent first' => sub {
     is $declined->status, 'failed', 'declined';
     my @cancelled;
     no warnings 'redefine';
-    local *Registry::Service::Stripe::cancel_payment_intent_async = sub ( $s, $id, $key = undef ) {
-        push @cancelled, [ $id, $key, $s->stripe_account ];
+    local *Registry::Service::Stripe::cancel_payment_intent_async = sub ( $s, $id, $p = {} ) {
+        push @cancelled, [ $id, $p->{_idempotency_key}, $s->stripe_account ];
         Mojo::Promise->resolve( { id => $id, status => 'canceled' } );
     };
     my ( $out, $customers, $intents ) = charge( $run, $pay );
@@ -237,7 +237,7 @@ subtest 'a declined intent that succeeded meanwhile is taken as paid' => sub {
     my ( $run, $pay, $declined ) = declined_cart();
     no warnings 'redefine';
     # Another tab confirmed the first intent after all: Stripe will not cancel it.
-    local *Registry::Service::Stripe::cancel_payment_intent_async = sub ( $s, $id, $key = undef ) {
+    local *Registry::Service::Stripe::cancel_payment_intent_async = sub ( $s, $id, $p = {} ) {
         Mojo::Promise->reject("Stripe invalid_request_error: You cannot cancel this PaymentIntent because it has a status of succeeded.");
     };
     local *Registry::Service::Stripe::retrieve_payment_intent_async = sub ( $s, $id ) {
@@ -254,7 +254,7 @@ subtest 'a declined intent that succeeded meanwhile is taken as paid' => sub {
 subtest 'a declined intent still processing is waited on' => sub {
     my ( $run, $pay, $declined ) = declined_cart();
     no warnings 'redefine';
-    local *Registry::Service::Stripe::cancel_payment_intent_async = sub ( $s, $id, $key = undef ) {
+    local *Registry::Service::Stripe::cancel_payment_intent_async = sub ( $s, $id, $p = {} ) {
         Mojo::Promise->reject("Stripe invalid_request_error: You cannot cancel this PaymentIntent because it has a status of processing.");
     };
     local *Registry::Service::Stripe::retrieve_payment_intent_async = sub ( $s, $id ) {
