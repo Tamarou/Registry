@@ -207,6 +207,16 @@ field $_stripe_client = undef;
         return \%params;
     }
 
+    # Is $invoice the $0 opening period a schedule bills for the part paid at
+    # checkout? Its first invoice, priced at nothing before any credit or
+    # discount. Not amount_due: an instalment paid from credit balance or
+    # under a 100% coupon is due nothing and is still that month's.
+    sub is_opening_invoice ( $invoice ) {
+        my $subtotal = $invoice->{subtotal};
+        return ( $invoice->{billing_reason} // '' ) eq 'subscription_create'
+            && defined $subtotal && !ref $subtotal && $subtotal eq '0' ? 1 : 0;
+    }
+
     # YYYY-MM-DD to an epoch second, which is what Stripe takes. Noon UTC rather
     # than midnight, so a timezone offset cannot move a due date onto the
     # previous day and charge a family a month early.

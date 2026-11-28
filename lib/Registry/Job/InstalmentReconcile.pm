@@ -76,7 +76,7 @@ class Registry::Job::InstalmentReconcile {
                 =~ /\Asubscription_(?:create|cycle|update)\z/;
 
             # Not the $0 opening period (Payment::instalment_schedule_params).
-            next if ( $invoice->{amount_due} // '' ) eq '0';
+            next if Registry::DAO::Payment::is_opening_invoice($invoice);
 
             # Bound invoices too: payment_failed binds a row before the retry
             # pays, and settling is idempotent (a completed row is not touched).

@@ -630,8 +630,8 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
 
         # The $0 opening period a schedule bills for the part paid at checkout
         # (Payment::instalment_schedule_params) is no instalment.
-        my $due = $invoice->{amount_due};
-        if ( defined $due && !ref $due && $due eq '0' ) {
+        require Registry::DAO::Payment;
+        if ( Registry::DAO::Payment::is_opening_invoice($invoice) ) {
             $self->app->log->info("instalment invoice for schedule $schedule is the \$0 opening period");
             return;
         }
