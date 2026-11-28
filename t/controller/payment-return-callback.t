@@ -1,135 +1,109 @@
 #!/usr/bin/env perl
-# ABOUTME: Stripe returns the browser from confirmPayment with a GET, so the GET
-# ABOUTME: handler must finish the enrollment instead of re-rendering the form.
+# ABOUTME: Stripe returns the browser from confirmPayment with a GET, so the GET handler
+# ABOUTME: must settle the session cart's charge and move on instead of re-rendering the card form.
 use 5.42.0;
 use warnings;
 use utf8;
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 use lib qw(lib t/lib);
 use Test::More;
-use Test::MockObject;
 use Test::Registry::Mojo;
 use Registry;
 use Test::Registry::DB;
-use Test::Registry::Helpers qw(authenticate_as start_run);
-use Registry::DAO qw(Workflow);
+use Test::Registry::Fixtures;
+use Test::Registry::Helpers qw( authenticate_as import_all_workflows days_from_now );
+use Test::Registry::PricingProbe qw( state_platform_terms );
+use Test::Registry::Sessions qw( make_session session_offer held_cart );
+use Registry::DAO::FamilyMember;
 use Registry::DAO::Payment;
 use Registry::DAO::WorkflowRun;
-use Registry::DAO::WorkflowStep;
-use Mojo::Home;
+use Registry::Service::Stripe;
 use Mojo::Promise;
-use YAML::XS qw(Load);
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
+my $db      = $dao->db;
 $ENV{DB_URL} = $test_db->uri;
+import_all_workflows($dao);
 
-my @files = Mojo::Home->new->child('workflows')->list_tree->grep(qr/\.ya?ml$/)->each;
-for my $file (@files) {
-    next if Load($file->slurp)->{draft};
-    Workflow->from_yaml($dao, $file->slurp);
-}
+my $seller = Test::Registry::Fixtures::platform_seller($db);
+$db->query( q{UPDATE registry.tenants SET stripe_charges_enabled = TRUE, stripe_details_submitted = TRUE
+               WHERE slug = ?}, $seller );
+state_platform_terms( $db, $seller, { rate => 0 } );
+local $ENV{STRIPE_SECRET_KEY} = 'sk_test_placeholder_not_real';
 
 my $t = Test::Registry::Mojo->new('Registry');
-# Do not follow redirects: the redirect itself is the evidence that the run
+# Do not follow redirects: the response itself is the evidence that the run
 # advanced past payment rather than re-rendering the card form.
 $t->ua->max_redirects(0);
 
 # The parent the runs belong to: a run answers only to its own user.
-my $parent = $dao->create( User => { username => 'return_parent', name => 'Return Parent',
+my $parent = Test::Registry::Fixtures::create_user( $dao, { username => 'return_parent', name => 'Return Parent',
     email => 'return_parent@example.com', user_type => 'parent' } );
 authenticate_as( $t, $parent );
+my $kids = 0;
 
-my $workflow     = $dao->find(Workflow => { slug => 'summer-camp-registration' });
-my $payment_step = Registry::DAO::WorkflowStep->find($dao->db, {
-    workflow_id => $workflow->id, slug => 'payment',
-});
-
-# A run parked on the payment step, as it is when the parent is sent to Stripe.
+# A cart whose charge was started, as it is when the parent is sent to Stripe:
+# the run, and the payment holding the intent Registry created.
 sub run_awaiting_payment () {
-    my $run = $workflow->new_run($dao->db);
-    $dao->db->update('workflow_runs',
-        { latest_step_id => $payment_step->id },
-        { id => $run->id },
-    );
-    $run->update_data($dao->db, {
-        user_id    => $parent->id,
-        payment_id => '00000000-0000-0000-0000-000000000001',
-    });
-    return $run;
+    my $kid = Registry::DAO::FamilyMember->create( $db, {
+        family_id => $parent->id, child_name => 'Kid ' . ++$kids, birth_date => '2016-01-01' } );
+    my $s = make_session( $db, days => [ map { days_from_now($_) } 30 .. 32 ] );
+    my ( $run, $pay ) = held_cart( $dao, $parent->id,
+        [ $kid->id, $s->id, session_offer( $db, $s, price_cents => 10000 )->id, 'pay' ] );
+    my $payment = $pay->owed_payment( $db, $run )->{payment};
+    $payment->_record_intent( $db, { id => "pi_returned_$kids", client_secret => 's' } );
+    return ( $run, $payment );
 }
 
-# Stripe's own redirect params. confirmPayment appends these to return_url; the
-# browser arrives as a plain GET, carrying no form body at all.
-my %stripe_return = (
-    payment_intent               => 'pi_returned_from_stripe',
-    payment_intent_client_secret => 'pi_returned_from_stripe_secret_xyz',
-    redirect_status              => 'succeeded',
-);
-
-sub succeeded_payment () {
-    my $mock = Test::MockObject->new;
-    $mock->set_always('id', '00000000-0000-0000-0000-000000000001');
-    # The settlement runs inside the transaction process_payment_async opens,
-    # so the mock invokes $settle; set_always would ignore it and the step would
-    # never reach _settle_callback.
-    $mock->mock('process_payment_async', sub ($self, $db, $intent_id, $settle = undef) {
-        my $result = { success => 1 };
-        return Mojo::Promise->resolve($settle ? $settle->($result) : $result);
-    });
-    # The finalizer the payment_intent.succeeded webhook also runs; idempotent.
-    $mock->set_true('finalize_enrollment');
-    # Read by the post-COMMIT capacity-refund check.
-    $mock->set_always('metadata', {});
-    # Read after settlement for refunds still owed; a fresh payment owes none.
-    $mock->set_always('unsettled_refund_increments', []);
-    return $mock;
+my $retrieved = 0;
+sub succeeded ($payment) {
+    sub ( $s, $id ) {
+        $retrieved++;
+        Mojo::Promise->resolve( { id => $id, status => 'succeeded', amount => 10000,
+            payment_method => 'pm_card', metadata => { payment_id => $payment->id } } );
+    };
 }
+
+sub step_of ($run) { Registry::DAO::WorkflowRun->find( $db, { id => $run->id } )->latest_step($db)->slug }
 
 subtest 'Stripe return GET completes the run instead of re-rendering payment' => sub {
-    my $run  = run_awaiting_payment();
-    my $mock = succeeded_payment();
+    my ( $run, $payment ) = run_awaiting_payment();
+    my $intent = $payment->stripe_payment_intent_id;
 
-    no warnings qw(redefine once);
-    local *Registry::DAO::Payment::find = sub { $mock };
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::retrieve_payment_intent_async = succeeded($payment);
 
-    my $url = "/summer-camp-registration/@{[ $run->id ]}/payment"
-            . '?' . join '&', map {"$_=$stripe_return{$_}"} sort keys %stripe_return;
+    # Stripe's own redirect params, appended to return_url; a plain GET.
+    $t->get_ok( "/session-checkout/@{[ $run->id ]}/payment?payment_intent=$intent"
+            . "&payment_intent_client_secret=${intent}_secret&redirect_status=succeeded" )
+      ->content_unlike( qr/Due today/, 'the payment page is not shown again' );
 
-    $t->get_ok($url)
-      ->status_is(302)
-      ->header_like(Location => qr{/complete$},
-                    'redirects on to the completion step');
-
-    ok $mock->called('process_payment_async'),
-        'the returned intent was handed to the payment step';
-    ok $mock->called('finalize_enrollment'),
-        'enrollment was finalized on the parent return leg';
+    is Registry::DAO::Payment->find( $db, { id => $payment->id } )->status, 'completed',
+        'the returned intent settled the charge';
+    is step_of($run), 'payment', 'and the run moved past its payment';
 };
 
 subtest 'an ordinary GET with no Stripe params still renders the form' => sub {
-    my $run = run_awaiting_payment();
-
-    $t->get_ok("/summer-camp-registration/@{[ $run->id ]}/payment")
-      ->status_is(200);
+    my ($run) = run_awaiting_payment();
+    $t->get_ok("/session-checkout/@{[ $run->id ]}/payment")->status_is(200)
+      ->content_like( qr/Due today/, 'the payment page' );
 };
 
 subtest 'the Stripe params alone do not advance a non-payment step' => sub {
     # The dispatch is keyed on the step handling payment callbacks, not on the
     # query string. Otherwise any step URL could be advanced by appending
     # ?payment_intent=... to a GET.
-    my $run = start_run( $t, $dao->db, $workflow );
-    my ($landing) = Registry::DAO::WorkflowStep->find($dao->db, {
-        workflow_id => $workflow->id, slug => 'landing',
-    });
-    $dao->db->update('workflow_runs',
-        { latest_step_id => $landing->id },
-        { id => $run->id },
-    );
+    my ( $run, $payment ) = run_awaiting_payment();
+    $retrieved = 0;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::retrieve_payment_intent_async = succeeded($payment);
 
-    $t->get_ok("/summer-camp-registration/@{[ $run->id ]}/landing"
-             . '?payment_intent=pi_forged&redirect_status=succeeded')
+    $t->get_ok( "/session-checkout/@{[ $run->id ]}/hold?payment_intent=pi_forged&redirect_status=succeeded" )
       ->status_is(200);
+    is $retrieved, 0, 'no intent is looked up';
+    is Registry::DAO::Payment->find( $db, { id => $payment->id } )->status, 'pending', 'nothing is settled';
+    is step_of($run), 'hold', 'and the run stays where it was';
 };
 
 done_testing();

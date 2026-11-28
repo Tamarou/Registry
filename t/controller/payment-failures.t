@@ -1,7 +1,6 @@
 #!/usr/bin/env perl
-# ABOUTME: DAO-level tests for refund handling on the payments table.
-# ABOUTME: Tests that a refund updates the payment row and the enrollment it paid for.
-
+# ABOUTME: A session cart's charge that fails or is still processing when the parent returns from Stripe.
+# ABOUTME: Nothing is booked, the seats stay held, and the payment row records what Stripe said.
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
 use 5.42.0;
@@ -10,143 +9,87 @@ use utf8;
 
 use lib qw(lib t/lib);
 use Test::More;
+use Test::Registry::Mojo;
+use Registry;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
-use Mojo::JSON qw(encode_json);
-
-use Registry::DAO;
-use Registry::DAO::User;
-use Registry::DAO::Session;
+use Test::Registry::Helpers qw( authenticate_as import_all_workflows days_from_now );
+use Test::Registry::PricingProbe qw( state_platform_terms );
+use Test::Registry::Sessions qw( make_session session_offer held_cart );
+use Registry::DAO::FamilyMember;
+use Registry::DAO::Payment;
+use Registry::DAO::WorkflowRun;
+use Registry::Service::Stripe;
+use Mojo::Promise;
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
+my $db      = $dao->db;
+$ENV{DB_URL} = $test_db->uri;
+import_all_workflows($dao);
 
-# --- Test Data Setup ---
+my $seller = Test::Registry::Fixtures::platform_seller($db);
+$db->query( q{UPDATE registry.tenants SET stripe_charges_enabled = TRUE, stripe_details_submitted = TRUE
+               WHERE slug = ?}, $seller );
+state_platform_terms( $db, $seller, { rate => 0 } );
+local $ENV{STRIPE_SECRET_KEY} = 'sk_test_placeholder_not_real';
 
-my $location = $dao->create(Location => { time_zone => 'America/New_York',
-    name         => 'Payment Test Studio',
-    address_info => { street => '100 Main', city => 'Orlando', state => 'FL' },
-    metadata     => {},
-});
+my $t = Test::Registry::Mojo->new('Registry');
+$t->ua->max_redirects(5);
+my $parent = Test::Registry::Fixtures::create_user( $dao, { username => 'pf_parent', name => 'Payment Parent',
+    email => 'pf@example.com', user_type => 'parent' } );
+authenticate_as( $t, $parent );
+my $kids = 0;
 
-my $teacher = $dao->create(User => { username => 'pf_teacher', user_type => 'staff' });
+# A cart whose card form is showing: the run and its payment.
+sub started_cart () {
+    my $kid = Registry::DAO::FamilyMember->create( $db, {
+        family_id => $parent->id, child_name => 'Kid ' . ++$kids, birth_date => '2016-01-01' } );
+    my $s = make_session( $db, days => [ map { days_from_now($_) } 30 .. 32 ] );
+    my ( $run, $pay ) = held_cart( $dao, $parent->id,
+        [ $kid->id, $s->id, session_offer( $db, $s, price_cents => 30000 )->id, 'pay' ] );
+    my $payment = $pay->owed_payment( $db, $run )->{payment};
+    $payment->_record_intent( $db, { id => "pi_pf_$kids", client_secret => 's' } );
+    return ( $run, Registry::DAO::Payment->find( $db, { id => $payment->id } ) );
+}
 
-my $program = $dao->create(Project => { status => 'published',
-    name => 'Payment Failure Camp', metadata => {},
-});
+# The parent's return from Stripe with the intent in $status.
+sub returned ( $run, $payment, %intent ) {
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::retrieve_payment_intent_async = sub ( $s, $id ) {
+        Mojo::Promise->resolve( { id => $id, amount => 30000, metadata => { payment_id => $payment->id }, %intent } );
+    };
+    return $t->get_ok( "/session-checkout/@{[ $run->id ]}/payment?payment_intent=" . $payment->stripe_payment_intent_id );
+}
 
-my $session = $dao->create(Session => {
-    name       => 'Payment Test Session',
-    start_date => '2026-06-01',
-    end_date   => '2026-06-05',
-    status     => 'published',
-    capacity   => 16,
-    metadata   => {},
-});
+sub nothing_booked ( $run, $payment ) {
+    is $db->query( 'SELECT count(*) FROM entitlements WHERE payment_id = ?', $payment->id )->array->[0], 0,
+        'nothing is booked';
+    is $db->query( q{SELECT count(*) FROM holds WHERE workflow_run_id = ? AND state = 'held'}, $run->id )->array->[0], 1,
+        'the seat stays held';
+    is Registry::DAO::WorkflowRun->find( $db, { id => $run->id } )->next_step($db)->slug, 'payment',
+        'and the run waits at its payment';
+}
 
-my $event = $dao->create(Event => {
-    time        => '2026-06-01 09:00:00',
-    duration    => 420,
-    location_id => $location->id,
-    project_id  => $program->id,
-    teacher_id  => $teacher->id,
-    capacity    => 16,
-    metadata    => {},
-});
-$session->add_events($dao->db, $event->id);
+subtest 'a declined card fails the payment with its reason' => sub {
+    my ( $run, $payment ) = started_cart();
+    returned( $run, $payment, status => 'requires_payment_method',
+        last_payment_error => { message => 'Your card has insufficient funds.' } )
+        ->status_is(200)->content_like( qr/Your card has insufficient funds\./, 'the parent is told why' );
 
-my $parent = $dao->create(User => {
-    username => 'pf_parent', name => 'Payment Parent',
-    user_type => 'parent', email => 'pf@example.com',
-});
+    my $row = Registry::DAO::Payment->find( $db, { id => $payment->id } );
+    is $row->status, 'failed', 'the payment is failed';
+    is $row->error_message, 'Your card has insufficient funds.', "with Stripe's reason";
+    nothing_booked( $run, $payment );
+};
 
-my $enrollment_id = $dao->db->insert('enrollments', {
-    session_id => $session->id,
-    student_id => $parent->id,
-    status     => 'active',
-    metadata   => '{}',
-}, { returning => 'id' })->hash->{id};
+subtest 'a charge still processing is waited on' => sub {
+    my ( $run, $payment ) = started_cart();
+    returned( $run, $payment, status => 'processing' )
+        ->status_is(200)->content_like( qr/Payment is being processed/, 'the parent is told to wait' );
 
-# ============================================================
-# Refund Processing (DAO level - no webhook handler for refunds)
-# ============================================================
-subtest 'refund updates payment and enrollment status' => sub {
-    # Create a completed payment record directly in the DB
-    my $payment = $dao->db->insert('registry.payments', {
-        user_id      => $parent->id,
-        amount_cents => 30000,
-        currency => 'USD',
-        status   => 'completed',
-        stripe_payment_intent_id => 'pi_test_refund_1',
-        metadata => '{}',
-    }, { returning => '*' })->hash;
-    ok $payment, 'Payment record created';
-
-    # Full refund: update status directly (bypassing Stripe API)
-    $dao->db->update('registry.payments', {
-        status   => 'refunded',
-        metadata => encode_json({
-            refund_id     => 'rf_test_1',
-            refund_amount_cents => 30000,
-            refund_reason => 'requested_by_customer',
-        }),
-    }, { id => $payment->{id} });
-
-    my $refunded = $dao->db->select('registry.payments', '*', {
-        id => $payment->{id},
-    })->hash;
-    is $refunded->{status}, 'refunded', 'Payment status updated to refunded';
-
-    # Update enrollment status for full refund
-    $dao->db->update('enrollments', {
-        status => 'cancelled',
-    }, { id => $enrollment_id });
-
-    my $enrollment = $dao->db->select('enrollments', '*', {
-        id => $enrollment_id,
-    })->hash;
-    is $enrollment->{status}, 'cancelled', 'Enrollment cancelled after full refund';
-
-    # Partial refund: should NOT cancel enrollment
-    my $parent2 = $dao->create(User => {
-        username => 'pf_parent2', name => 'Partial Refund Parent',
-        user_type => 'parent', email => 'pf2@example.com',
-    });
-
-    my $payment2 = $dao->db->insert('registry.payments', {
-        user_id      => $parent2->id,
-        amount_cents => 30000,
-        currency => 'USD',
-        status   => 'completed',
-        stripe_payment_intent_id => 'pi_test_refund_2',
-        metadata => '{}',
-    }, { returning => '*' })->hash;
-
-    my $enrollment2_id = $dao->db->insert('enrollments', {
-        session_id => $session->id,
-        student_id => $parent2->id,
-        status     => 'active',
-        metadata   => '{}',
-    }, { returning => 'id' })->hash->{id};
-
-    $dao->db->update('registry.payments', {
-        status   => 'partially_refunded',
-        metadata => encode_json({
-            refund_id     => 'rf_test_2',
-            refund_amount_cents => 10000,
-            refund_reason => 'requested_by_customer',
-        }),
-    }, { id => $payment2->{id} });
-
-    my $partial = $dao->db->select('registry.payments', '*', {
-        id => $payment2->{id},
-    })->hash;
-    is $partial->{status}, 'partially_refunded', 'Payment partially refunded';
-
-    my $enrollment2 = $dao->db->select('enrollments', '*', {
-        id => $enrollment2_id,
-    })->hash;
-    is $enrollment2->{status}, 'active', 'Enrollment stays active after partial refund';
+    is Registry::DAO::Payment->find( $db, { id => $payment->id } )->status, 'processing', 'the payment is processing';
+    nothing_booked( $run, $payment );
 };
 
 done_testing;
