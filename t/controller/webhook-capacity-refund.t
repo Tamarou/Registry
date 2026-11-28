@@ -1,5 +1,5 @@
-# ABOUTME: The post-COMMIT capacity refund, driven end to end through the real webhook action.
-# ABOUTME: Delivered to the Connect endpoint. Covers tenant routing by event.account, ordering after COMMIT, and that a failed refund still answers 2xx.
+# ABOUTME: A late cart line refunded: a seat lost while the parent paid is refunded after the webhook's COMMIT, by the run's driver.
+# ABOUTME: Delivered to the Connect endpoint. Covers tenant routing by event.account, ordering after COMMIT, retries, and that Stripe always gets 2xx.
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
 use 5.42.0;
@@ -9,442 +9,150 @@ use Test::More;
 use Test::Registry::DB;
 use Test::Registry::PricingProbe qw( state_platform_terms );
 use Test::Registry::Mojo;
-use Test::Registry::StripeWebhook;
+use Test::Registry::Sessions qw( make_session session_offer held_cart );
+use Test::Registry::SessionCheckout qw( started_charge post_succeeded drive );
 use Registry::DAO;
+use Registry::DAO::Entitlement;
+use Registry::DAO::FamilyMember;
 use Registry::DAO::Tenant;
 use Registry::DAO::User;
-use Registry::DAO::Family;
 use Registry::DAO::Payment;
-use Registry::DAO::Enrollment;
+use Registry::DAO::WorkflowRun;
 use Registry::Service::Stripe;
-use Mojo::Pg;
 use Mojo::Promise;
 
-local $ENV{STRIPE_SECRET_KEY}     = 'sk_test_capacity_refund';
-local $ENV{STRIPE_WEBHOOK_SECRET} = 'whsec_test_capacity_refund';
+local $ENV{STRIPE_SECRET_KEY}             = 'sk_test_capacity_refund';
+local $ENV{STRIPE_WEBHOOK_SECRET}         = 'whsec_test_capacity_refund';
 local $ENV{STRIPE_CONNECT_WEBHOOK_SECRET} = 'whsec_test_capacity_refund_connect';
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;
 my $db      = $dao->db;
-my $uri     = $test_db->uri;
 
-my $slug = 'cr_tenant_' . $$;
-
-my $admin = Registry::DAO::User->create($db, {
-    username => "cr_admin_$$", email => "cr_admin_$$\@test.example",
-    name => 'CR Admin', user_type => 'admin' });
-Registry::DAO::Tenant->provision($db, {
-    name => "CR Tenant $$", slug => $slug, users => [$admin],
-    stripe_connect_account_id => 'acct_cr_test',
-    stripe_charges_enabled => 1, stripe_details_submitted => 1 });
-
-my $tdao = Registry::DAO->new(url => $uri, schema => $slug);
+my $slug    = 'cr_tenant_' . $$;
+my $account = 'acct_cr_test';
+my $admin   = Registry::DAO::User->create( $db, {
+    username => "cr_admin_$$", email => "cr_admin_$$\@test.example", name => 'CR Admin', user_type => 'admin' } );
+Registry::DAO::Tenant->provision( $db, {
+    name => "CR Tenant $$", slug => $slug, users => [$admin], stripe_connect_account_id => $account,
+    stripe_charges_enabled => 1, stripe_details_submitted => 1 } );
 state_platform_terms( $db, $slug, { rate => 0 } );
+my $tdao = Registry::DAO->new( url => $test_db->uri, schema => $slug );
 my $tdb  = $tdao->db;
 
-my $parent = Registry::DAO::User->create($tdb, {
-    username => "cr_parent_$$", email => "cr_parent_$$\@test.example",
-    name => 'CR Parent', user_type => 'parent' });
-
-my $seq = 0;
-sub a_child () {
-    $seq++;
-    Registry::DAO::Family->add_child($tdb, $parent->id, {
-        child_name => "CR Kid $seq", birth_date => '2018-01-01', grade => '3',
-        medical_info => {}, emergency_contact => { name => 'x', phone => '5' } });
-}
-
-my $loc = Registry::DAO::Location->create($tdb, { time_zone => 'America/New_York',
-    name => "CR Studio $$", slug => "cr_studio_$$", address_info => {}, metadata => {} });
-my $prog = Registry::DAO::Project->create($tdb, {
-    name => "CR Camp $$", status => 'published',
-    program_type_slug => 'summer-camp', metadata => {} });
-my $teacher = Registry::DAO::User->create($tdb, {
-    username => "cr_teacher_$$", email => "cr_teacher_$$\@test.example",
-    name => 'CR Teacher', user_type => 'staff' });
-
-sub a_full_session () {
-    $seq++;
-    my $s = Registry::DAO::Session->create($tdb, {
-        name => "CR Week $seq", start_date => '2026-07-01', end_date => '2026-07-31',
-        status => 'published', capacity => 1, metadata => {} });
-    my $e = Registry::DAO::Event->create($tdb, {
-        time => sprintf('2026-07-01 %02d:%02d:00', $seq % 24, $seq % 60),
-        duration => 60, location_id => $loc->id, project_id => $prog->id,
-        teacher_id => $teacher->id, capacity => 1, metadata => {} });
-    $s->add_events($tdb, $e->id);
-    # Somebody else already holds the only seat.
-    Registry::DAO::Enrollment->create($tdb, {
-        session_id => $s->id, family_member_id => a_child()->id,
-        parent_id => $parent->id, status => 'active' });
-    return $s;
-}
-
-# A captured tenant payment for a seat that is gone.
-sub a_doomed_payment (%extra) {
-    my $session = a_full_session();
-    my $child   = a_child();
-    my $p = Registry::DAO::Payment->create($tdb, {
-        user_id => $parent->id, amount_cents => 15000, status => 'pending', %extra,
-        metadata => {
-            enrollment_items => [ { session_id => $session->id, child_id => $child->id } ],
-            tenant_slug      => $slug } });
-    $tdb->insert('payment_items', {
-        payment_id => $p->id, description => 'seat', amount_cents => 15000,
-        metadata => { -json => { child_id => $child->id, session_id => $session->id } } });
-    # The intent Registry created for it, as post_settlement names it.
-    $tdb->update('payments', { stripe_payment_intent_id => 'pi_cr_' . $p->id }, { id => $p->id });
-    return Registry::DAO::Payment->find($tdb, { id => $p->id });
-}
-
 my $t = Test::Registry::Mojo->new('Registry');
-$t->app->helper(dao => sub { $dao });
+$t->app->helper( dao => sub ( $c, $tenant = undef ) {
+    defined $tenant ? Registry::DAO->new( url => $test_db->uri, schema => $tenant ) : $dao } );
+my $minion = $t->app->minion;
 
-my $evt = 0;
-sub post_settlement ($payment, %opts) {
-    $evt++;
-    return Test::Registry::StripeWebhook::post_connect($t, {
-        id      => $opts{event_id} // "evt_cr_${$}_$evt",
-        type    => 'payment_intent.succeeded',
-        account => 'acct_cr_test',
-        data    => { object => {
-            id       => 'pi_cr_' . $payment->id,
-            amount   => 15000,
-            ( exists $opts{fee} ? ( application_fee_amount => $opts{fee} ) : () ),
-            metadata => { payment_id => $payment->id, tenant_slug => $slug },
-        } },
-    });
+my $parent = Registry::DAO::User->create( $tdb, {
+    username => "cr_parent_$$", email => "cr_parent_$$\@test.example", name => 'CR Parent', user_type => 'parent' } );
+my $seq = 0;
+sub a_child ( $family = $parent->id ) {
+    Registry::DAO::FamilyMember->create( $tdb, { family_id => $family, child_name => 'CR Kid ' . ++$seq, birth_date => '2018-01-01' } );
+}
+my $stranger = Registry::DAO::User->create( $tdb, {
+    username => "cr_stranger_$$", email => "cr_stranger_$$\@test.example", name => 'CR Other', user_type => 'parent' } );
+
+# A paid cart of two children in a two-seat session, whose second child's hold
+# lapsed while the parent paid and whose seat another family then took: the
+# first child is booked, the second's $150 line is late.
+sub a_late_line () {
+    my $session = make_session( $tdb, capacity => 2 );
+    my $version = session_offer( $tdb, $session, price_cents => 15000 );
+    my ( $first, $late ) = ( a_child(), a_child() );
+    my ( $run, $pay ) = held_cart( $tdao, $parent->id,
+        map { [ $_->id, $session->id, $version->id, 'pay' ] } $first, $late );
+    my $payment = started_charge( $tdb, $run, $pay );
+    $tdb->query( q{UPDATE holds SET expires_at = clock_timestamp() - interval '1 second' WHERE id::text = ?},
+        Registry::DAO::WorkflowRun->find( $tdb, { id => $run->id } )->data->{cart_holds}{ $late->id . ':' . $session->id } );
+    Registry::DAO::Entitlement->grant( $tdb, { holder_family_member_id => a_child( $stranger->id )->id,
+        offer_version_id => $version->id, payment_plan_id => 'pay', starts_at => 'now',
+        resource_id => $session->id, units => 1 } );
+    return { run => $run, payment => $payment, session => $session, first => $first, late => $late };
 }
 
-sub tenant_payment ($payment) {
-    Registry::DAO::Payment->find($tdb, { id => $payment->id });
+sub tenant_payment ($payment) { Registry::DAO::Payment->find( $tdb, { id => $payment->id } ) }
+sub booked ($cart) {
+    [ map { $_->{holder_family_member_id} } $tdb->select( 'entitlements', '*', { payment_id => $cart->{payment}->id } )->hashes->@* ];
 }
 
-subtest 'capacity refund settles in the account resolved tenant' => sub {
-    my $payment = a_doomed_payment();
-    my @refunds;
+# Drives with Stripe's refund create answering as $answer does.
+sub drive_refunding ( $answer, $calls = [] ) {
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::create_refund_async = sub ( $s, $p ) { push @$calls, $p; $answer->($p) };
+    # Retried at once rather than after the backoff.
+    my $backoff = $minion->backoff;
+    $minion->backoff( sub ($retries) { 0 } );
+    drive($minion);
+    $minion->backoff($backoff);
+    return $calls;
+}
+my $succeeds = sub ($p) { Mojo::Promise->resolve( { id => 're_cr_' . $p->{_idempotency_key}, status => 'succeeded' } ) };
 
-    {
-        no warnings 'redefine';
-        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
-            push @refunds, $p;
-            Mojo::Promise->resolve({ id => 're_cr', status => 'succeeded' });
-        };
-        post_settlement($payment)->status_is(200);
-    }
+subtest 'a late line refund settles in the account resolved tenant' => sub {
+    my $cart = a_late_line();
+    post_succeeded( $t, $cart->{payment}, $account )->status_is(200);
+    my $refunds = drive_refunding($succeeds);
 
-    is scalar @refunds, 1, 'the capacity refund was issued';
-    is $refunds[0]{amount}, 15000, "for the demoted child's share";
+    is scalar @$refunds, 1, 'the late line is refunded';
+    is $refunds->[0]{amount}, 15000, "for the late child's share";
+    is_deeply booked($cart), [ $cart->{first}->id ], 'the first child is booked, the late one is not';
 
-    # By qualified name on both sides. An assertion that read whatever
-    # unqualified `payments` resolves to would pass even if the write had
-    # landed in the wrong schema, which is the failure this guards.
-    my $in_tenant = $db->query(
-        sprintf(q{SELECT status FROM %s.payments WHERE id = ?}, $db->dbh->quote_identifier($slug)),
-        $payment->id)->hash;
-    is $in_tenant->{status}, 'refunded', 'the tenant row records the refund';
-
-    my $in_registry = $db->query(
-        'SELECT COUNT(*) FROM registry.payments WHERE id = ?', $payment->id)->array->[0];
-    is $in_registry, 0, 'and registry.payments gained nothing';
-};
-
-# One increment cannot tell the two apart: the balance and the increment are
-# the same number, so a caller sending refund_owed_cents passes just as well as
-# one sending $inc->{cents}. Two increments separate them, and sending the
-# balance is precisely the double refund this whole design exists to stop.
-subtest 'two increments are refunded separately, never as one accumulated total' => sub {
-    my $payment = a_doomed_payment();
-
-    # A second, earlier debt whose refund never settled -- the shape a lost
-    # response leaves behind.
-    #
-    # The intent id has to be seeded with it. Recording a debt moves the row to
-    # refund_pending, which makes the delivery below skip mark_completed --
-    # correct, that is the settled-write guard doing its job -- so the row would
-    # never acquire an intent id and refund_async would die on that instead,
-    # invisibly, because the always-2xx catch swallows it. In production the
-    # first delivery completes the payment before any debt exists.
-    $tdb->update('payments', { stripe_payment_intent_id => 'pi_cr_' . $payment->id },
-        { id => $payment->id });
-    tenant_payment($payment)->record_capacity_obligation( $tdb, 4000, ['earlier-kid'] );
-
-    my @refunds;
-    {
-        no warnings 'redefine';
-        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
-            push @refunds, $p;
-            Mojo::Promise->resolve({ id => 're_multi_' . scalar(@refunds), status => 'succeeded' });
-        };
-        post_settlement($payment)->status_is(200);
-    }
-
-    is scalar @refunds, 2, 'one Stripe call per unsettled increment';
-    # 4000 + 11000, not 4000 + 15000: the cart is 15000, so the second
-    # increment is clamped to the headroom left. The increments always sum to
-    # the balance, which is the property that keeps Stripe from being sent more
-    # than the payment.
-    is_deeply [ sort { $a <=> $b } map { $_->{amount} } @refunds ], [ 4000, 11000 ],
-        'each for its own amount -- not the 15000 balance twice, nor once';
-
-    my $total = 0; $total += $_->{amount} for @refunds;
-    is $total, 15000, 'the total reaching Stripe equals the debt, never more';
-
-    my %keys = map { $_->{_idempotency_key} // '' => 1 } @refunds;
-    is scalar( keys %keys ), 2,
-        'under distinct keys, so Stripe cannot fold one into the other';
-
-    is tenant_payment($payment)->refund_owed_cents, 0, 'and nothing is left owed';
-
-    # refunded_cents on the COMPOSED path -- refund_async into
-    # _apply_refund_result into settle_refund_increment. Every other assertion
-    # for it exercises one of those in isolation, so forcing $is_increment to 0
-    # recorded 14000 for 7000 actually returned and the whole suite stayed
-    # green. It is the Leg 3 ledger figure and the headroom term in
-    # record_capacity_obligation's clamp, so over-counting it destroys refund
-    # capacity for every later demotion on the cart.
-    is tenant_payment($payment)->refunded_cents, 15000,
-        'and exactly what reached Stripe is recorded as returned, counted once';
+    # By qualified name on both sides: an assertion reading whatever unqualified
+    # `payments` resolves to would pass even if the write had landed in the
+    # wrong schema, which is the failure this guards.
+    my $in_tenant = $db->query( sprintf( q{SELECT status, refunded_cents FROM %s.payments WHERE id = ?},
+        $db->dbh->quote_identifier($slug) ), $cart->{payment}->id )->hash;
+    is $in_tenant->{status}, 'partially_refunded', 'the tenant row records the refund';
+    is $in_tenant->{refunded_cents}, 15000, 'of the late line alone';
+    is $db->query( 'SELECT COUNT(*) FROM registry.payments WHERE id = ?', $cart->{payment}->id )->array->[0], 0,
+        'and registry.payments gained nothing';
 };
 
 subtest 'the refund happens after the COMMIT, not inside it' => sub {
-    my $payment = a_doomed_payment();
-    my $visible_to_another_connection;
-
+    my $cart = a_late_line();
+    my @during;
     {
         no warnings 'redefine';
-        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
-            # A second backend can only see the demotion if the settlement
-            # transaction has already committed.
-            my $other = Mojo::Pg->new($uri)->db;
-            $visible_to_another_connection = $other->query(
-                sprintf(q{SELECT status FROM %s.payments WHERE id = ?},
-                    $other->dbh->quote_identifier($slug)),
-                $payment->id)->hash->{status};
-            Mojo::Promise->resolve({ id => 're_cr_order', status => 'succeeded' });
+        local *Registry::Service::Stripe::create_refund_async = sub ( $s, $p ) {
+            push @during, $p;
+            Mojo::Promise->resolve( { id => 're_cr_inside', status => 'succeeded' } );
         };
-        post_settlement($payment)->status_is(200);
+        post_succeeded( $t, $cart->{payment}, $account )->status_is(200);
     }
-
-    is $visible_to_another_connection, 'refund_pending',
-        'the settlement was committed before the refund was issued';
+    is scalar @during, 0, 'the webhook itself asks Stripe for nothing';
+    is tenant_payment( $cart->{payment} )->status, 'completed', 'the committed payment is completed';
+    is $minion->jobs( { tasks => ['continue_workflow_run'], states => ['inactive'] } )->total, 1,
+        "and the run's driver is queued to book and refund";
+    is scalar drive_refunding($succeeds)->@*, 1, 'which refunds the late line';
 };
 
-subtest 'a rejected refund still answers Stripe with 2xx' => sub {
-    # A 500 here would make Stripe retry a delivery whose claim is committed;
-    # the retry hits the dedup, is acknowledged as a duplicate, and the refund
-    # is never retried -- while repeated 500s on successful deliveries are how
-    # an endpoint gets disabled.
-    my $payment = a_doomed_payment();
-    {
-        no warnings 'redefine';
-        local *Registry::Service::Stripe::create_refund_async =
-            sub { Mojo::Promise->reject('card network unavailable') };
-        post_settlement($payment)->status_is(200);
-    }
-    is tenant_payment($payment)->status, 'refund_pending',
-        'and leaves the row for the runbook';
+subtest 'a rejected refund still answers Stripe with 2xx, and the driver retries it' => sub {
+    my $cart  = a_late_line();
+    my $tries = 0;
+    post_succeeded( $t, $cart->{payment}, $account )->status_is( 200, 'acknowledged before any refund' );
+    drive_refunding( sub ($p) { $tries++; Mojo::Promise->reject("Stripe api_error: try later\n") } );
+
+    is $tries, 3, 'asked on each of the three attempts';
+    is_deeply booked($cart), [ $cart->{first}->id ], 'the first child stays booked';
+    my $run = Registry::DAO::WorkflowRun->find( $tdb, { id => $cart->{run}->id } );
+    is $run->data->{__driver}{state}, 'halted', 'the run is halted for an admin on the last attempt';
+    like tenant_payment( $cart->{payment} )->metadata->{refund_last_failure}{message}, qr/try later/,
+        'the failure is recorded on the payment';
+    is tenant_payment( $cart->{payment} )->refunded_cents, 0, 'and nothing is recorded as refunded';
 };
-
-# A pending refund has moved no money and may fail. Settling the increment on
-# it discharged the debt and read refunded; it waits for refund.updated.
-subtest 'a pending capacity refund leaves the debt owed' => sub {
-    my $payment = a_doomed_payment();
-    my @errors;
-    {
-        no warnings 'redefine', 'once';
-        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
-            Mojo::Promise->resolve({ id => 're_cr_wait_' . $payment->id, status => 'pending' });
-        };
-        local *Mojo::Log::error = sub ($self, @msg) { push @errors, join '', @msg };
-        post_settlement($payment)->status_is(200);
-    }
-
-    my $row = tenant_payment($payment);
-    is $row->status, 'refund_pending', 'the payment still owes the refund';
-    is $row->refund_owed_cents, 15000, 'the debt is not discharged';
-    is $row->refunded_cents, 0, 'nothing is counted as returned';
-    is scalar @{ $row->unsettled_refund_increments($tdb) }, 1, 'the increment is unsettled';
-    is_deeply \@errors, [], 'and waiting is not logged as an error';
-};
-
-subtest 'a refund that throws synchronously still answers 2xx' => sub {
-    # refund_async dies before returning a promise in several real ways: the
-    # status guard, a missing intent id, stripe_client refusing a live key. A
-    # ->catch on the returned promise never sees a synchronous throw, so the
-    # exception escapes the action entirely.
-    my $payment = a_doomed_payment();
-    {
-        no warnings 'redefine';
-        local *Registry::DAO::Payment::refund_async =
-            sub { die "stripe_client initialization failed\n" };
-        post_settlement($payment)->status_is(200);
-    }
-    is tenant_payment($payment)->status, 'refund_pending',
-        'the debt survives the throw';
-};
-
-subtest 'a settlement that fits refunds nothing' => sub {
-    $seq++;
-    my $roomy = Registry::DAO::Session->create($tdb, {
-        name => "CR Roomy $seq", start_date => '2026-07-01', end_date => '2026-07-31',
-        status => 'published', capacity => 10, metadata => {} });
-    my $e = Registry::DAO::Event->create($tdb, {
-        time => sprintf('2026-08-01 %02d:%02d:00', $seq % 24, $seq % 60),
-        duration => 60, location_id => $loc->id, project_id => $prog->id,
-        teacher_id => $teacher->id, capacity => 10, metadata => {} });
-    $roomy->add_events($tdb, $e->id);
-
-    my $child = a_child();
-    my $p = Registry::DAO::Payment->create($tdb, {
-        user_id => $parent->id, amount_cents => 15000, status => 'pending',
-        metadata => {
-            enrollment_items => [ { session_id => $roomy->id, child_id => $child->id } ],
-            tenant_slug      => $slug } });
-    $tdb->update('payments', { stripe_payment_intent_id => 'pi_cr_' . $p->id }, { id => $p->id });
-    my $payment = Registry::DAO::Payment->find($tdb, { id => $p->id });
-
-    my @refunds;
-    {
-        no warnings 'redefine';
-        local *Registry::Service::Stripe::create_refund_async =
-            sub ($s, $pp) { push @refunds, $pp; Mojo::Promise->resolve({ id => 're_no' }) };
-        post_settlement($payment)->status_is(200);
-    }
-
-    is scalar @refunds, 0, 'no refund is issued for a seat that was there';
-    is tenant_payment($payment)->status, 'completed', 'and the payment is completed';
-};
-
-# The zero-row branch is the ONLY alarm for "Stripe took the money and nothing
-# recorded it". Both callers write `... or log(...)`, and nothing graded either,
-# so removing the whole `or` clause left the suite green.
-subtest 'a settle that records nothing after Stripe paid is logged, not swallowed' => sub {
-    my $payment = a_doomed_payment();
-    my @errors;
-    {
-        no warnings 'redefine', 'once';
-        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
-            Mojo::Promise->resolve({ id => 're_lost', status => 'succeeded' });
-        };
-        # Settle the increment out from under the loop, so the refund succeeds
-        # and the settle that follows it matches no unsettled row -- exactly the
-        # shape the log line names.
-        local *Registry::DAO::Payment::settle_refund_increment = sub { return undef };
-        local *Mojo::Log::error = sub ($self, @msg) { push @errors, join '', @msg };
-        post_settlement($payment)->status_is(200);
-    }
-
-    ok scalar( grep { /matched no row after Stripe paid/ } @errors ),
-        'the operator is told Stripe paid and the increment is still due';
-};
-
-# The gate decides whether the post-COMMIT refund runs at all. It was changed
-# twice -- from the balance to the work queue, then to a cast-free length test
-# -- and nothing graded either change: replacing the whole predicate with the
-# original `refund_owed_cents > 0` left the suite green. The state it exists for
-# is a row whose balance reads zero while increments remain due, which the
-# runbook's own settle step can produce.
-subtest 'a row whose balance was zeroed but still owes increments is still refunded' => sub {
-    my $payment = a_doomed_payment();
-
-    # First delivery: the child is demoted, the debt is recorded, the refund
-    # fails. The child is now waitlisted, so a later delivery adds no new debt --
-    # which is what makes the gate's predicate the only thing deciding.
-    {
-        no warnings 'redefine';
-        local *Registry::Service::Stripe::create_refund_async =
-            sub { Mojo::Promise->reject('stripe said no') };
-        post_settlement($payment)->status_is(200);
-    }
-    cmp_ok tenant_payment($payment)->refund_owed_cents, '>', 0, 'a debt is owed';
-
-    # As a hand-run settle with a mistyped seq leaves it: balance zero, the
-    # increment still unsettled.
-    $tdb->query( 'UPDATE payments SET refund_owed_cents = 0 WHERE id = ?', $payment->id );
-
-    my @refunds;
-    {
-        no warnings 'redefine';
-        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
-            push @refunds, $p;
-            Mojo::Promise->resolve({ id => 're_zero', status => 'succeeded' });
-        };
-        post_settlement($payment)->status_is(200);
-    }
-
-    ok scalar @refunds,
-        'the gate sees the work queue, not just the balance -- a zeroed balance '
-        . 'with increments due is still refunded';
-};
-
-# Everything one settlement leaves behind for a payment, so two deliveries can
-# be compared with one.
-sub settled_once ($payment) {
-    my $row = $tdb->select('payments', ['status', 'completed_at', 'platform_fee_cents'],
-        { id => $payment->id })->hash;
-    my $jobs = 0;
-    $t->app->minion->jobs({ tasks => ['instalment_schedule'] })
-        ->each(sub ($job, @) { $jobs++ if $job->{args}[0] eq $payment->id });
-    return {
-        %$row,
-        enrollments => scalar @{ $tdb->select('enrollments', ['id'],
-            { payment_id => $payment->id })->hashes },
-        schedule_jobs => $jobs,
-    };
-}
-
-# Instalment one of a cart whose seat is gone: one delivery completes it,
-# records the fee and refunds the seat. The webhook schedules nothing: a
-# child's instalments are scheduled by checkout, per entitlement.
-sub an_instalment_for_a_gone_seat () {
-    a_doomed_payment( instalment_seq => 1, instalment_count => 3 );
-}
 
 subtest 'redelivered event settles once' => sub {
-    my $payment = an_instalment_for_a_gone_seat();
-    my @refunds;
-    my $after_first;
-    {
-        no warnings 'redefine';
-        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
-            push @refunds, $p;
-            Mojo::Promise->resolve({ id => 're_redeliver', status => 'succeeded' });
-        };
-        my $event_id = "evt_cr_redeliver_$$";
-        post_settlement($payment, event_id => $event_id, fee => 450)->status_is(200);
-        $after_first = settled_once($payment);
-        post_settlement($payment, event_id => $event_id, fee => 450)
-            ->status_is(200)->content_is('OK (duplicate)');
-    }
+    my $cart = a_late_line();
+    post_succeeded( $t, $cart->{payment}, $account )->status_is(200);
+    my $refunds = drive_refunding($succeeds);
+    post_succeeded( $t, $cart->{payment}, $account )->status_is(200);
+    drive_refunding( $succeeds, $refunds );
 
-    is $after_first->{platform_fee_cents}, 450, 'the first delivery records the fee';
-    is $after_first->{schedule_jobs}, 0, 'and asks for no schedule';
-    is_deeply settled_once($payment), $after_first, 'the redelivery changes nothing';
-    cmp_ok scalar @refunds, '<=', 1, 'and at most one capacity refund is issued';
-};
-
-subtest 'second event id for completed payment changes nothing' => sub {
-    my $payment = an_instalment_for_a_gone_seat();
-    my @refunds;
-    my $after_first;
-    {
-        no warnings 'redefine';
-        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
-            push @refunds, $p;
-            Mojo::Promise->resolve({ id => 're_second_' . scalar(@refunds), status => 'succeeded' });
-        };
-        post_settlement($payment, fee => 450)->status_is(200);
-        $after_first = settled_once($payment);
-        # A different fee, so a second recording would show.
-        post_settlement($payment, fee => 999)->status_is(200);
-    }
-
-    is $after_first->{schedule_jobs}, 0, 'the first event asks for no schedule';
-    is_deeply settled_once($payment), $after_first,
-        'a second event id changes no status, fee, enrollment or job';
-    is scalar @refunds, 1, 'and issues no second capacity refund';
+    is scalar @$refunds, 1, 'the late line is refunded once';
+    is scalar booked($cart)->@*, 1, 'and one child booked once';
+    is tenant_payment( $cart->{payment} )->refunded_cents, 15000, 'with one refund recorded';
 };
 
 done_testing;

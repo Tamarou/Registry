@@ -11,7 +11,11 @@ use Test::Registry::DB;
 use Test::Registry::PricingProbe qw( state_platform_terms );
 use Test::Registry::StripeWebhook;
 use Registry::DAO::Tenant;
-use Registry::DAO::Family;
+use Registry::DAO::FamilyMember;
+use Registry::DAO::User;
+use Test::Registry::Offers qw( instalment_plan );
+use Test::Registry::Sessions qw( make_session session_offer held_cart );
+use Test::Registry::SessionCheckout qw( drive );
 use Registry::DAO::Payment;
 
 local $ENV{STRIPE_SECRET_KEY}             = 'sk_test_fake_for_intent_ownership';
@@ -41,42 +45,42 @@ Registry::DAO::Tenant->provision($db, {
     name => "Own $$", slug => $slug, users => [$admin],
     stripe_connect_account_id => $account,
     stripe_charges_enabled => 1, stripe_details_submitted => 1 });
-my $tdb = Registry::DAO->new(url => $test_db->uri, schema => $slug)->db;
+my $tdao = Registry::DAO->new(url => $test_db->uri, schema => $slug);
+my $tdb  = $tdao->db;
 state_platform_terms( $db, $slug, { rate => 0 } );
 
-my $loc = Registry::DAO::Location->create($tdb, { time_zone => 'America/New_York', name => 'Own Studio',
-    slug => 'own-studio', address_info => {}, metadata => {} });
-my $prog = Registry::DAO::Project->create($tdb, { name => 'Own Camp',
-    status => 'published', program_type_slug => 'summer-camp', metadata => {} });
-my $teacher = Registry::DAO::User->create($tdb, { username => 'own_teacher',
-    name => 'T', user_type => 'staff', email => 'own_t@test.local' });
-my $session = Registry::DAO::Session->create($tdb, { name => 'Own Week',
-    start_date => '2026-01-01', end_date => '2026-12-31',
-    status => 'published', capacity => 10, metadata => {} });
-my $event = Registry::DAO::Event->create($tdb, { time => '2026-06-15 09:00:00',
-    duration => 60, location_id => $loc->id, project_id => $prog->id,
-    teacher_id => $teacher->id, capacity => 10, metadata => {} });
-$session->add_events($tdb, $event->id);
 my $parent = Registry::DAO::User->create($tdb, { username => 'own_parent',
     name => 'P', user_type => 'parent', email => 'own_p@test.local' });
+my $session = make_session($tdb, capacity => 60);
+my $version = session_offer($tdb, $session, price_cents => 10000,
+    policies      => { refund => { kind => 'none' }, missed_payment => { kind => 'end' } },
+    payment_plans => [ { id => 'pay', kind => 'one_time' }, instalment_plan( id => 'parts', count => 2, cadence => 'weekly' ) ]);
 
+# A cart charge of $100 for a new child's seat, started by the payment step
+# with the intent %extra names stored on it (none unless named). plan =>
+# 'parts' pays it in two parts, so the charge is the first, $50.
 my $kids = 0;
 sub a_sale (%extra) {
-    my $child = Registry::DAO::Family->add_child($tdb, $parent->id, {
-        child_name => 'Own Kid ' . ++$kids, birth_date => '2018-01-01', grade => '3',
-        medical_info => {}, emergency_contact => { name => 'x', phone => '5' } });
-    return Registry::DAO::Payment->create($tdb, {
-        user_id => $parent->id, amount_cents => 10000, status => 'pending', %extra,
-        metadata => {
-            enrollment_items => [ { session_id => $session->id, child_id => $child->id } ],
-            tenant_slug      => $slug } });
+    my $plan  = delete $extra{plan} // 'pay';
+    my $child = Registry::DAO::FamilyMember->create($tdb, {
+        family_id => $parent->id, child_name => 'Own Kid ' . ++$kids, birth_date => '2018-01-01' });
+    my ( $run, $pay ) = held_cart($tdao, $parent->id, [ $child->id, $session->id, $version->id, $plan ]);
+    my $owed = $pay->owed_payment($tdb, $run);
+    die "payment refused: $owed->{errors}[0]\n" if $owed->{errors};
+    my $sale = $owed->{payment};
+    $sale->_record_intent($tdb, { id => $extra{stripe_payment_intent_id}, client_secret => 'cs' })
+        if $extra{stripe_payment_intent_id};
+    return Registry::DAO::Payment->find($tdb, { id => $sale->id });
 }
 
+# What a delivery settled: the payment row, and the entitlements the run's
+# driver made from it once any driver it queued has run.
 sub settlement ($sale) {
+    drive($t->app->minion);
     return {
-        payment     => $tdb->select('payments', ['status', 'completed_at', 'platform_fee_cents'],
-                           { id => $sale->id })->hash,
-        enrollments => $tdb->select('enrollments', ['id'], { payment_id => $sale->id })->rows,
+        payment      => $tdb->select('payments', ['status', 'completed_at', 'platform_fee_cents'],
+                            { id => $sale->id })->hash,
+        entitlements => $tdb->select('entitlements', ['id'], { payment_id => $sale->id })->rows,
     };
 }
 
@@ -109,7 +113,7 @@ subtest 'a seller-made intent naming our payment settles nothing and warns' => s
     my ( $tx, $event_id ) = post_intent( 'pi_seller_made', $sale );
     $tx->status_is(200, 'acknowledged, so Stripe stops retrying');
 
-    is_deeply settlement($sale), $before, 'no completion, no enrollment, no fee';
+    is_deeply settlement($sale), $before, 'no completion, no entitlement, no fee';
     ok processed($event_id), 'the event is claimed and marked processed';
     ok scalar( grep { $_->[0] eq 'warn' && $_->[1] =~ /pi_seller_made/
                       && $_->[1] =~ /pi_registry_made/ } @logs ),
@@ -124,19 +128,19 @@ subtest 'a row with no stored intent settles nothing and warns' => sub {
     my ( $tx, $event_id ) = post_intent( 'pi_seller_unstored', $sale );
     $tx->status_is(200);
 
-    is_deeply settlement($sale), $before, 'no completion, no enrollment, no fee';
+    is_deeply settlement($sale), $before, 'no completion, no entitlement, no fee';
     ok processed($event_id), 'the event is acknowledged';
     ok scalar( grep { $_->[0] eq 'warn' && $_->[1] =~ /pi_seller_unstored/ } @logs ),
         'logged at warn';
 };
 
 subtest 'a seller-made intent on instalment one queues no schedule' => sub {
-    my $sale = a_sale( stripe_payment_intent_id => 'pi_registry_instalment',
-                       instalment_seq => 1, instalment_count => 3 );
+    my $sale = a_sale( stripe_payment_intent_id => 'pi_registry_instalment', plan => 'parts' );
     my $jobs_before = $t->app->minion->jobs({ tasks => ['instalment_schedule'] })->total;
 
-    my ( $tx ) = post_intent( 'pi_seller_instalment', $sale );
+    my ( $tx ) = post_intent( 'pi_seller_instalment', $sale, amount => 5000 );
     $tx->status_is(200);
+    is settlement($sale)->{entitlements}, 0, 'nothing is booked';
 
     is $t->app->minion->jobs({ tasks => ['instalment_schedule'] })->total, $jobs_before,
         'no schedule job is enqueued for a payment that did not settle';
@@ -151,7 +155,7 @@ subtest 'the intent Registry created still settles' => sub {
     my $after = settlement($sale);
     is $after->{payment}{status}, 'completed', 'the payment completes';
     is $after->{payment}{platform_fee_cents}, 300, 'with the fee Stripe reported';
-    is $after->{enrollments}, 1, 'and the enrollment is created';
+    is $after->{entitlements}, 1, 'and the child is booked';
 };
 
 subtest 'the metadata mismatch warning escapes the seller slug' => sub {
@@ -251,7 +255,7 @@ subtest 'a superseded Registry intent that succeeds is refunded and staff alerte
     ok !exists $refunds[0][1]{amount}, 'in full';
     like $refunds[0][1]{_idempotency_key}, qr/pi_superseded_first/, 'under a key for that intent';
 
-    is_deeply settlement($sale), $before, 'no completion, no enrollment, no fee';
+    is_deeply settlement($sale), $before, 'no completion, no entitlement, no fee';
     is $alerts->(), $alerts_before + 1, 'the tenant admin is alerted';
     ok scalar( grep { $_->[0] eq 'error' && $_->[1] =~ /pi_superseded_first/ } @logs ),
         'and the platform log says so at error';
@@ -387,6 +391,33 @@ subtest 'a refund create answering another invalid_request_error finishes at onc
     unlike join( '', map { $_->[1] } @errors ), qr/'\n/, 'with Stripe\'s text escaped';
 };
 
+# A cart's amount is the sum of its lines' shares, quoted when its seats were
+# held: a charge for any other amount buys nothing and goes back (ruling 7b).
+subtest 'a cart charged the wrong amount books nothing and is refunded in full' => sub {
+    my $sale = a_sale( stripe_payment_intent_id => 'pi_cart_wrong_amount' );
+
+    my ( @refunds, $info );
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_refund_async = sub ($s, $p) {
+            push @refunds, $p;
+            Mojo::Promise->resolve({ id => 're_wrong_amount', status => 'succeeded' });
+        };
+        my ( $tx ) = post_intent( 'pi_cart_wrong_amount', $sale, amount => 9999 );
+        $tx->status_is(200, 'acknowledged: a retry could not change the amount');
+        $info = run_refund_job('pi_cart_wrong_amount');
+    }
+
+    my $after = settlement($sale);
+    is $after->{entitlements}, 0, 'nothing is booked';
+    isnt $after->{payment}{status}, 'completed', 'and the payment is not completed';
+    is $info && $info->{state}, 'finished', 'the refund job finishes';
+    is scalar @refunds, 1, 'one refund is sent to Stripe';
+    is $refunds[0]{payment_intent}, 'pi_cart_wrong_amount', 'for the charge made';
+    my @told = grep { $_->{message} =~ /\$99\.99/ } @{ notices_titled( $parent->id, '%could not be accepted%' ) };
+    is scalar @told, 1, 'the parent is told';
+};
+
 # A-B-A: a decline retry stores B and lists A, then a second tab's resubmit
 # replays A and stores it again. The stored intent is the live one.
 subtest 'a row whose stored intent is also listed superseded settles on success, no refund' => sub {
@@ -413,7 +444,7 @@ subtest 'a row whose stored intent is also listed superseded settles on success,
 
     my $after = settlement($sale);
     is $after->{payment}{status}, 'completed', 'the payment completes';
-    is $after->{enrollments}, 1, 'and the enrollment is created';
+    is $after->{entitlements}, 1, 'and the child is booked';
     is scalar @refunds, 0, 'no refund is sent to Stripe';
     is $alerts->(), $alerts_before, 'and staff are not alerted';
 };
