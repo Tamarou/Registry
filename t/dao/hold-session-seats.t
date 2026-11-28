@@ -137,4 +137,18 @@ subtest 'a session filled meanwhile is refused' => sub {
     is $s->free_units($db), 1, 'the free seat stays free';
 };
 
+subtest 'a child held in another checkout is refused' => sub {
+    # Two tabs: the same child, the same session, two runs.
+    my $s     = session();
+    my $cap   = $s->free_units($db);
+    my $price = full_price($s);
+    my ( $first, $first_hold )   = held_run( [ $kid, $s, $price, 'pay' ] );
+    my ( $second, $second_hold ) = held_run( [ $kid, $s, $price, 'pay' ] );
+    ok !$first->process( $db, $first_hold, {} )->{errors}, 'the first holds';
+    is $second->process( $db, $second_hold, {} )->{errors}[0],
+        sprintf( '%s is already being booked into %s in another checkout', $kid->child_name, $s->name ), 'the second is refused';
+    is $s->free_units($db), $cap - 1, 'only one seat is held';
+    is live_holds($second), 0, 'the second run holds nothing';
+};
+
 done_testing;

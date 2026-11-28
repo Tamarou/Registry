@@ -69,9 +69,21 @@ class Registry::DAO::WorkflowSteps::HoldSessionSeats :isa(Registry::DAO::Workflo
         # All or nothing, each under its session's lock, taken in id order so
         # two carts never deadlock; the cart read the room unlocked.
         my $minutes = $self->metadata->{hold_minutes} // $HOLD_MINUTES;
+        my $live_h  = Registry::PriceOps::Hold->live_sql('h');
         for my $line ( sort { $a->{resource_id} cmp $b->{resource_id} } @$lines ) {
             my $key = "$line->{family_member_id}:$line->{resource_id}";
             next if $holds{$key};
+            # Under the session's lock, so a second tab waits for the first's
+            # holds and cart_holds, written together, before it looks.
+            Registry::DAO::Resource->locked( $db, $line->{resource_id} );
+            return refuse( sprintf '%s is already being booked into %s in another checkout',
+                Registry::DAO::FamilyMember->find( $db, { id => $line->{family_member_id} } )->child_name,
+                Registry::DAO::Resource->find( $db, { id => $line->{resource_id} } )->name )
+                if $db->query( qq{
+                    SELECT EXISTS (SELECT 1 FROM holds h JOIN workflow_runs r ON r.id = h.workflow_run_id
+                                    WHERE h.resource_id = ? AND h.workflow_run_id <> ? AND $live_h
+                                      AND r.data->'cart_holds'->>? = h.id::text)
+                }, $line->{resource_id}, $run->id, $key )->array->[0];
             my $hold = eval {
                 Registry::PriceOps::Hold->place( $db, {
                     resource_id     => $line->{resource_id},
