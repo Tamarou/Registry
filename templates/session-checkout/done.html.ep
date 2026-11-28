@@ -1,0 +1,38 @@
+%# ABOUTME: session-checkout's last screen: each child booked, with the session's days, the price, the plan and its policies.
+%# ABOUTME: A line whose seat was gone when the payment arrived is listed as refunded.
+% extends 'layouts/workflow';
+% title 'You are booked';
+% my $booked   = stash('booked') // [];
+% my $refunded = stash('refunded') // [];
+
+% if (@$booked) {
+<section class="card">
+  <h2>You are booked</h2>
+  % for my $line (@$booked) {
+  <h3><%= $line->{child} %>: <%= $line->{session} %></h3>
+  <p><%= $line->{dates} %></p>
+  <p><%= $line->{plan} %></p>
+  <ul>
+    % for my $words (@{ $line->{policy} }) {
+    <li><%= $words %></li>
+    % }
+  </ul>
+  % }
+</section>
+% } else {
+<section class="card">
+  <p>Your booking is being confirmed.</p>
+</section>
+% }
+
+% if (@$refunded) {
+<section class="card">
+  <h2>Refunded</h2>
+  <p>These seats were gone by the time your payment went through, so they are not booked and are being refunded:</p>
+  <ul>
+    % for my $line (@$refunded) {
+    <li><%= $line->{child} %>: <%= $line->{amount} %></li>
+    % }
+  </ul>
+</section>
+% }

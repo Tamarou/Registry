@@ -892,7 +892,7 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
             # owed: a charge for any other amount buys nothing. It is refused,
             # refunded in full after the COMMIT, and the payer, staff and the
             # platform are told (ruling 7b). A retry could not change it.
-            if ( $intent->{amount} != $row_cents && $payment->offer_version_id ) {
+            if ( $intent->{amount} != $row_cents && $payment->is_quoted ) {
                 $self->_refuse_wrong_amount( $db, $payment, $intent->{amount} );
                 $$superseded = { intent => $intent->{id}, account => $meta->{stripe_account_id},
                     amount => $intent->{amount}, payment => $payment_id, kind => 'wrong_amount' };
@@ -923,10 +923,10 @@ class Registry::Controller::Webhooks :isa(Registry::Controller) {
         # the row, so a redelivery or a later event cannot overwrite it.
         if ( $payment->mark_completed( $db, $intent->{id}, $intent->{payment_method} ) ) {
             $payment->record_platform_fee( $db, $intent );
-            # Only a payment sold under an offer version: a cart's run is
-            # finished by the parent, and its enrollment just below.
+            # Only a payment quoted under offer versions: an enrollment
+            # cart's run is finished by the parent, and its enrollment just below.
             $$continue_run = $meta->{workflow_run_id}
-                if $payment->offer_version_id && $meta->{workflow_run_id};
+                if $payment->is_quoted && $meta->{workflow_run_id};
         }
         else {
             $self->app->log->info(

@@ -72,6 +72,13 @@ method saves_card {
     return ( ref $lines eq 'ARRAY' && grep { ref $_ eq 'HASH' && ( $_->{kind} // '' ) eq 'instalments' } @$lines ) ? 1 : 0;
 }
 
+# True when the amount was quoted under offer versions: one version's
+# (offer_version_id), or a session cart's, whose lines each name theirs.
+method is_quoted {
+    return 1 if defined $offer_version_id;
+    return ref $metadata eq 'HASH' && ref $metadata->{lines} eq 'ARRAY' ? 1 : 0;
+}
+
 field $_stripe_client = undef;
     
     ADJUST {

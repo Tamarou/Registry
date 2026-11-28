@@ -42,3 +42,18 @@ steps:
     label: Payment
     description: Pay for the cart
     class: Registry::DAO::WorkflowSteps::SessionCartPayment
+
+  # Once paid (the person's return or the Connect webhook's driver), converts
+  # each line's hold into its child's entitlement, paid by the parent and
+  # sharing the one charge. A line whose seat is gone is refunded alone.
+  - slug: complete
+    label: Booking
+    description: Book each child
+    class: Registry::DAO::WorkflowSteps::CompleteSessionCheckout
+
+  # The children booked, and any line refunded. CompleteSessionCheckout
+  # again, for the bookings it shows; processing it once decided changes nothing.
+  - slug: done
+    label: Booked
+    description: Your bookings
+    class: Registry::DAO::WorkflowSteps::CompleteSessionCheckout

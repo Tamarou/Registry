@@ -305,9 +305,10 @@ subtest 'a booking refund cannot be planted by a client' => sub {
 subtest 'a session cart and its owed charge cannot be planted by a client' => sub {
     # SessionCart writes cart_lines, each line one it would offer the payer;
     # owed_payment is the amount and lines the payment step charges; cart_holds
-    # names the hold each line converts. Planted, any is a child, a price, an
-    # amount or a hold of the client's choosing.
-    for my $key (qw( cart_lines owed_payment cart_holds )) {
+    # names the hold each line converts; checkout_outcome is each line booked
+    # or refunded. Planted, any is a child, a price, an amount, a hold or a
+    # booking of the client's choosing.
+    for my $key (qw( cart_lines owed_payment cart_holds checkout_outcome )) {
         for my $form ( { $key => 'planted' }, { "${key}[amount_cents]" => 1 }, { "${key}[0][offer_version_id]" => 'planted' } ) {
             my $run = run_on_second_step();
             $t->post_ok("/run-data-test/${\ $run->id}/complete" => form => $form)->status_is(201);

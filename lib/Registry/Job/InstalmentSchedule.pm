@@ -39,13 +39,21 @@ class Registry::Job::InstalmentSchedule {
         },
     );
 
+    # The registering app's Minion, for the checkout step that queues these
+    # after its COMMIT: a workflow step is handed a database, not the app.
+    my $registered;
+
     sub register ($class, $app) {
+        $registered = $app->minion;
         for my $task ( keys %TASK ) {
             $app->minion->add_task( $task => sub ($job, @args) {
                 $class->new->run( $job, $task, @args );
             } );
         }
     }
+
+    # The Minion the jobs were registered with; dies before any app has.
+    sub minion ($class) { $registered // die "instalment jobs are not registered with any app\n" }
 
     # Queues $task for $entitlement_id in tenant $slug. Ten attempts on
     # Minion's default backoff (retries**4 + 15 seconds) is about two and a
