@@ -145,6 +145,9 @@ subtest 'the first instalment is dated the UTC day of the charge' => sub {
     is_deeply [ map { $_->{due_date} } $line->{parts}->@* ], $want,
         "the parts the schedule reads start on the charge's UTC date";
     is_deeply [ map { $_->{amount_cents} } $line->{parts}->@* ], [ 9000, 9000, 9000 ], 'for the same amounts';
+    my ($confirmed) = grep { $_->{type} eq 'enrollment_confirmation' } notes_for($run)->@*;
+    like $confirmed->{message}, qr/\$90\.00 paid $want->[0], \$90\.00 due $want->[1], \$90\.00 due $want->[2]\./,
+        'and the confirmation gives the due dates as charged';
 };
 
 # A drive and a delivery after the checkout is decided add nothing.
