@@ -293,6 +293,26 @@ field $_stripe_client = undef;
         return undef if __PACKAGE__->schedule_cancelled( $raw, $id, $eid )
             || Registry::DAO::Entitlement->find( $raw, { id => $eid } )->state ne 'active';
 
+        # Started on the checkout date (instalment_schedule_params), a schedule
+        # made on or after part two's due date could bill a missed period at
+        # once. So nothing is made, and the studio arranges the rest by hand.
+        my @today = gmtime;
+        if ( sprintf( '%04d-%02d-%02d', $today[5] + 1900, $today[4] + 1, $today[3] ) ge $remaining[0]{due_date} ) {
+            $txn->commit;
+            my ($child) = @{ $raw->select( 'family_members', 'child_name',
+                { id => $entitlement->holder_family_member_id } )->array // [] };
+            my ($session) = @{ $raw->select( 'resources', 'name', { id => $line->{resource_id} } )->array // [] };
+            require Registry::DAO::Notification;
+            Registry::DAO::Notification->alert_admins( $raw, 'Instalments need arranging by hand',
+                sprintf( 'The instalments for %s in %s were not scheduled at Stripe before the second '
+                       . 'was due (%s), so Registry has not scheduled them: arrange the remaining %d '
+                       . 'payments with the family by hand. (Entitlement %s.)',
+                    $child // 'a child', $session // 'a session', $remaining[0]{due_date},
+                    scalar @remaining, $eid ),
+                { entitlement_id => $eid } );
+            return undef;
+        }
+
         # The customer the charge was made against, and the card it saved.
         my $intent = $client->retrieve_payment_intent($stripe_payment_intent_id);
         my $customer = $intent->{customer}

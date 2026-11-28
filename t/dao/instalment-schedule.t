@@ -230,3 +230,24 @@ subtest 'a released schedule has its subscription cancelled and admins told' => 
         $admin->id, '%' . $c->{entitlement}->id . '%' )->array->[0];
     is $told, 1, 'and the admins are told once';
 };
+
+# Started on the checkout date, a schedule made on or after part two's due
+# date could bill a missed period at once: nothing is made, and the studio
+# arranges the rest by hand.
+subtest 'a job run after due date two creates no schedule and alerts admins' => sub {
+    my $admin = Test::Registry::Fixtures::create_user( $db, { username => 'late-admin', user_type => 'admin' } );
+    my $c = instalment_checkout( $db, slug => $seller, first_date => '2026-01-01' );
+    my $scheduled;
+    my $calls = with_stripe( sub {
+        $scheduled = $c->{payment}->schedule_instalments_for( $db, $c->{entitlement} );
+    } );
+    is $scheduled, undef, 'nothing is scheduled';
+    is_deeply $calls, [], 'Stripe is not asked';
+    is_deeply rows($c), [], 'and no instalment is recorded';
+
+    my $child   = $db->select( 'family_members', 'child_name', { id => $c->{line}{family_member_id} } )->array->[0];
+    my $session = $c->{session}->name;
+    my $told = $db->select( 'notifications', [qw( subject message )], { user_id => $admin->id } )->hashes;
+    is $told->size, 1, 'the admins are told';
+    like $told->[0]{message}, qr/\Q$child\E.*\Q$session\E.*by hand/s, 'to arrange the child\'s instalments by hand';
+};
