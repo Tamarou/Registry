@@ -154,6 +154,20 @@ subtest 'a line refund that fails on the return is driven again until it is made
     is scalar @refunds, 1, 'the return asked Stripe for the refund, which failed';
     is drivers(), 1, "and queued the run's driver to try it again";
 
+    # S2: the page says who is booked, and what is being refunded.
+    $t->get_ok("/session-checkout/@{[ $run->id ]}/complete")->status_is(200)
+      ->content_like( qr/Kid $$/, 'Kid is listed as booked' )
+      ->content_like( qr/Sib $$.*?\$100\.00/s, "Sib's refund is listed" )
+      ->content_unlike( qr/Nothing could be booked/, 'and it does not say nothing was booked' );
+    my $step = $dao->find( Workflow => { slug => 'session-checkout' } )->get_step( $db, { slug => 'complete' } );
+    my $again = do {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_refund_async = sub ( $self, $p ) { Mojo::Promise->reject("down\n") };
+        Test::Registry::Async::settle( $step->process( $db, {}, Registry::DAO::WorkflowRun->find( $db, { id => $run->id } ) ) );
+    };
+    like $again->{errors}[0], qr/Kid $$ is booked\. Sib $$ could not be booked; \$100\.00 for Sib $$ is being refunded\./,
+        'a failed retry says so, not that nothing was booked';
+
     {
         no warnings 'redefine';
         local *Registry::Service::Stripe::create_refund_async = sub ( $self, $p ) {

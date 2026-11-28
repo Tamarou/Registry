@@ -282,9 +282,15 @@ class Registry::DAO::WorkflowSteps::CompleteSessionCheckout :isa(Registry::DAO::
     # nothing booked stays here, saying so.
     method _refund ( $db, $run, $outcome ) {
         my @refunds = ( $outcome->{refunds} // [] )->@*;
-        my $told    = 'Your payment went through after the seats held for you were let go, so nothing is booked. '
+        my %booked  = %{ $outcome->{booked} // {} };
+        my sub name ($id) { Registry::DAO::FamilyMember->find( $db, { id => $id } )->child_name }
+        my $told = %booked
+            ? join( ' ', ( map { name( ( split /:/ )[0] ) . ' is booked.' } sort keys %booked ),
+                map { sprintf '%s could not be booked; %s for %s is being refunded.', name( $_->{family_member_id} ),
+                      dollars( $_->{amount_cents} ), name( $_->{family_member_id} ) } @refunds )
+            : 'Nothing could be booked, as the seats held for you were let go before your payment went through. '
             . 'Your payment is being refunded in full.';
-        my $done    = %{ $outcome->{booked} // {} } ? {} : _stay($told);
+        my $done = %booked ? {} : _stay($told);
         return $done unless @refunds;
         my $payment = Registry::DAO::Payment->find( $db, { id => $refunds[0]{payment_id} } );
         my $chain   = Mojo::Promise->resolve;
@@ -319,7 +325,7 @@ class Registry::DAO::WorkflowSteps::CompleteSessionCheckout :isa(Registry::DAO::
             booked   => [ map { $self->line_words( $db, $_ ) } grep { $outcome->{booked}{ _key($_) } } @lines ],
             refunded => [ map { {
                 child  => Registry::DAO::FamilyMember->find( $db, { id => $_->{family_member_id} } )->child_name,
-                amount => dollars( $_->{amount_cents} ) } } grep { $refunded{ _key($_) } } @lines ],
+                amount => dollars( $refunded{ _key($_) }{amount_cents} ) } } grep { $refunded{ _key($_) } } @lines ],
         };
     }
 

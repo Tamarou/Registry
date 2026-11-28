@@ -1,11 +1,29 @@
 %# ABOUTME: session-checkout step: shown only when CompleteSessionCheckout cannot book the cart yet, or at all.
-%# ABOUTME: Payment still settling, or a paid cart whose every line was refunded; a cart it books goes straight on to done.
+%# ABOUTME: Payment still settling, a refund still being made, or a paid cart whose every line was refunded.
 % extends 'layouts/workflow';
 % title 'Your booking';
 % my $refunded = stash('refunded') // [];
+% my $booked   = stash('booked') // [];
 %= include 'in-studio-booking/_errors'
 
-% if (@$refunded) {
+% if (@$booked) {
+<section class="card">
+  <h2>You are booked</h2>
+  <ul>
+    % for my $line (@$booked) {
+    <li><%= $line->{child} %>: <%= $line->{session} %>, <%= $line->{dates} %></li>
+    % }
+  </ul>
+  % if (@$refunded) {
+  <p>These seats were gone by the time your payment went through, so they are not booked. Their refund is being made:</p>
+  <ul>
+    % for my $line (@$refunded) {
+    <li><%= $line->{child} %>: <%= $line->{amount} %></li>
+    % }
+  </ul>
+  % }
+</section>
+% } elsif (@$refunded) {
 <section class="card">
   <h2>Nothing could be booked</h2>
   <p>The seats held for you were let go before your payment went through. It is being refunded:</p>
