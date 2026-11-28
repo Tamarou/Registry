@@ -128,14 +128,12 @@ class Registry::DAO::WorkflowSteps::HoldSessionSeats :isa(Registry::DAO::Workflo
         return {};
     }
 
-    # Session $resource_id's today, as InstalmentPaymentPlan judges a plan's
-    # fit: the latest local today among its days' locations.
+    # The date instalment parts are stamped from: today's UTC date, as the
+    # charge is dated (CompleteSessionCheckout) and the schedule's start
+    # compares (Payment::instalment_schedule_start). The plan's fit is judged
+    # from no earlier a date (InstalmentPaymentPlan->refusal).
     method today ( $db, $resource_id ) {
-        return $db->query( q{
-            SELECT max(to_char(now() AT TIME ZONE l.time_zone, 'YYYY-MM-DD'))
-              FROM events e JOIN locations l ON l.id = e.location_id
-             WHERE e.session_resource_id = ?
-        }, $resource_id )->array->[0];
+        return $db->query( q{SELECT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD')} )->array->[0];
     }
 
     # The cart in words, as the cart page showed it.

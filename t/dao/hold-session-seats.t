@@ -16,6 +16,7 @@ use Test::Registry::Offers qw( instalment_plan );
 use Registry::DAO::Entitlement;
 use Registry::DAO::FamilyMember;
 use Registry::DAO::WorkflowSteps::SessionCart;
+use Registry::DAO::WorkflowSteps::InstalmentPaymentPlan;
 use Registry::DAO::WorkflowRun;
 
 my $test_db = Test::Registry::DB->new;
@@ -163,6 +164,28 @@ subtest "only the run's own holds count as its room" => sub {
     my $data = { user_id => $parent->id, cart_holds => data_of($holder)->{cart_holds} };
     my $line = { family_member_id => $sib->id, resource_id => $s->id, offer_version_id => $price->id, payment_plan_id => 'pay' };
     like Registry::DAO::WorkflowSteps::SessionCart->refusal( $db, $data, [$line], $other->id ), qr/is full/, 'refused';
+};
+
+subtest "the hold dates a child's instalments from today's UTC date" => sub {
+    my $s = session();
+    my ( $run, $hold ) = held_run( [ $sib, $s, in_parts($s), 'parts' ] );
+    ok !$run->process( $db, $hold, {} )->{errors}, 'held';
+    is data_of($run)->{owed_payment}{lines}[0]{parts}[0]{due_date}, strftime( '%Y-%m-%d', gmtime ),
+        'the first part is due on the UTC date, as the charge is dated';
+};
+
+# 21:00 in New York on Jan 31 is already Feb 1 in UTC. Bought then, a monthly
+# plan's parts are stamped Feb 1, Mar 1, Apr 1: it must fit from the later
+# date, not from the local Jan 31, whose Mar 31 would.
+subtest 'a plan is judged to fit from the later of the local and UTC dates' => sub {
+    my $s    = make_session( $db, days => [qw( 2027-03-29 2027-03-30 2027-03-31 )] );
+    my $plan = instalment_plan( count => 3, cadence => 'monthly' );
+    my $data = { offer_basics => { resource_id => $s->id } };
+    my $IPP  = 'Registry::DAO::WorkflowSteps::InstalmentPaymentPlan';
+    is $IPP->refusal( $db, $data, $plan, '2027-01-31T20:00:00Z' ), undef,
+        'at 15:00 EST on Jan 31, both dates are Jan 31: it ends Mar 31 and fits';
+    like $IPP->refusal( $db, $data, $plan, '2027-02-01T02:00:00Z' ), qr/would end after 2027-03-31/,
+        'at 21:00 EST, UTC is Feb 1: it would end Apr 1, after the last day, and is refused';
 };
 
 done_testing;

@@ -10,9 +10,10 @@ class Registry::DAO::WorkflowSteps::InstalmentPaymentPlan :isa(Registry::DAO::Wo
 
     my %CADENCE = map { $_ => 1 } qw( weekly monthly quarterly );
 
-    # Why $plan cannot be offered on the offer's resources, or nothing.
-    # Publish asks again, since the offer's resources can be chosen after this step.
-    sub refusal ( $class, $db, $data, $plan ) {
+    # Why $plan cannot be offered on the offer's resources, bought at instant
+    # $at (now unless given), or nothing. Publish asks again, since the
+    # offer's resources can be chosen after this step.
+    sub refusal ( $class, $db, $data, $plan, $at = undef ) {
         # Every part is a charge, so none may be zero: the price with its
         # surcharge must be at least a cent per part.
         my $cents = ( ref $data->{offer_price} eq 'HASH' ? $data->{offer_price} : {} )->{price_cents};
@@ -27,15 +28,17 @@ class Registry::DAO::WorkflowSteps::InstalmentPaymentPlan :isa(Registry::DAO::Wo
         @ids = grep { defined && !ref } $data->{sessions}->@* if !@ids && ref $data->{sessions} eq 'ARRAY';
         return unless @ids;
         # Grouped by session alone, so a session whose days span two
-        # locations is judged on all of them, each day read in its own zone;
-        # today is the latest local today among its locations.
+        # locations is judged on all of them, each day read in its own zone.
+        # Today is the latest of its locations' local todays and the UTC
+        # date, from which checkout dates the parts (HoldSessionSeats).
         my $sessions = $db->query( q{
             SELECT r.name, max(to_char(e.time AT TIME ZONE l.time_zone, 'YYYY-MM-DD')) AS last_day,
-                   max(to_char(now() AT TIME ZONE l.time_zone, 'YYYY-MM-DD')) AS today
+                   greatest(max(to_char(coalesce(?::timestamptz, now()) AT TIME ZONE l.time_zone, 'YYYY-MM-DD')),
+                            to_char(coalesce(?::timestamptz, now()) AT TIME ZONE 'UTC', 'YYYY-MM-DD')) AS today
               FROM resources r JOIN events e ON e.id = r.event_id OR e.session_resource_id = r.id
               JOIN locations l ON l.id = e.location_id
              WHERE r.id::text = ANY(?) GROUP BY r.id, r.name ORDER BY last_day, r.name
-        }, \@ids )->hashes;
+        }, $at, $at, \@ids )->hashes;
         # The earliest-ending session that the plan does not fit.
         my ($session) = grep { !fits( $plan, $_->{today}, $_->{last_day} ) } @$sessions or return;
         return sprintf 'A %s plan of %d payments bought today would end after %s, the last day of %s',
