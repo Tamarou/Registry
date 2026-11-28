@@ -37,10 +37,11 @@ sub post_succeeded ( $t, $payment, $account, %over ) {
     } );
 }
 
-# drive($minion): performs the queued run drivers, as Minion's worker would.
+# drive($minion): performs the queued run drivers, as Minion's worker would, in this
+# process, so a Stripe method a test swapped is the one they call.
 sub drive ($minion) {
     my $jobs = $minion->jobs( { tasks => ['continue_workflow_run'], states => ['inactive'] } );
-    while ( my $job = $jobs->next ) { $minion->perform_jobs( { id => $job->{id} } ) }
+    while ( my $job = $jobs->next ) { $minion->perform_jobs_in_foreground( { id => $job->{id} } ) }
 }
 
 1;

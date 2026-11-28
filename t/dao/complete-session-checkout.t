@@ -15,6 +15,7 @@ use Test::Registry::PricingProbe qw( state_platform_terms );
 use Test::Registry::Sessions qw( make_session session_offer held_cart );
 use Test::Registry::Offers qw( instalment_plan );
 use Test::Registry::SessionCheckout qw( started_charge post_succeeded drive );
+use Test::Registry::Async;
 use Mojo::Promise;
 use Registry::DAO::Entitlement;
 use Registry::DAO::FamilyMember;
@@ -61,8 +62,9 @@ sub in_parts ($s) {
 }
 
 # A cart held and owing, each line [ child, session, version, plan ], and its payment step.
-sub cart (@lines) {
-    held_cart( $dao, $parent->id, map { [ $_->[0]->id, $_->[1]->id, $_->[2]->id, $_->[3] ] } @lines );
+sub cart (@lines) { cart_of( $parent, @lines ) }
+sub cart_of ( $payer, @lines ) {
+    held_cart( $dao, $payer->id, map { [ $_->[0]->id, $_->[1]->id, $_->[2]->id, $_->[3] ] } @lines );
 }
 
 sub reload ($run) { Registry::DAO::WorkflowRun->find( $db, { id => $run->id } ) }
@@ -143,6 +145,132 @@ subtest 'the first instalment is dated the UTC day of the charge' => sub {
     is_deeply [ map { $_->{due_date} } $line->{parts}->@* ], $want,
         "the parts the schedule reads start on the charge's UTC date";
     is_deeply [ map { $_->{amount_cents} } $line->{parts}->@* ], [ 9000, 9000, 9000 ], 'for the same amounts';
+};
+
+# A drive and a delivery after the checkout is decided add nothing.
+subtest 'a second drive changes nothing' => sub {
+    my sub state_of () {
+        return {
+            entitlements => [ map { [ $_->id, $_->unit_count($db) ] } entitlements_of($payment)->@* ],
+            free         => $session->free_units($db),
+            jobs         => schedule_jobs(),
+            notes        => scalar notes_for($run)->@*,
+            confirmations => $db->query( q{SELECT count(*) FROM notifications WHERE type = 'enrollment_confirmation'
+                                            AND metadata->>'workflow_run_id' = ?}, $run->id )->array->[0],
+            refunds      => scalar @refunds,
+            outcome      => reload($run)->data->{checkout_outcome},
+            step         => reload($run)->latest_step($db)->slug,
+        };
+    }
+    my $before = state_of();
+    is scalar $before->{entitlements}->@*, 2, 'the checkout booked two children' or return;
+
+    # The person's return arriving after the driver: the step, again.
+    my $workflow = $dao->find( Workflow => { slug => 'session-checkout' } );
+    for my $slug (qw( complete done )) {
+        my $out = Test::Registry::Async::settle(
+            $workflow->get_step( $db, { slug => $slug } )->process( $db, {}, reload($run) ) );
+        ok !$out->{errors}, "processing $slug again refuses nothing" or diag explain $out;
+    }
+    # Another driver, and Stripe delivering the success again.
+    $minion->enqueue( continue_workflow_run => [ { tenant => $seller, run_id => $run->id } ] );
+    post_succeeded( $t, $payment, $account )->status_is(200);
+    drive($minion);
+
+    is_deeply state_of(), $before, 'no entitlement, seat, job, message or refund more';
+};
+
+# Child 2's hold lapsed while the parent paid, and the session filled meanwhile.
+sub lapse ( $run, $child, $s ) {
+    $db->query( q{UPDATE holds SET expires_at = clock_timestamp() - interval '1 second'
+                   WHERE workflow_run_id = ? AND id::text = ?}, $run->id, reload($run)->data->{cart_holds}{ $child->id . ':' . $s->id } );
+}
+sub fill ( $s, $version ) {
+    my $other = child( 'Stranger', Test::Registry::Fixtures::create_user( $db, { username => 'csc_other_' . $s->id } )->id );
+    Registry::DAO::Entitlement->grant( $db, { holder_family_member_id => $other->id, offer_version_id => $version->id,
+        payment_plan_id => 'pay', starts_at => 'now', resource_id => $s->id, units => 1 } );
+}
+
+subtest 'a lost seat refunds only its line and schedules nothing' => sub {
+    my $s = session( capacity => 2 );
+    my ( $full, $split ) = ( full_price($s), in_parts($s) );
+    my ( $run, $pay ) = cart( [ $kid, $s, $full, 'pay' ], [ $sib, $s, $split, 'parts' ] );
+    my $payment = started_charge( $db, $run, $pay );
+    lapse( $run, $sib, $s );
+    fill( $s, $full );
+    is $s->free_units($db), 0, 'the session is full';
+
+    my ( $jobs, $asked ) = ( schedule_jobs(), scalar @refunds );
+    post_succeeded( $t, $payment, $account )->status_is(200);
+    drive($minion);
+
+    my $es = entitlements_of($payment);
+    is_deeply [ map { $_->holder_family_member_id } @$es ], [ $kid->id ], 'Kid is booked; Sib is not';
+    is $es->[0]->payment_share_cents, 30000, "at Kid's share";
+    my @new = @refunds[ $asked .. $#refunds ];
+    is scalar @new, 1, 'one refund is asked of Stripe';
+    is $new[0]{amount}, 9000, "for Sib's share alone";
+    is $new[0]{payment_intent}, $payment->stripe_payment_intent_id, 'of the cart charge';
+    is $new[0]{_idempotency_key}, join( ':', 'refund:session-line', $run->id, $sib->id, $s->id ),
+        'under a key for the run and the line';
+    is schedule_jobs(), $jobs, 'no schedule job for Sib';
+    is $s->free_units($db), 0, "Sib's lapsed hold took no seat";
+
+    my @notes = notes_for($run)->@*;
+    my ($told) = grep { $_->{user_id} eq $parent->id && $_->{type} eq 'general' } @notes;
+    ok $told, 'the parent is told' or return;
+    like $told->{message}, qr/Sib is not booked into Session \d+; \$90\.00 is being refunded/, 'what was refunded, and why';
+    ok( ( grep { $_->{user_id} eq $admin->id } @notes ), 'and the admins' );
+    my ($confirmed) = grep { $_->{type} eq 'enrollment_confirmation' } @notes;
+    like $confirmed->{message}, qr/\AKid: /, 'Kid is confirmed';
+    unlike $confirmed->{message}, qr/Sib:/, 'Sib is not';
+    is reload($run)->latest_step($db)->slug, 'done', 'the run is done';
+};
+
+subtest 'a lapsed hold with room left is held again and booked' => sub {
+    my $s = session( capacity => 3 );
+    my ( $run, $pay ) = cart( [ $kid, $s, full_price($s), 'pay' ], [ $sib, $s, in_parts($s), 'parts' ] );
+    my $payment = started_charge( $db, $run, $pay );
+    lapse( $run, $sib, $s );
+    my $asked = @refunds;
+    post_succeeded( $t, $payment, $account )->status_is(200);
+    drive($minion);
+
+    is_deeply [ map { $_->holder_family_member_id } entitlements_of($payment)->@* ], [ $kid->id, $sib->id ],
+        'both children are booked';
+    is scalar @refunds, $asked, 'nothing is refunded';
+    is $s->free_units($db), 1, 'two of three seats taken';
+};
+
+subtest "a sibling price whose sibling lost the seat refunds the whole cart" => sub {
+    # A family holding nothing else, so only the cart's sibling counts.
+    my $payer = Test::Registry::Fixtures::create_user( $db, { username => 'csc_new_family', name => 'New Family',
+        email => 'csc_new_family@test.example' } );
+    my ( $kid, $sib ) = map { child( $_, $payer->id ) } qw( Kid Sib );
+    my $s = session( capacity => 2 );
+    my $regular = full_price($s);
+    my $sibling = session_offer( $db, $s, price_cents => 27000, conditions => [ { kind => 'family_holds_entitlement' } ] );
+    my ( $run, $pay ) = cart_of( $payer, [ $kid, $s, $regular, 'pay' ], [ $sib, $s, $sibling, 'pay' ] );
+    my $payment = started_charge( $db, $run, $pay );
+    lapse( $run, $kid, $s );
+    fill( $s, $regular );
+
+    my $asked = @refunds;
+    post_succeeded( $t, $payment, $account )->status_is(200);
+    drive($minion);
+
+    is scalar entitlements_of($payment)->@*, 0, 'nobody is booked';
+    my @new = @refunds[ $asked .. $#refunds ];
+    is_deeply [ map { $_->{amount} } @new ], [ 30000, 27000 ], 'each line is refunded its share: the whole cart';
+    is_deeply [ map { $_->{_idempotency_key} } @new ],
+        [ map { join ':', 'refund:session-line', $run->id, $_->id, $s->id } $kid, $sib ], 'under its own key';
+    is $s->free_units($db), 1, "Sib's seat is given back";
+    my @notes = notes_for($run)->@*;
+    my ($told) = grep { $_->{user_id} eq $payer->id && $_->{type} eq 'general' } @notes;
+    like $told->{message}, qr/Sib's price was for a child whose brother or sister also has a place/,
+        'the parent is told why Sib is refunded too';
+    ok !( grep { $_->{type} eq 'enrollment_confirmation' } @notes ), 'and nothing is confirmed';
+    is reload($run)->next_step($db)->slug, 'complete', 'the run stays where it says nothing was booked';
 };
 
 done_testing;
