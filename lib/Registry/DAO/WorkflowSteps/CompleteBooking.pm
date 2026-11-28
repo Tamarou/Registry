@@ -149,7 +149,7 @@ class Registry::DAO::WorkflowSteps::CompleteBooking :isa(Registry::DAO::Workflow
         } )->then(
             sub ($) { _stay($told) },
             sub ($error) {
-                $payment->record_refund_failure( $db, $error );
+                $payment->record_refund_failure( $db, $error, $refund->{idempotency_key} );
                 return { %{ _stay($told) },
                     retry => sprintf( "booking refund of payment %s on run %s failed: %s\n",
                         $payment->id, $run->id, "$error" =~ s/\s+\z//r ) };

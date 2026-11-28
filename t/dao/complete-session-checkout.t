@@ -330,4 +330,34 @@ subtest 'a schedule lost between the commit and its job is queued again' => sub 
     is schedule_jobs_for( $sib_e->id ), 1, 'once';
 };
 
+# Two asks of one keyed refund racing: the loser is answered 409 "key in use"
+# and stamps a failure on a payment its winner refunded. Asked again, the
+# refund is found recorded under its key, and that stale stamp is cleared.
+subtest 'a keyed refund found already made clears its stale failure' => sub {
+    my $s = session( capacity => 2 );
+    my ( $full, $split ) = ( full_price($s), in_parts($s) );
+    my ( $run, $pay ) = cart( [ $kid, $s, $full, 'pay' ], [ $sib, $s, $split, 'parts' ] );
+    my $payment = started_charge( $db, $run, $pay );
+    lapse( $run, $sib, $s );
+    fill( $s, $full );
+    post_succeeded( $t, $payment, $account )->status_is(200);
+    drive($minion);
+    my $key = join ':', 'refund:session-line', $run->id, $sib->id, $s->id;
+
+    my $row = Registry::DAO::Payment->find( $db, { id => $payment->id } );
+    is $row->refunded_cents, 9000, "Sib's line is refunded";
+    $row->record_refund_failure( $db, "Stripe idempotency_error: key in use (409)\n", $key );
+    ok Registry::DAO::Payment->find( $db, { id => $payment->id } )->metadata->{refund_last_failure},
+        'the racing ask stamped a failure';
+
+    Test::Registry::Async::settle( $row->refund_async( $db, { amount_cents => 9000, idempotency_key => $key } ) );
+    ok !exists Registry::DAO::Payment->find( $db, { id => $payment->id } )->metadata->{refund_last_failure},
+        'asked again, the recorded refund clears it';
+
+    $row->record_refund_failure( $db, "Stripe api_error: a sibling's\n", 'refund:session-line:other' );
+    Test::Registry::Async::settle( $row->refund_async( $db, { amount_cents => 9000, idempotency_key => $key } ) );
+    ok Registry::DAO::Payment->find( $db, { id => $payment->id } )->metadata->{refund_last_failure},
+        "but a failure of another key's refund stays";
+};
+
 done_testing;

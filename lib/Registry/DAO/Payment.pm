@@ -2743,13 +2743,16 @@ SQL
     # The log is where an operator looks second; the row is where the runbook
     # looks first. Best-effort: a stamp that cannot be written must not turn a
     # refund failure into a second failure on top of it.
-    method record_refund_failure ($db, $err) {
+    # $key, when given, is the idempotency key of the refund that failed, so a
+    # later ask that finds that refund made can clear this record.
+    method record_refund_failure ($db, $err, $key = undef) {
         $db = $db->db if $db isa Registry::DAO;
 
         my $record = {
             classification => __CLASS__->classify_refund_failure($err),
             message        => "$err",
             at             => time(),
+            ( defined $key ? ( idempotency_key => $key ) : () ),
         };
 
         eval {
@@ -2785,7 +2788,13 @@ SQL
                 SELECT r.key AS id, 'succeeded' AS status
                   FROM payments, jsonb_each_text(metadata->'recorded_refunds') r
                  WHERE payments.id = ? AND r.value = ?}, $id, $key )->hash;
-            return Mojo::Promise->resolve($done) if $done;
+            if ($done) {
+                # A failure stamped by a racing ask of this same refund (Stripe's
+                # 409 "key in use") is stale: the refund was made.
+                $db->query( q{UPDATE payments SET metadata = metadata - 'refund_last_failure'
+                               WHERE id = ? AND metadata->'refund_last_failure'->>'idempotency_key' = ?}, $id, $key );
+                return Mojo::Promise->resolve($done);
+            }
         }
 
         # Still pending under this key: resending replays "pending" inside

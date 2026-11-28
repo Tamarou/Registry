@@ -704,11 +704,17 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
             my $next = $run->next_step( $dao->db );
             last unless $next && $next->can('nothing_to_ask') && $next->nothing_to_ask( $dao->db, $run );
             my $passed = $run->process( $dao->db, $next, {} );
-            # Not waited on here: a promise (Stripe work in flight, such as a
-            # refund) or a retry is finished by the run's driver, which re-enters
-            # the step; its work is keyed, so a second ask moves nothing twice.
-            $self->_drive_later($run)
-                if $passed isa Mojo::Promise || ( ref $passed eq 'HASH' && $passed->{retry} );
+            # Not waited on here: Stripe work in flight (a promise, such as a
+            # refund) that fails, or a step asking to be retried, is finished
+            # by the run's driver, which re-enters the step; its work is keyed.
+            # Queued only then, so a driver never races work that succeeds.
+            if ( $passed isa Mojo::Promise ) {
+                $passed->then(
+                    sub ($settled) { $self->_drive_later($run) if ref $settled eq 'HASH' && $settled->{retry} },
+                    sub (@)        { $self->_drive_later($run) },
+                );
+            }
+            elsif ( ref $passed eq 'HASH' && $passed->{retry} ) { $self->_drive_later($run) }
             last if ref $passed ne 'HASH' || $passed->{errors} || $passed->{stay} || $passed->{redirect};
         }
 

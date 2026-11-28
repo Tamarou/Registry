@@ -115,49 +115,76 @@ subtest 'the Stripe params alone do not advance a non-payment step' => sub {
 # Two children in a two-seat session; the second's hold lapsed while the parent
 # paid and another family took the seat. The return settles the charge, and the
 # controller completes the checkout: Kid is booked, Sib's line is refunded.
-subtest 'a line refund that fails on the return is driven again until it is made' => sub {
+my $carts = 0;
+sub lost_line_cart () {
+    my $n = ++$carts;
     my ( $kid, $sib ) = map { Registry::DAO::FamilyMember->create( $db, {
-        family_id => $parent->id, child_name => "$_ $$", birth_date => '2016-01-01' } ) } qw( Kid Sib );
+        family_id => $parent->id, child_name => "$_ $$ $n", birth_date => '2016-01-01' } ) } qw( Kid Sib );
     my $s = make_session( $db, capacity => 2, days => [ map { days_from_now($_) } 30 .. 32 ] );
     my $v = session_offer( $db, $s, price_cents => 10000 );
     my ( $run, $pay ) = held_cart( $dao, $parent->id, map { [ $_->id, $s->id, $v->id, 'pay' ] } $kid, $sib );
     my $payment = $pay->owed_payment( $db, $run )->{payment};
-    $payment->_record_intent( $db, { id => "pi_returned_lost_$$", client_secret => 's' } );
+    $payment->_record_intent( $db, { id => "pi_returned_lost_${$}_$n", client_secret => 's' } );
     $db->query( q{UPDATE holds SET expires_at = clock_timestamp() - interval '1 second' WHERE id::text = ?},
         Registry::DAO::WorkflowRun->find( $db, { id => $run->id } )->data->{cart_holds}{ $sib->id . ':' . $s->id } );
-    my $other = Test::Registry::Fixtures::create_user( $db, { username => "return_other_$$" } );
+    my $other = Test::Registry::Fixtures::create_user( $db, { username => "return_other_${$}_$n" } );
     Registry::DAO::Entitlement->grant( $db, { holder_family_member_id => Registry::DAO::FamilyMember->create( $db, {
             family_id => $other->id, child_name => 'Other', birth_date => '2016-01-01' } )->id,
         offer_version_id => $v->id, payment_plan_id => 'pay', starts_at => 'now', resource_id => $s->id, units => 1 } );
+    return ( $run, $payment, $n );
+}
 
-    my $minion = $t->app->minion;
-    my sub drivers () {
-        scalar grep { $_->{args}[0]{run_id} eq $run->id }
-            $minion->backend->list_jobs( 0, 100, { tasks => ['continue_workflow_run'], states => ['inactive'] } )->{jobs}->@*;
-    }
+# The run's queued drivers.
+sub drivers ($run) {
+    scalar grep { $_->{args}[0]{run_id} eq $run->id }
+        $t->app->minion->backend->list_jobs( 0, 100, { tasks => ['continue_workflow_run'], states => ['inactive'] } )->{jobs}->@*;
+}
+
+# The parent's return from Stripe for $payment, with Stripe's refund create
+# answering as $refund does; the loop is given time to finish what the
+# response did not wait for.
+sub return_from_stripe ( $run, $payment, $refund ) {
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::retrieve_payment_intent_async = sub ( $self, $id ) {
+        Mojo::Promise->resolve( { id => $id, status => 'succeeded', amount => $payment->amount_cents,
+            payment_method => 'pm_card', metadata => { payment_id => $payment->id } } );
+    };
+    local *Registry::Service::Stripe::create_refund_async = $refund;
+    my $intent = $payment->stripe_payment_intent_id;
+    $t->get_ok( "/session-checkout/@{[ $run->id ]}/payment?payment_intent=$intent"
+        . "&payment_intent_client_secret=s&redirect_status=succeeded" );
+    for ( 1 .. 40 ) { Mojo::IOLoop->timer( 0.05 => sub { } ); Mojo::IOLoop->one_tick }
+}
+
+subtest 'a line refund made on the return queues no driver and leaves no failure' => sub {
+    my ( $run, $payment ) = lost_line_cart();
     my @refunds;
-    {
-        no warnings 'redefine';
-        local *Registry::Service::Stripe::retrieve_payment_intent_async = sub ( $self, $id ) {
-            Mojo::Promise->resolve( { id => $id, status => 'succeeded', amount => 20000,
-                payment_method => 'pm_card', metadata => { payment_id => $payment->id } } );
-        };
-        local *Registry::Service::Stripe::create_refund_async = sub ( $self, $p ) {
-            push @refunds, $p;
-            Mojo::Promise->reject("Stripe api_error: try later\n");
-        };
-        $t->get_ok( "/session-checkout/@{[ $run->id ]}/payment?payment_intent=pi_returned_lost_$$"
-            . "&payment_intent_client_secret=s&redirect_status=succeeded" );
-        # The refund may run on after the response; give the loop time to finish it.
-        for ( 1 .. 40 ) { Mojo::IOLoop->timer( 0.05 => sub { } ); Mojo::IOLoop->one_tick }
-    }
+    return_from_stripe( $run, $payment, sub ( $self, $p ) {
+        push @refunds, $p;
+        Mojo::Promise->resolve( { id => 're_returned_made', status => 'succeeded' } );
+    } );
+    is scalar @refunds, 1, "Sib's line is refunded on the return";
+    is drivers($run), 0, 'no driver is queued to race it';
+    my $after = Registry::DAO::Payment->find( $db, { id => $payment->id } );
+    is $after->refunded_cents, 10000, 'the refund is recorded';
+    ok !exists $after->metadata->{refund_last_failure}, 'and no failure is stamped';
+};
+
+subtest 'a line refund that fails on the return is driven again until it is made' => sub {
+    my ( $run, $payment, $n ) = lost_line_cart();
+    my $minion = $t->app->minion;
+    my @refunds;
+    return_from_stripe( $run, $payment, sub ( $self, $p ) {
+        push @refunds, $p;
+        Mojo::Promise->reject("Stripe api_error: try later\n");
+    } );
     is scalar @refunds, 1, 'the return asked Stripe for the refund, which failed';
-    is drivers(), 1, "and queued the run's driver to try it again";
+    is drivers($run), 1, "and queued the run's driver to try it again";
 
     # S2: the page says who is booked, and what is being refunded.
     $t->get_ok("/session-checkout/@{[ $run->id ]}/complete")->status_is(200)
-      ->content_like( qr/Kid $$/, 'Kid is listed as booked' )
-      ->content_like( qr/Sib $$.*?\$100\.00/s, "Sib's refund is listed" )
+      ->content_like( qr/Kid $$ $n/, 'Kid is listed as booked' )
+      ->content_like( qr/Sib $$ $n.*?\$100\.00/s, "Sib's refund is listed" )
       ->content_unlike( qr/Nothing could be booked/, 'and it does not say nothing was booked' );
     my $step = $dao->find( Workflow => { slug => 'session-checkout' } )->get_step( $db, { slug => 'complete' } );
     my $again = do {
@@ -165,7 +192,7 @@ subtest 'a line refund that fails on the return is driven again until it is made
         local *Registry::Service::Stripe::create_refund_async = sub ( $self, $p ) { Mojo::Promise->reject("down\n") };
         Test::Registry::Async::settle( $step->process( $db, {}, Registry::DAO::WorkflowRun->find( $db, { id => $run->id } ) ) );
     };
-    like $again->{errors}[0], qr/Kid $$ is booked\. Sib $$ could not be booked; \$100\.00 for Sib $$ is being refunded\./,
+    like $again->{errors}[0], qr/Kid $$ $n is booked\. Sib $$ $n could not be booked; \$100\.00 for Sib $$ $n is being refunded\./,
         'a failed retry says so, not that nothing was booked';
 
     {

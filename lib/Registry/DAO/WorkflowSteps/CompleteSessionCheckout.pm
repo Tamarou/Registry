@@ -294,13 +294,17 @@ class Registry::DAO::WorkflowSteps::CompleteSessionCheckout :isa(Registry::DAO::
         return $done unless @refunds;
         my $payment = Registry::DAO::Payment->find( $db, { id => $refunds[0]{payment_id} } );
         my $chain   = Mojo::Promise->resolve;
+        my $asking;    # the key of the refund in flight, named on its failure
         for my $refund (@refunds) {
-            $chain = $chain->then( sub (@) { $payment->refund_async( $db, { $refund->%{qw( amount_cents idempotency_key )} } ) } );
+            $chain = $chain->then( sub (@) {
+                $asking = $refund->{idempotency_key};
+                $payment->refund_async( $db, { $refund->%{qw( amount_cents idempotency_key )} } );
+            } );
         }
         return $chain->then(
             sub (@) { $done },
             sub ($error) {
-                $payment->record_refund_failure( $db, $error );
+                $payment->record_refund_failure( $db, $error, $asking );
                 return { %{ _stay($told) },
                     retry => sprintf( "cart line refund of payment %s on run %s failed: %s\n",
                         $payment->id, $run->id, "$error" =~ s/\s+\z//r ) };
