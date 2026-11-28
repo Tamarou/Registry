@@ -91,16 +91,10 @@ use Test::Registry::Fixtures;
 use Registry::DAO;
 use Registry::DAO::Payment;
 use Registry::DAO::Tenant;
-use Registry::DAO::Workflow;
-use Registry::DAO::WorkflowStep;
-use Registry::DAO::WorkflowSteps::Payment;
-use Registry::DAO::User;
-use Registry::DAO::Family;
-use Registry::DAO::Session;
-use Registry::DAO::PricingPlan;
-use Registry::DAO::Project;
-use Registry::DAO::Event;
-use Registry::DAO::Location;
+use Registry::DAO::FamilyMember;
+use Registry::DAO::WorkflowRun;
+use Test::Registry::Helpers qw( days_from_now );
+use Test::Registry::Sessions qw( make_session session_offer held_cart );
 
 my $test_db = Test::Registry::DB->new;
 my $dao     = $test_db->db;    # Registry::DAO
@@ -216,139 +210,38 @@ subtest 'AC2: rotate_idempotency_token changes token, persists, next intent uses
 };
 
 # -----------------------------------------------------------------------
-# B3: Workflow step reuses the run's payment row on double-submit;
-#     retry (decline) path rotates the idempotency token.
+# B3: The session cart's payment step reuses the run's payment row on a
+#     double submit, and never charges a paid or changed cart again.
 # -----------------------------------------------------------------------
 
-# B3 fixtures: stripe-ready tenant, tenant schema, session with pricing,
-# parent user, workflow with payment step.
+# B3 fixtures: registry sells its own sessions, on a ready account; a parent
+# with a child, and a cart held and owing at its payment step.
+$db->query( q{UPDATE registry.tenants SET stripe_charges_enabled = TRUE, stripe_details_submitted = TRUE
+               WHERE slug = ?}, $platform );
 
-my $b3_slug = 'b3_idem_' . $$;
+my $b3_parent = Test::Registry::Fixtures::create_user( $db, {
+    username => 'b3parent', name => 'B3 Parent', email => 'b3parent@example.com' } );
+my $b3_child = Registry::DAO::FamilyMember->create( $db, {
+    family_id => $b3_parent->id, child_name => 'B3 Child', birth_date => '2018-03-15' } );
 
-Registry::DAO::Tenant->create($db, {
-    name                      => 'B3 Idempotency Tenant',
-    slug                      => $b3_slug,
-    stripe_connect_account_id => 'acct_b3test',
-    stripe_charges_enabled    => 1,
-    stripe_details_submitted  => 1,
-});
-$db->query('SELECT clone_schema(?)', $b3_slug);
-state_platform_terms( $db, $b3_slug, { rate => 0 } );
-
-my $b3dao = Registry::DAO->new(url => $test_db->uri, schema => $b3_slug);
-my $b3db  = $b3dao->db;
-
-my $b3_location = Registry::DAO::Location->create($b3db, { time_zone => 'America/New_York',
-    name         => 'B3 Studio',
-    address_info => { street_address => '1 B3 St', city => 'Testville', state => 'TX', postal_code => '78701' },
-    metadata     => { tenant_slug => $platform },
-});
-
-my $b3_teacher = Registry::DAO::User->create($b3db, {
-    name      => 'B3 Teacher',
-    username  => 'b3teacher_' . $$,
-    email     => "b3teacher_$$\@test.com",
-    user_type => 'staff',
-});
-
-my $b3_project = Registry::DAO::Project->create($b3db, {
-    name     => 'B3 Summer Camp',
-    metadata => { tenant_slug => $platform },
-});
-
-my $b3_event = Registry::DAO::Event->create($b3db, {
-    time        => '2026-07-01 10:00:00',
-    duration    => 120,
-    location_id => $b3_location->id,
-    project_id  => $b3_project->id,
-    teacher_id  => $b3_teacher->id,
-    capacity    => 20,
-    metadata    => { tenant_slug => $platform },
-});
-
-my $b3_session = Registry::DAO::Session->create($b3db, {
-    name       => 'B3 Week',
-    start_date => '2026-07-01',
-    end_date   => '2026-07-07',
-    status     => 'published',
-    capacity   => 20,
-    metadata   => { tenant_slug => $platform },
-});
-$b3_session->add_events($b3db, $b3_event->id);
-
-Registry::DAO::PricingPlan->create($b3db, {
-    session_id => $b3_session->id,
-    plan_name  => 'Standard',
-    plan_type  => 'standard',
-    amount_cents => 10000,
-});
-
-my $b3_parent = Registry::DAO::User->create($b3db, {
-    email     => "b3parent_$$\@example.com",
-    username  => 'b3parent_' . $$,
-    name      => 'B3 Parent',
-    user_type => 'parent',
-});
-
-my $b3_child = Registry::DAO::Family->add_child($b3db, $b3_parent->id, {
-    child_name        => 'B3 Child',
-    birth_date        => '2018-03-15',
-    grade             => '3',
-    medical_info      => {},
-    emergency_contact => { name => 'Emergency', phone => '555-0199' },
-});
-
-my $b3_workflow = Registry::DAO::Workflow->create($b3db, {
-    name        => 'B3 Test Workflow',
-    slug        => 'b3-workflow-' . $$,
-    description => 'B3 idempotency test workflow',
-});
-
-my $b3_step_row = Registry::DAO::WorkflowStep->create($b3db, {
-    workflow_id => $b3_workflow->id,
-    slug        => 'payment',
-    class       => 'Registry::DAO::WorkflowSteps::Payment',
-    description => 'Payment step',
-});
-
-Registry::DAO::WorkflowStep->create($b3db, {
-    workflow_id => $b3_workflow->id,
-    slug        => 'complete',
-    class       => 'Registry::DAO::WorkflowStep',
-    description => 'Completion step',
-    depends_on  => $b3_step_row->id,
-});
-
-$b3_workflow->update($b3db, { first_step => 'payment' }, { id => $b3_workflow->id });
-
-sub make_b3_run {
-    my $run = $b3_workflow->new_run($b3db);
-    $run->update_data($b3db, {
-        user_id            => $b3_parent->id,
-        children           => [ {
-            id         => $b3_child->id,
-            first_name => 'B3',
-            last_name  => 'Child',
-            birth_date => '2018-03-15',
-            grade      => '3',
-        } ],
-        session_selections => { $b3_child->id => $b3_session->id },
-        enrollment_items   => [ { child_id => $b3_child->id, session_id => $b3_session->id } ],
-        __tenant_slug      => $b3_slug,
-    });
-    return $run;
+sub make_b3_cart {
+    my $session = make_session( $db, days => [ map { days_from_now($_) } 30 .. 32 ] );
+    my $version = session_offer( $db, $session, price_cents => 10000 );
+    return held_cart( $dao, $b3_parent->id, [ $b3_child->id, $session->id, $version->id, 'pay' ] );
 }
 
-sub get_b3_step {
-    return $b3_workflow->get_step($b3db, { slug => 'payment' });
+sub b3_payment_id ($run) {
+    Registry::DAO::WorkflowRun->find( $db, { id => $run->id } )->data->{owed_payment_id};
+}
+sub b3_rows ($run) {
+    $db->query( "SELECT COUNT(*) FROM payments WHERE metadata->>'workflow_run_id' = ?", $run->id )->array->[0];
 }
 
 {
     local $ENV{STRIPE_SECRET_KEY} = 'sk_test_b3fake';
 
-    subtest 'B3-AC1: double agreeTerms submit yields one payment row, identical idempotency key' => sub {
-        my $run  = make_b3_run();
-        my $step = get_b3_step();
+    subtest 'B3-AC1: double submit yields one payment row, identical idempotency key' => sub {
+        my ( $run, $step ) = make_b3_cart();
 
         my @captured_keys;
         {
@@ -359,89 +252,65 @@ sub get_b3_step {
                     { id => 'pi_b3_ac1', client_secret => 'cs_b3_ac1' });
             };
 
-            settle($step->process($b3db, { agreeTerms => 1 }, $run));
-            my $first_payment_id = $run->data->{payment_id};
-            ok $first_payment_id, 'payment_id set after first submit';
+            settle($run->process($db, $step, {}));
+            my $first_payment_id = b3_payment_id($run);
+            ok $first_payment_id, 'owed_payment_id set after first submit';
 
-            settle($step->process($b3db, { agreeTerms => 1 }, $run));
-            my $second_payment_id = $run->data->{payment_id};
-            is $second_payment_id, $first_payment_id,
-                'payment_id unchanged after second submit (same row reused)';
+            settle($run->process($db, $step, {}));
+            is b3_payment_id($run), $first_payment_id,
+                'owed_payment_id unchanged after second submit (same row reused)';
         }
 
-        my $count = $b3db->query(
-            "SELECT COUNT(*) FROM payments WHERE metadata->>'workflow_run_id' = ?",
-            $run->id
-        )->array->[0];
-        is $count, 1,
+        is b3_rows($run), 1,
             'AC1: exactly one payment row for this workflow run after double submit';
-
         is scalar @captured_keys, 2,
             'create_payment_intent called once per submit';
         is $captured_keys[0], $captured_keys[1],
             'AC1: both calls sent identical idempotency key';
     };
 
-    subtest 'B3-AC2: decline then retry rotates idempotency token (new key, same row)' => sub {
-        my $run  = make_b3_run();
-        my $step = get_b3_step();
+    subtest 'B3-AC2: a declined card is retried as a new charge under a new key' => sub {
+        my ( $run, $step ) = make_b3_cart();
 
-        my $orig_key;
+        my @keys;
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_payment_intent_async = sub ($s, $p) {
+            push @keys, $p->{_idempotency_key};
+            return Mojo::Promise->resolve(
+                { id => 'pi_b3_ac2_' . @keys, client_secret => 'cs_b3_ac2' });
+        };
+        settle($run->process($db, $step, {}));
+        my $declined = b3_payment_id($run);
+
         {
-            no warnings 'redefine';
-            local *Registry::Service::Stripe::create_payment_intent_async = sub ($s, $p) {
-                $orig_key //= $p->{_idempotency_key};
-                return Mojo::Promise->resolve(
-                    { id => 'pi_b3_ac2_orig', client_secret => 'cs_b3_ac2_orig' });
-            };
-            settle($step->process($b3db, { agreeTerms => 1 }, $run));
-        }
-
-        ok defined $orig_key, 'original idempotency key captured from first intent';
-
-        my $retry_key;
-        {
-            no warnings 'redefine';
             local *Registry::Service::Stripe::retrieve_payment_intent_async = sub ($s, $id) {
                 return Mojo::Promise->resolve({
+                    id                 => 'pi_b3_ac2_1',
                     status             => 'requires_payment_method',
                     last_payment_error => { message => 'Your card was declined.' },
                 });
             };
-            local *Registry::Service::Stripe::create_payment_intent_async = sub ($s, $p) {
-                $retry_key = $p->{_idempotency_key};
-                return Mojo::Promise->resolve(
-                    { id => 'pi_b3_ac2_retry', client_secret => 'cs_b3_ac2_retry' });
-            };
-            settle($step->process($b3db, { payment_intent_id => 'pi_b3_ac2_orig' }, $run));
+            my $out = settle($run->process($db, $step, { payment_intent_id => 'pi_b3_ac2_1' }));
+            is_deeply $out->{errors}, ['Your card was declined.'], 'the decline is shown';
         }
+        is Registry::DAO::Payment->find( $db, { id => $declined } )->status, 'failed',
+            'the declined charge is recorded as failed';
 
-        ok defined $retry_key, 'retry idempotency key captured from retry intent';
-        isnt $retry_key, $orig_key,
-            'AC2: retry used a different idempotency key (token was rotated for new charge)';
-
-        my $count = $b3db->query(
-            "SELECT COUNT(*) FROM payments WHERE metadata->>'workflow_run_id' = ?",
-            $run->id
-        )->array->[0];
-        is $count, 1,
-            'AC2: still exactly one payment row after decline and retry';
+        my @cancelled;
+        local *Registry::Service::Stripe::cancel_payment_intent_async = sub ($s, $id, $p = {}) {
+            push @cancelled, $id;
+            return Mojo::Promise->resolve({ id => $id, status => 'canceled' });
+        };
+        settle($run->process($db, $step, {}));
+        is_deeply \@cancelled, ['pi_b3_ac2_1'], 'the declined intent is cancelled before the retry';
+        isnt b3_payment_id($run), $declined, 'the retry is its own payment row';
+        is scalar @keys, 2, 'one intent per attempt';
+        isnt $keys[1], $keys[0],
+            'AC2: retry used a different idempotency key (a fresh charge, not a replay of the declined one)';
     };
-}
 
-# -----------------------------------------------------------------------
-# B3 review-fix subtests: pin the reuse-path clauses the TIER_2 mutation
-# pass proved undefended (m1 completed->new-row, m2 payment_items refresh,
-# m4 amount refresh), and the behavior fixes from the confirmed findings:
-# rotation only on true declines, superseded-intent cancellation, and
-# intent-ownership verification on the parent-return callback.
-# -----------------------------------------------------------------------
-{
-    local $ENV{STRIPE_SECRET_KEY} = 'sk_test_b3fake';
-
-    subtest 'B3-fix m1: completed payment starts a NEW row (second purchase)' => sub {
-        my $run  = make_b3_run();
-        my $step = get_b3_step();
+    subtest 'B3-fix m1: a paid cart is handed on, never charged again' => sub {
+        my ( $run, $step ) = make_b3_cart();
 
         no warnings 'redefine';
         my $seq = 0;
@@ -451,105 +320,44 @@ sub get_b3_step {
                 { id => "pi_m1_$seq", client_secret => "cs_m1_$seq" });
         };
 
-        settle($step->process($b3db, { agreeTerms => 1 }, $run));
-        my $first = $run->data->{payment_id};
-        ok $first, 'first purchase created a payment row';
+        settle($run->process($db, $step, {}));
+        my $first = b3_payment_id($run);
+        $db->update('payments', { status => 'completed' }, { id => $first });
 
-        $b3db->update('payments', { status => 'completed' }, { id => $first });
-
-        settle($step->process($b3db, { agreeTerms => 1 }, $run));
-        my $second = $run->data->{payment_id};
-        isnt $second, $first, 'completed row is NOT reused (second purchase)';
-
-        my $count = $b3db->query(
-            "SELECT COUNT(*) FROM payments WHERE metadata->>'workflow_run_id' = ?",
-            $run->id
-        )->array->[0];
-        is $count, 2, 'two rows: settled purchase plus the new one';
+        my $out = settle($step->process($db, {}, $run));
+        ok !$out->{errors} && !$out->{next_step}, 'the step hands the run on' or diag explain $out;
+        is $seq, 1, 'and makes no second intent';
+        is b3_rows($run), 1, 'nor a second row';
     };
 
-    subtest 'B3-fix m2: identical resubmit does not duplicate payment_items' => sub {
-        my $run  = make_b3_run();
-        my $step = get_b3_step();
+    subtest 'B3-fix m4: a cart changed after its charge started is refused' => sub {
+        my ( $run, $step ) = make_b3_cart();
 
+        my @keys;
         no warnings 'redefine';
         local *Registry::Service::Stripe::create_payment_intent_async = sub ($s, $p) {
-            return Mojo::Promise->resolve({ id => 'pi_m2', client_secret => 'cs_m2' });
-        };
-
-        settle($step->process($b3db, { agreeTerms => 1 }, $run));
-        settle($step->process($b3db, { agreeTerms => 1 }, $run));
-
-        my $items = $b3db->query(
-            'SELECT COUNT(*) FROM payment_items WHERE payment_id = ?',
-            $run->data->{payment_id}
-        )->array->[0];
-        is $items, 1, 'line items refreshed in place, not appended';
-    };
-
-    subtest 'B3-fix m4: changed cart refreshes amount, rotates key, cancels superseded intent' => sub {
-        my $run  = make_b3_run();
-        my $step = get_b3_step();
-
-        my (@keys, @cancelled);
-        no warnings 'redefine';
-        my $seq = 0;
-        local *Registry::Service::Stripe::create_payment_intent_async = sub ($s, $p) {
-            $seq++;
             push @keys, $p->{_idempotency_key};
-            return Mojo::Promise->resolve(
-                { id => "pi_m4_$seq", client_secret => "cs_m4_$seq" });
-        };
-        local *Registry::Service::Stripe::cancel_payment_intent_async = sub ($s, $intent_id) {
-            push @cancelled, $intent_id;
-            return Mojo::Promise->resolve({ id => $intent_id, status => 'canceled' });
+            return Mojo::Promise->resolve({ id => 'pi_m4_' . @keys, client_secret => 'cs_m4' });
         };
 
-        settle($step->process($b3db, { agreeTerms => 1 }, $run));
-        my $payment_id = $run->data->{payment_id};
-        my $amount1    = Registry::DAO::Payment->find($b3db, { id => $payment_id })->amount_cents;
-        cmp_ok $amount1, q{==}, 10000, q{first submit: single-child cart totals 10000 cents};
+        settle($run->process($db, $step, {}));
+        my $payment_id = b3_payment_id($run);
+        cmp_ok( Registry::DAO::Payment->find($db, { id => $payment_id })->amount_cents, q{==}, 10000,
+            q{first submit: single-child cart totals 10000 cents} );
 
-        # Parent goes back and adds a second child before resubmitting.
-        my $m4_child2 = Registry::DAO::Family->add_child($b3db, $b3_parent->id, {
-            child_name        => 'B3 Second Child',
-            birth_date        => '2019-06-01',
-            grade             => '2',
-            medical_info      => {},
-            emergency_contact => { name => 'Emergency', phone => '555-0199' },
-        });
-        my $children = [
-            @{ $run->data->{children} },
-            { id => $m4_child2->id, first_name => 'B3Second', last_name => 'Child',
-              birth_date => '2019-06-01', grade => '2' },
-        ];
-        $run->update_data($b3db, {
-            children           => $children,
-            session_selections => {
-                %{ $run->data->{session_selections} },
-                $m4_child2->id => $b3_session->id,
-            },
-            enrollment_items   => [
-                @{ $run->data->{enrollment_items} },
-                { child_id => $m4_child2->id, session_id => $b3_session->id },
-            ],
-        });
+        # The owed lines change under the started charge (another child's line).
+        my $owed = $run->data->{owed_payment};
+        $owed->{lines}[0]{family_member_id} = '00000000-0000-4000-8000-000000000001';
+        $run->update_data($db, { owed_payment => $owed });
 
-        settle($step->process($b3db, { agreeTerms => 1 }, $run));
-
-        is $run->data->{payment_id}, $payment_id, 'same payment row reused';
-        my $refreshed = Registry::DAO::Payment->find($b3db, { id => $payment_id });
-        cmp_ok $refreshed->amount_cents, q{==}, 20000, q{amount refreshed to the new cart total};
-        is scalar @keys, 2, 'one intent creation per submit';
-        isnt $keys[1], $keys[0],
-            'changed cart rotated the idempotency key (fresh charge, not a doomed replay)';
-        is_deeply \@cancelled, ['pi_m4_1'],
-            'superseded intent was cancelled (at most one confirmable intent)';
+        my $out = settle($run->process($db, $step, {}));
+        is_deeply $out->{errors}, ['What is owed changed after this payment was started.'], 'refused';
+        is scalar @keys, 1, 'no intent is made for the changed cart';
+        is b3_rows($run), 1, 'and no second row';
     };
 
     subtest 'B3-fix: requires_action callback neither rotates nor mints a new intent' => sub {
-        my $run  = make_b3_run();
-        my $step = get_b3_step();
+        my ( $run, $step ) = make_b3_cart();
 
         my @keys;
         no warnings 'redefine';
@@ -558,40 +366,37 @@ sub get_b3_step {
             return Mojo::Promise->resolve({ id => 'pi_ra_1', client_secret => 'cs_ra_1' });
         };
 
-        settle($step->process($b3db, { agreeTerms => 1 }, $run));
+        settle($run->process($db, $step, {}));
         is scalar @keys, 1, 'initial intent created';
 
         local *Registry::Service::Stripe::retrieve_payment_intent_async = sub ($s, $intent_id) {
             return Mojo::Promise->resolve({
                 id       => 'pi_ra_1',
                 status   => 'requires_action',
-                metadata => { payment_id => $run->data->{payment_id} },
+                metadata => { payment_id => b3_payment_id($run) },
             });
         };
 
-        my $result = settle($step->process($b3db, { payment_intent_id => 'pi_ra_1' }, $run));
+        settle($run->process($db, $step, { payment_intent_id => 'pi_ra_1' }));
 
         is scalar @keys, 1,
-            'no replacement intent minted while the customer is mid-authentication';
-        ok $result->{data}{step_data}{processing},
-            'callback surfaces an in-progress state, not a decline retry';
-        my $token = Registry::DAO::Payment->find($b3db, { id => $run->data->{payment_id} })
+            'no replacement intent minted on the return';
+        my $token = Registry::DAO::Payment->find($db, { id => b3_payment_id($run) })
             ->metadata->{idempotency_token};
         like $keys[0], qr/\Q$token\E\z/,
             'idempotency token unchanged (no rotation on requires_action)';
     };
 
     subtest 'B3-fix: succeeded intent not owned by this payment is rejected' => sub {
-        my $run  = make_b3_run();
-        my $step = get_b3_step();
+        my ( $run, $step ) = make_b3_cart();
 
         no warnings 'redefine';
         local *Registry::Service::Stripe::create_payment_intent_async = sub ($s, $p) {
             return Mojo::Promise->resolve({ id => 'pi_own_mine', client_secret => 'cs_own' });
         };
 
-        settle($step->process($b3db, { agreeTerms => 1 }, $run));
-        my $payment_id = $run->data->{payment_id};
+        settle($run->process($db, $step, {}));
+        my $payment_id = b3_payment_id($run);
 
         # Attacker replays a succeeded intent that belongs to a DIFFERENT payment.
         local *Registry::Service::Stripe::retrieve_payment_intent_async = sub ($s, $intent_id) {
@@ -601,19 +406,16 @@ sub get_b3_step {
                 metadata => { payment_id => 'not-this-payment' },
             });
         };
-        local *Registry::Service::Stripe::cancel_payment_intent_async = sub ($s, $intent_id) {
-            return Mojo::Promise->resolve({ id => $intent_id, status => 'canceled' });
-        };
 
-        settle($step->process($b3db, { payment_intent_id => 'pi_foreign' }, $run));
+        my $out = settle($run->process($db, $step, { payment_intent_id => 'pi_foreign' }));
 
-        my $payment = Registry::DAO::Payment->find($b3db, { id => $payment_id });
-        isnt $payment->status, 'completed',
+        ok $out->{errors}, 'the return is refused';
+        isnt Registry::DAO::Payment->find($db, { id => $payment_id })->status, 'completed',
             'foreign succeeded intent does not complete this payment';
-        my $enrollments = $b3db->query(
-            'SELECT COUNT(*) FROM enrollments WHERE payment_id = ?', $payment_id
-        )->array->[0];
-        is $enrollments, 0, 'no enrollment granted for a foreign charge';
+        is $db->query( 'SELECT COUNT(*) FROM entitlements WHERE payment_id = ?', $payment_id )->array->[0], 0,
+            'no entitlement granted for a foreign charge';
+        is Registry::DAO::WorkflowRun->find( $db, { id => $run->id } )->next_step($db)->slug, 'payment',
+            'and the run stays at its payment';
     };
 }
 

@@ -1,0 +1,51 @@
+%# ABOUTME: session-checkout step: the signed-in parent chooses which of their children to book, or adds a child.
+%# ABOUTME: SelectChildren lists the run's own family; another family's child is refused when posted.
+% extends 'layouts/workflow';
+% title 'Your children';
+% stash description => 'Choose the children you are booking.';
+% my $children = stash('children') // [];
+%= include 'in-studio-booking/_errors'
+
+% if (@$children) {
+<form method="POST" action="<%= $action %>">
+  <input type="hidden" name="action" value="continue">
+  <fieldset>
+    <legend>Children</legend>
+    % for my $child (@$children) {
+    <div class="form-group">
+      <input type="checkbox" id="child_<%= $child->id %>" name="child_<%= $child->id %>" value="1">
+      <label for="child_<%= $child->id %>"><%= $child->child_name %></label>
+    </div>
+    % }
+  </fieldset>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Continue</button>
+  </div>
+</form>
+% }
+
+<form method="POST" action="<%= $action %>">
+  <input type="hidden" name="action" value="add_child">
+  <fieldset>
+    <legend>Add a child</legend>
+    <div class="form-group">
+      <label class="form-label" for="new_child_name">Name</label>
+      <input class="form-input" type="text" id="new_child_name" name="new_child_name" required>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="new_birth_date">Birth date</label>
+      <input class="form-input" type="date" id="new_birth_date" name="new_birth_date" required>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="new_emergency_name">Emergency contact</label>
+      <input class="form-input" type="text" id="new_emergency_name" name="new_emergency_name" required>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="new_emergency_phone">Emergency phone</label>
+      <input class="form-input" type="tel" id="new_emergency_phone" name="new_emergency_phone" required>
+    </div>
+  </fieldset>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-secondary">Add child</button>
+  </div>
+</form>

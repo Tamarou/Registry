@@ -1,74 +1,145 @@
-# ABOUTME: Minion job that creates the Stripe schedule for the instalments after the first.
-# ABOUTME: Runs after the webhook's COMMIT, because the card only exists once charge one succeeded; the last failure alerts.
+# ABOUTME: Minion jobs that create, and cancel, the Stripe schedule for one child's instalments after the first.
+# ABOUTME: Run after checkout's COMMIT, keyed by entitlement and retried; the last failure alerts the studio's admins.
 use 5.42.0;
 use Object::Pad;
 
 class Registry::Job::InstalmentSchedule {
     use Registry::DAO;
+    use Registry::DAO::Entitlement;
     use Registry::DAO::Notification;
     use Registry::DAO::Payment;
 
+    # What each task does to an entitlement's schedule, and what its admins
+    # are told when the last attempt fails.
+    my %TASK = (
+        instalment_schedule => {
+            act     => 'schedule_instalments_for',
+            done    => 'scheduled as',
+            none    => 'has no instalments to schedule',
+            subject => 'Instalments could not be scheduled',
+            told    => 'Registry could not set up the remaining instalments of entitlement %s '
+                     . '(tenant %s) at Stripe%s, so the family has paid instalment one and will '
+                     . 'not be charged the rest. Collect them by hand, or ask Registry support '
+                     . 'to schedule them.',
+            # When a schedule Stripe made could not be cancelled either.
+            live    => 'Registry could not record the remaining instalments of entitlement %s '
+                     . '(tenant %s), and could not cancel what Stripe had made (%s), so the '
+                     . 'family may still be charged by Stripe for them. Cancel that schedule in '
+                     . "the studio's Stripe dashboard before collecting anything by hand.",
+        },
+        cancel_instalment_schedule => {
+            act     => 'cancel_instalment_schedule',
+            done    => 'cancelled',
+            none    => 'had no instalment schedule to cancel',
+            subject => 'Instalments could not be cancelled',
+            told    => 'Registry could not cancel the remaining instalments of entitlement %s '
+                     . '(tenant %s) at Stripe%s, so the family may still be charged for them. '
+                     . "Cancel the schedule in the studio's Stripe dashboard, or ask Registry "
+                     . 'support to cancel it.',
+        },
+    );
+
+    # The registering app's Minion, for the checkout step that queues these
+    # after its COMMIT: a workflow step is handed a database, not the app.
+    my $registered;
+
     sub register ($class, $app) {
-        $app->minion->add_task( instalment_schedule => sub ($job, @args) {
-            $class->new->run( $job, @args );
-        } );
+        $registered = $app->minion;
+        for my $task ( keys %TASK ) {
+            $app->minion->add_task( $task => sub ($job, @args) {
+                $class->new->run( $job, $task, @args );
+            } );
+        }
     }
 
-    # $payment_id is instalment 1, already paid. $slug is the tenant schema it
-    # lives in -- payments are tenant-scoped, and a job has no request to infer
-    # the tenant from.
-    method run ( $job, $payment_id, $slug ) {
-        unless ( $payment_id && $slug ) {
-            return $job->fail('instalment_schedule needs a payment id and a tenant slug');
+    # The Minion the jobs were registered with; dies before any app has.
+    sub minion ($class) { $registered // die "instalment jobs are not registered with any app\n" }
+
+    # Queues $task for $entitlement_id in tenant $slug. Ten attempts on
+    # Minion's default backoff (retries**4 + 15 seconds) is about two and a
+    # half hours: past a Stripe outage or a deploy restart, and inside the
+    # 24 hours Stripe keeps the job's Idempotency-Keys. One job per
+    # entitlement and task: a second ask finds the first still waiting and
+    # adds nothing. Two asks at the same instant can still queue two, which
+    # is harmless: each run finds what the other did.
+    sub enqueue ( $class, $minion, $task, $entitlement_id, $slug ) {
+        return if $minion->jobs( {
+            tasks  => [$task],
+            notes  => [$entitlement_id],
+            states => [ 'inactive', 'active' ],
+        } )->total;
+        return $minion->enqueue( $task => [ $entitlement_id, $slug ],
+            { attempts => 10, notes => { $entitlement_id => 1 } } );
+    }
+
+    # $entitlement_id was made by a paid cart charge. $slug is the tenant
+    # schema it lives in -- a job has no request to infer the tenant from.
+    method run ( $job, $task, $entitlement_id, $slug ) {
+        unless ( $entitlement_id && $slug ) {
+            return $job->fail("$task needs an entitlement id and a tenant slug");
         }
 
         my $dao = $job->app->dao($slug);
-        my $payment = Registry::DAO::Payment->find( $dao->db, { id => $payment_id } );
-
-        # A payment that has gone is not a failure to retry. The enrolment may
-        # have been cancelled and the row removed between the webhook and here.
-        return $job->finish("payment $payment_id is gone") unless $payment;
+        my $entitlement = Registry::DAO::Entitlement->find( $dao->db, { id => $entitlement_id } );
+        return $job->finish("entitlement $entitlement_id is gone") unless $entitlement;
 
         # Stripe is reached here, so a failure must be retried rather than
-        # swallowed: without the schedule the family pays instalment one and
-        # nothing else, which is the defect #425 is about, arrived by a different
-        # road. Dying fails the job, and Minion retries it on the attempts the
-        # webhook enqueued it with (Controller::Webhooks). Every run looks for a
-        # schedule an earlier one made first, and never changes the key.
+        # swallowed: dying fails the job, and Minion retries it on the attempts
+        # enqueue gave it. Every run looks for what an earlier one did first,
+        # and never changes the key.
         my $schedule_id;
-        try { $schedule_id = $self->create_for( $dao->db, $payment ) }
+        try { $schedule_id = $self->act_on( $dao->db, $entitlement, $TASK{$task}{act} ) }
         catch ($e) {
             # Minion counts attempts down on each retry: one left is the last.
-            $self->_alert( $job, $dao->db, $payment_id, $slug, $e )
+            $self->_alert( $job, $dao->db, $task, $entitlement, $slug, $e )
                 if $job->info->{attempts} <= 1;
             die $e;
         }
 
         return $job->finish(
             $schedule_id
-                ? "payment $payment_id scheduled as $schedule_id"
-                : "payment $payment_id needed no schedule"
+                ? "entitlement $entitlement_id $TASK{$task}{done} $schedule_id"
+                : "entitlement $entitlement_id $TASK{$task}{none}"
         );
     }
 
     # Separated so it can be tested without a Minion context, as
     # DomainVerification::check_pending_domains is.
-    method create_for ( $db, $payment ) {
-        return $payment->schedule_remaining_instalments($db);
+    method create_for ( $db, $entitlement ) {
+        return $self->act_on( $db, $entitlement, 'schedule_instalments_for' );
+    }
+
+    method act_on ( $db, $entitlement, $act ) {
+        my $payment = $entitlement->payment($db)
+            or die 'entitlement ' . $entitlement->id . " was made by no payment\n";
+        return $payment->$act( $db, $entitlement );
     }
 
     # Both who can act: the tenant's admins, whose family it is, and the
     # platform's operators, who can re-run the job once Stripe recovers.
-    method _alert ( $job, $db, $payment_id, $slug, $err ) {
-        Registry::DAO::Notification->alert_admins( $db,
-            'Instalments could not be scheduled',
-            "Registry could not set up the remaining instalments of payment $payment_id "
-          . "(tenant $slug) at Stripe, so the family has paid instalment one and will "
-          . 'not be charged the rest. Collect them by hand, or ask Registry support '
-          . 'to schedule them.',
-            { payment_id => $payment_id } );
-        $job->app->log->error( "instalment_schedule for payment $payment_id (tenant $slug) "
-              . 'failed its last attempt; the rest will not be charged: '
+    method _alert ( $job, $db, $task, $entitlement, $slug, $err ) {
+        my $entitlement_id = $entitlement->id;
+
+        # A schedule an attempt made at Stripe but never recorded would bill
+        # on unseen: cancelled before the admins are told the family will not
+        # be charged, and if it cannot be, they are told it may be.
+        my ( $message, $cancelled ) = ( $TASK{$task}{told}, '' );
+        if ( $task eq 'instalment_schedule' ) {
+            try {
+                my $payment = $entitlement->payment($db);
+                my $ids = $payment ? $payment->cancel_unrecorded_schedules( $db, $entitlement ) : [];
+                $cancelled = " (it cancelled the schedule Stripe had made, @$ids)" if @$ids;
+            }
+            catch ($e) {
+                ( $cancelled = "$e" ) =~ s/\s+\z//;
+                $message = $TASK{$task}{live};
+            }
+        }
+        Registry::DAO::Notification->alert_admins( $db, $TASK{$task}{subject},
+            sprintf( $message, $entitlement_id, $slug, $cancelled ),
+            { entitlement_id => $entitlement_id } );
+        $job->app->log->error( "$task for entitlement $entitlement_id (tenant $slug) "
+              . 'failed its last attempt: '
               . ( "$err" =~ s/([^\x20-\x7e])/sprintf '\\x{%x}', ord $1/ger ) );
     }
 }

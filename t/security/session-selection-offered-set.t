@@ -1,6 +1,7 @@
 #!/usr/bin/env perl
-# ABOUTME: A submitted session id must be one the step actually offered.
-# ABOUTME: An unresolvable id skipped every check and detonated after Stripe captured.
+# ABOUTME: A session posted to the session cart must be one the cart offered: on sale, with room, at a price that buys it.
+# ABOUTME: An id naming nothing, a started session, a duplicated parameter or another session's price never reach cart_lines.
+BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
 use 5.42.0;
 use warnings;
@@ -8,148 +9,86 @@ use lib qw(lib t/lib);
 use Test::More;
 use Test::Registry::DB;
 use Test::Registry::Fixtures;
-use Test::Registry::Helpers;
-use Registry::DAO::Workflow;
-use Registry::DAO::User;
-use Registry::DAO::Family;
-use Registry::DAO::Session;
-use Registry::DAO::Project;
-use Registry::DAO::Event;
-use Registry::DAO::Location;
-use Mojo::Home;
+use Test::Registry::Helpers qw( days_from_now );
+use Test::Registry::Sessions qw( make_session session_offer cart_run add_cart_line );
+use Registry::DAO::FamilyMember;
 
 my $test_db = Test::Registry::DB->new;
-Test::Registry::Fixtures::create_tenant( $test_db->db->db,
-    { name => 'Offered Set Tenant', slug => 'offered_set' } );
-my $dao = Registry::DAO->new( url => $test_db->uri, schema => 'offered_set' );
-my $db  = $dao->db;
+my $dao     = $test_db->db;
+my $db      = $dao->db;
 
-my $location = Registry::DAO::Location->create( $db, { time_zone => 'America/New_York',
-    name => 'Offered Studio',
-    address_info => { street_address => '1 Main', city => 'X', state => 'TS', postal_code => '1' },
-    metadata => {},
-} );
-my $teacher = Registry::DAO::User->create( $db,
-    { name => 'T', username => 'offered_teacher', email => 't@x.test', user_type => 'staff' } );
-my $project = Registry::DAO::Project->create( $db, { name => 'Offered Project', metadata => {} } );
+my $parent = Test::Registry::Fixtures::create_user( $db, { username => 'offered_parent' } );
+my ( $kid, $sib ) = map {
+    Registry::DAO::FamilyMember->create( $db, { family_id => $parent->id, child_name => $_, birth_date => '2017-05-01' } )
+} 'Kid', 'Sib';
 
-# Two sessions with identical linkage; only one is published. prepare_template_data
-# filters on s.status = 'published', but those filters lived ONLY in the
-# list-building query and never in validation.
-sub session_with_event ( $name, $status, $hour ) {
-    my $session = Registry::DAO::Session->create( $db, {
-        name => $name, start_date => days_from_now(30), end_date => days_from_now(37),
-        status => $status, capacity => 10, metadata => {},
-    } );
-    my $event = Registry::DAO::Event->create( $db, {
-        time => sprintf( '%s %02d:00:00', days_from_now(30), $hour ), duration => 60,
-        location_id => $location->id, project_id => $project->id,
-        teacher_id => $teacher->id, capacity => 10, metadata => {},
-    } );
-    $session->add_events( $db, $event->id );
-    return $session;
+sub on_sale_session (%o) { make_session( $db, days => [ map { days_from_now($_) } 30 .. 32 ], %o ) }
+
+my $offered = on_sale_session();
+my $price   = session_offer( $db, $offered, price_cents => 30000 );
+
+# The step's result and the cart's lines after posting $session_id at $choice.
+sub post ( $session_id, $choice = $price->id . '/pay' ) {
+    my ( $run, $step ) = cart_run( $dao, $parent->id, $kid->id, $sib->id );
+    my $result = add_cart_line( $db, $run, $step,
+        family_member_id => $kid->id, resource_id => $session_id, choice => $choice );
+    return ( $result, $run->data->{cart_lines} );
 }
 
-my $offered     = session_with_event( 'Offered',     'published', 9 );
-my $unpublished = session_with_event( 'Unpublished', 'draft',    11 );
-
-my $parent = Registry::DAO::User->create( $db,
-    { name => 'P', username => 'offered_parent', email => 'p@x.test', user_type => 'parent' } );
-my $child = Registry::DAO::Family->add_child( $db, $parent->id, {
-    child_name => 'Kid', birth_date => birth_date_for_age(8), grade => '3',
-    medical_info => {}, emergency_contact => { name => 'EC', phone => '555' },
-} );
-
-$dao->import_workflows(['workflows/summer-camp-registration.yaml']);
-my $workflow = $dao->find( Workflow => { slug => 'summer-camp-registration' } );
-my $step = $workflow->get_step( $db, { slug => 'session-selection' } );
-ok $step, 'the session-selection step exists' or BAIL_OUT 'no step';
-
-sub run_for_child () {
-    my $run = $workflow->new_run($db);
-    $run->update_data( $db, {
-        user_id            => $parent->id,
-        selected_child_ids => [ $child->id ],
-        program_id         => $project->id,
-        location_id        => $location->id,
-    } );
-    return $run;
-}
-
-sub select_session ( $run, $value ) {
-    return $step->process( $db,
-        { action => 'select_sessions', 'session_for_' . $child->id => $value }, $run );
-}
-
-# Positive control. Without it every refusal below could pass because the
-# fixture never produced a working selection in the first place.
-subtest 'a session the step offered is accepted' => sub {
-    my $run = run_for_child();
-    my $result = select_session( $run, $offered->id );
-
-    ok !$result->{errors} || !@{ $result->{errors} }, 'no errors'
-        or diag explain $result->{errors};
-    ok $run->data->{enrollment_items}, 'the cart is built';
+# Positive control: without it every refusal below could pass because the
+# fixture never produced a working line in the first place.
+subtest 'a session the cart offered is accepted' => sub {
+    my ( $result, $lines ) = post( $offered->id );
+    ok !$result->{errors}, 'no errors' or diag explain $result->{errors};
+    is scalar @{ $lines // [] }, 1, 'the line is in the cart';
 };
 
-# The reported defect. Session->find returns nothing, `next unless $sess` skips
-# capacity AND age silently, and the id still reaches enrollment_items because
-# the only "did you choose?" test is that a selection exists. Settlement then
-# runs SELECT capacity FROM sessions WHERE id = ? , finds no row and dies --
-# inside the transaction, after Stripe captured.
 subtest 'a session id that names nothing is refused' => sub {
-    my $run = run_for_child();
-    my $result = select_session( $run, 'ffffffff-ffff-4fff-8fff-ffffffffffff' );
-
-    ok $result->{errors} && @{ $result->{errors} }, 'an error is returned';
-    ok !$run->data->{enrollment_items}, 'and nothing reaches the cart';
+    my ( $result, $lines ) = post('ffffffff-ffff-4fff-8fff-ffffffffffff');
+    like $result->{errors}[0], qr/Choose one of the listed sessions/, 'refused';
+    ok !$lines, 'and nothing reaches the cart';
 };
 
-# Milder variant, same line: the published/location/project filters live only in
-# the list-building query, so a real session that was never offered is accepted
-# whole.
-subtest 'a real but unpublished session is refused' => sub {
-    my $run = run_for_child();
-    my $result = select_session( $run, $unpublished->id );
-
-    ok $result->{errors} && @{ $result->{errors} }, 'an error is returned';
-    ok !$run->data->{enrollment_items}, 'and nothing reaches the cart';
+subtest 'an id that is not a uuid is refused, not cast' => sub {
+    my ( $result, $lines ) = post('not-a-uuid');
+    like $result->{errors}[0], qr/Choose one of the listed sessions/, 'refused';
+    ok !$lines, 'and nothing reaches the cart';
 };
 
-# req->params->to_hash yields an ARRAYREF for a duplicated key, so
-# session_for_<child>=A&session_for_<child>=B stored a reference as the id.
-subtest 'a duplicated session_for_ parameter is refused' => sub {
-    my $run = run_for_child();
-    my $result = select_session( $run, [ $offered->id, $unpublished->id ] );
-
-    ok $result->{errors} && @{ $result->{errors} }, 'an error is returned';
-    ok !$run->data->{enrollment_items}, 'and nothing reaches the cart';
+subtest 'a session that has started is refused' => sub {
+    my $started = make_session( $db, days => [ days_from_now(-1), days_from_now(1) ] );
+    my $its     = session_offer( $db, $started );
+    my ( $result, $lines ) = post( $started->id, $its->id . '/pay' );
+    like $result->{errors}[0], qr/Choose one of the listed sessions/, 'refused';
+    ok !$lines, 'and nothing reaches the cart';
 };
 
-# The narrowing case, which only the project_id predicate catches: a perfectly
-# real, published, current session belonging to a DIFFERENT programme. The
-# issue notes this admits enrolment into programmes outside the age band,
-# because the age gate is checked against program_id from run data rather than
-# the session's own project.
-subtest "a published session from another programme is refused" => sub {
-    my $other_project = Registry::DAO::Project->create( $db,
-        { name => 'Other Project', metadata => {} } );
-    my $other = Registry::DAO::Session->create( $db, {
-        name => 'Elsewhere', start_date => days_from_now(30), end_date => days_from_now(37),
-        status => 'published', capacity => 10, metadata => {},
-    } );
-    my $event = Registry::DAO::Event->create( $db, {
-        time => sprintf( '%s 15:00:00', days_from_now(30) ), duration => 60,
-        location_id => $location->id, project_id => $other_project->id,
-        teacher_id => $teacher->id, capacity => 10, metadata => {},
-    } );
-    $other->add_events( $db, $event->id );
+# req->params->to_hash yields an ARRAYREF for a duplicated key.
+subtest 'a duplicated resource_id parameter is refused' => sub {
+    my $other = on_sale_session();
+    my ( $result, $lines ) = post( [ $offered->id, $other->id ] );
+    like $result->{errors}[0], qr/Choose one of the listed prices/, 'refused';
+    ok !$lines, 'and nothing reaches the cart';
+};
 
-    my $run = run_for_child();
-    my $result = select_session( $run, $other->id );
+# A real, current price that buys a different session.
+subtest "another session's price is refused" => sub {
+    my $elsewhere = on_sale_session();
+    my $its       = session_offer( $db, $elsewhere );
+    my ( $result, $lines ) = post( $offered->id, $its->id . '/pay' );
+    like $result->{errors}[0], qr/Choose one of the listed prices/, 'refused';
+    ok !$lines, 'and nothing reaches the cart';
+};
 
-    ok $result->{errors} && @{ $result->{errors} }, 'an error is returned';
-    ok !$run->data->{enrollment_items}, 'and nothing reaches the cart';
+subtest "a full session is refused, counting the cart's own lines" => sub {
+    my $one_seat = on_sale_session( capacity => 1 );
+    my $its      = session_offer( $db, $one_seat );
+    my ( $run, $step ) = cart_run( $dao, $parent->id, $kid->id, $sib->id );
+    ok !add_cart_line( $db, $run, $step, family_member_id => $kid->id, resource_id => $one_seat->id,
+        choice => $its->id . '/pay' )->{errors}, 'the first child takes the one seat';
+    like add_cart_line( $db, $run, $step, family_member_id => $sib->id, resource_id => $one_seat->id,
+        choice => $its->id . '/pay' )->{errors}[0], qr/is full/, 'the second is refused';
+    is scalar $run->data->{cart_lines}->@*, 1, 'and only the first line is in the cart';
 };
 
 done_testing;

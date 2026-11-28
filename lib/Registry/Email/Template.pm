@@ -84,6 +84,24 @@ my %TEMPLATES = (
         my $event      = _escape_html($v{event}      // '');
         my $start_date = _escape_html($v{start_date} // '');
         my $location   = _escape_html($v{location}   // '');
+        my @lines      = @{ $v{lines} // [] };
+
+        # A session cart lists each child's booking: session, days, price,
+        # plan with its due dates, and the policies it was sold under.
+        if (@lines) {
+            my $items = join '', map { '<li style="color:#333333;line-height:1.6;margin-bottom:8px;">'
+                . _escape_html($_) . '</li>' } @lines;
+            my $html = <<"END";
+<h2 style="color:#2c5f8a;margin-top:0;">Booking Confirmed</h2>
+<p style="color:#333333;line-height:1.6;">Hello $name,</p>
+<p style="color:#333333;line-height:1.6;">Your booking is confirmed:</p>
+<ul>$items</ul>
+<p style="color:#333333;line-height:1.6;">We look forward to seeing you!</p>
+END
+            my $text = "Booking Confirmed\n\nHello " . ( $v{name} // '' ) . ",\n\nYour booking is confirmed:\n\n"
+                . join( '', map {"  - $_\n\n"} @lines ) . "We look forward to seeing you!\n";
+            return ( $html, $text );
+        }
 
         my $html = <<"END";
 <h2 style="color:#2c5f8a;margin-top:0;">Enrollment Confirmed</h2>

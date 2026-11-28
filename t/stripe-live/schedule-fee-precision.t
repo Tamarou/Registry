@@ -66,6 +66,8 @@ sub schedule_params ( $pct ) {
         revenue_share_pct => $pct,
         currency          => 'usd',
         product           => $product->{id},
+        cadence           => 'monthly',
+        entitlement_id    => '00000000-0000-4000-8000-0000000000f1',
         instalments       => [ { amount_cents => 3333, due_date => '2027-07-01' } ],
     } );
 }

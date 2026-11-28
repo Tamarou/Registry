@@ -1,4 +1,4 @@
-# ABOUTME: Tests that payment_intent.succeeded finalizes payments in the correct tenant schema.
+# ABOUTME: Tests that payment_intent.succeeded completes a session checkout in the correct tenant schema.
 # ABOUTME: Also tests account.updated mirroring of Stripe Connect readiness flags.
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
@@ -10,13 +10,16 @@ use Test::MockObject;
 use Registry::DAO;
 use Registry::DAO::Tenant;
 use Registry::DAO::User;
-use Registry::DAO::Family;
+use Registry::DAO::FamilyMember;
 use Registry::DAO::Payment;
 use Registry::Controller::Webhooks;
 use Test::Registry::DB;
 use Test::Registry::PricingProbe qw( state_platform_terms );
 use Test::Registry::Mojo;
 use Test::Registry::StripeWebhook;
+use Test::Registry::Fixtures;
+use Test::Registry::Sessions qw( make_session session_offer held_cart );
+use Test::Registry::SessionCheckout qw( started_charge drive );
 
 local $ENV{STRIPE_SECRET_KEY}     = 'sk_test_webhook_tenant_test';
 local $ENV{STRIPE_WEBHOOK_SECRET} = 'whsec_test_webhook_tenant_test';
@@ -54,70 +57,27 @@ state_platform_terms( $db, $slug, { rate => 0 } );
 my $tdao = Registry::DAO->new(url => $ENV{DB_URL}, schema => $slug);
 my $tdb  = $tdao->db;
 
-# Create a parent + child that live only in the tenant schema.
+# A parent and child who live only in the tenant schema, a session on sale
+# there, and the child's seat held and charged: the cart's one payment.
 my $parent = Registry::DAO::User->create($tdb, {
     username  => "wh_parent_$$",
     email     => "wh_parent_$$\@test.example",
     name      => 'WH Parent',
     user_type => 'parent',
 });
-my $child = Registry::DAO::Family->add_child($tdb, $parent->id, {
-    child_name        => 'WH Kid',
-    birth_date        => '2018-01-01',
-    grade             => '3',
-    medical_info      => {},
-    emergency_contact => { name => 'Emerg', phone => '555-0100' },
-});
+my $child = Registry::DAO::FamilyMember->create($tdb,
+    { family_id => $parent->id, child_name => 'WH Kid', birth_date => '2018-01-01' });
+my $session = make_session($tdb);
+my $version = session_offer($tdb, $session, price_cents => 15000);
 
-# Session/event fixtures in the tenant schema.
-my $loc = Registry::DAO::Location->create($tdb, { time_zone => 'America/New_York',
-    name         => "WH Studio $$",
-    slug         => "wh_studio_$$",
-    address_info => {},
-    metadata     => {},
-});
-my $prog = Registry::DAO::Project->create($tdb, {
-    name              => "WH Camp $$",
-    status            => 'published',
-    program_type_slug => 'summer-camp',
-    metadata          => {},
-});
-my $teacher = Registry::DAO::User->create($tdb, {
-    username  => "wh_teacher_$$",
-    email     => "wh_teacher_$$\@test.example",
-    name      => 'WH Teacher',
-    user_type => 'staff',
-});
-my $session = Registry::DAO::Session->create($tdb, {
-    name       => "WH Week $$",
-    start_date => '2026-07-01',
-    end_date   => '2026-07-31',
-    status     => 'published',
-    capacity   => 10,
-    metadata   => {},
-});
-my $event = Registry::DAO::Event->create($tdb, {
-    time        => '2026-07-01 10:00:00',
-    duration    => 60,
-    location_id => $loc->id,
-    project_id  => $prog->id,
-    teacher_id  => $teacher->id,
-    capacity    => 10,
-    metadata    => {},
-});
-$session->add_events($tdb, $event->id);
-
-# Create the tenant payment with enrollment_items and tenant_slug metadata.
-my $tenant_payment = Registry::DAO::Payment->create($tdb, {
-    user_id  => $parent->id,
-    amount_cents => 15000,
-    status   => 'pending',
-    stripe_payment_intent_id => 'pi_tenant_test_1',    # the intent Registry created
-    metadata => {
-        enrollment_items => [ { session_id => $session->id, child_id => $child->id } ],
-        tenant_slug      => $slug,
-    },
-});
+# The readiness the payment step needs, set for the charge and put back for
+# the account.updated subtests below, which flip it themselves.
+$db->query(q{UPDATE registry.tenants SET stripe_charges_enabled = TRUE, stripe_details_submitted = TRUE
+              WHERE slug = ?}, $slug);
+my ( $run, $pay ) = held_cart($tdao, $parent->id, [ $child->id, $session->id, $version->id, 'pay' ]);
+my $tenant_payment = started_charge($tdb, $run, $pay);
+$db->query(q{UPDATE registry.tenants SET stripe_charges_enabled = FALSE, stripe_details_submitted = FALSE
+              WHERE slug = ?}, $slug);
 ok $tenant_payment, 'tenant payment created in tenant schema';
 
 # Verify payment is NOT visible via the registry-schema connection.
@@ -148,14 +108,15 @@ $wh->{app} = $mock_app;
 # action -- calling a handler directly would hand it a pre-scoped handle and
 # assert nothing about which schema it picked.
 my $t = Test::Registry::Mojo->new('Registry');
-$t->app->helper(dao => sub { $dao });
+$t->app->helper(dao => sub ($c, $tenant = undef) {
+    defined $tenant ? Registry::DAO->new(url => $test_db->uri, schema => $tenant) : $dao });
 
 # ---------------------------------------------------------------------------
-# Helper: count enrollments and notifications for a given payment (in tenant).
+# Helper: count entitlements and notifications for a given payment (in tenant).
 # ---------------------------------------------------------------------------
 
-sub tenant_enrollment_count {
-    scalar @{ $tdb->select('enrollments', '*', { payment_id => $tenant_payment->id })->hashes };
+sub tenant_entitlement_count {
+    scalar @{ $tdb->select('entitlements', '*', { payment_id => $tenant_payment->id })->hashes };
 }
 
 sub tenant_confirmation_count {
@@ -164,17 +125,17 @@ sub tenant_confirmation_count {
 }
 
 # ---------------------------------------------------------------------------
-# Subtest 1: tenant finalization -- payment found in tenant schema, enrollment
+# Subtest 1: tenant completion -- payment found in tenant schema, entitlement
 # created there, NOT visible in registry.
 # ---------------------------------------------------------------------------
 
-subtest 'connect succeeded event finalizes enrollment in account tenant' => sub {
+subtest 'connect succeeded event completes the checkout in account tenant' => sub {
     my $evt = {
         id      => 'evt_tenant_test_1',
         type    => 'payment_intent.succeeded',
         account => 'acct_wh_test',
         data    => { object => {
-            id       => 'pi_tenant_test_1',
+            id       => $tenant_payment->stripe_payment_intent_id,
             metadata => {
                 payment_id  => $tenant_payment->id,
                 tenant_slug => $slug,
@@ -184,20 +145,22 @@ subtest 'connect succeeded event finalizes enrollment in account tenant' => sub 
 
     # Driven through the real action: it resolves event.account against
     # registry.tenants, opens one transaction, and sets a transaction-local
-    # search_path, so the whole settlement -- payment lookup, completed write,
-    # enrollment, notification -- lands in the tenant schema on one connection.
+    # search_path, so the settlement -- payment lookup and completed write --
+    # lands in the tenant schema on one connection; the run's driver it
+    # queues books the child there too.
     Test::Registry::StripeWebhook::post_connect($t, $evt)->status_is(200);
+    drive($t->app->minion);
 
-    is tenant_enrollment_count(), 1, 'enrollment created in tenant schema';
+    is tenant_entitlement_count(), 1, 'entitlement created in tenant schema';
     is tenant_confirmation_count(), 1, 'confirmation queued in tenant schema';
 
     my $refreshed = Registry::DAO::Payment->find($tdb, { id => $tenant_payment->id });
     is $refreshed->status, 'completed', 'payment marked completed in tenant schema';
 
-    # Registry schema must NOT have any enrollment row for this payment.
-    my $reg_enr = $db->select('registry.enrollments', ['id'],
+    # Registry schema must NOT have any entitlement for this payment.
+    my $reg_ent = $db->select('registry.entitlements', ['id'],
         { payment_id => $tenant_payment->id })->hash;
-    ok !$reg_enr, 'enrollment NOT created in registry schema';
+    ok !$reg_ent, 'entitlement NOT created in registry schema';
 };
 
 # ---------------------------------------------------------------------------
@@ -240,7 +203,7 @@ subtest 'event without payment_id is silently ignored' => sub {
     };
     $died = 1 if $@;
     ok !$died, 'no payment_id event returns without dying';
-    is tenant_enrollment_count(), 1, 'no extra enrollment created (still 1 from earlier)';
+    is tenant_entitlement_count(), 1, 'no extra entitlement created (still 1 from earlier)';
 };
 
 # ---------------------------------------------------------------------------
@@ -303,92 +266,37 @@ subtest 'account.updated with unknown account logs but does not die' => sub {
 };
 
 # ---------------------------------------------------------------------------
-# Subtest 5: registry-schema payment (no tenant_slug) still finalizes on the
-# registry connection (regression guard -- mirrors payment-intent-webhook.t).
+# Subtest 5: a registry-schema cart (the platform selling its own sessions)
+# still completes on the registry connection.
 # ---------------------------------------------------------------------------
 
-subtest 'registry-schema payment without tenant_slug finalizes on registry connection' => sub {
+subtest 'registry-schema cart payment completes on registry connection' => sub {
+    my $seller = Test::Registry::Fixtures::platform_seller($db);
+    $db->query(q{UPDATE registry.tenants SET stripe_charges_enabled = TRUE, stripe_details_submitted = TRUE
+                  WHERE slug = ?}, $seller);
+    state_platform_terms( $db, $seller, { rate => 0 } );
     my $reg_parent = Registry::DAO::User->create($db, {
         username  => "reg_parent_wh_$$",
         email     => "reg_parent_wh_$$\@test.example",
         name      => 'Reg Parent WH',
         user_type => 'parent',
     });
-    my $reg_child = Registry::DAO::Family->add_child($db, $reg_parent->id, {
-        child_name        => 'Reg Kid WH',
-        birth_date        => '2018-01-01',
-        grade             => '3',
-        medical_info      => {},
-        emergency_contact => { name => 'Emerg2', phone => '555-0101' },
-    });
-
-    # Build session fixtures in the registry schema.
-    my $reg_loc = Registry::DAO::Location->create($db, { time_zone => 'America/New_York',
-        name         => "Reg WH Studio $$",
-        slug         => "reg_wh_studio_$$",
-        address_info => {},
-        metadata     => {},
-    });
-    my $reg_prog = Registry::DAO::Project->create($db, {
-        name              => "Reg WH Camp $$",
-        status            => 'published',
-        program_type_slug => 'summer-camp',
-        metadata          => {},
-    });
-    my $reg_teacher = Registry::DAO::User->create($db, {
-        username  => "reg_wh_teacher_$$",
-        email     => "reg_wh_teacher_$$\@test.example",
-        name      => 'Reg WH Teacher',
-        user_type => 'staff',
-    });
-    my $reg_session = Registry::DAO::Session->create($db, {
-        name       => "Reg WH Week $$",
-        start_date => '2026-08-01',
-        end_date   => '2026-08-31',
-        status     => 'published',
-        capacity   => 10,
-        metadata   => {},
-    });
-    my $reg_event = Registry::DAO::Event->create($db, {
-        time        => '2026-08-01 10:00:00',
-        duration    => 60,
-        location_id => $reg_loc->id,
-        project_id  => $reg_prog->id,
-        teacher_id  => $reg_teacher->id,
-        capacity    => 10,
-        metadata    => {},
-    });
-    $reg_session->add_events($db, $reg_event->id);
-
-    my $reg_payment = Registry::DAO::Payment->create($db, {
-        user_id  => $reg_parent->id,
-        amount_cents => 7500,
-        status   => 'pending',
-        stripe_payment_intent_id => 'pi_reg_schema_wh_1',    # the intent Registry created
-        metadata => {
-            enrollment_items => [ { session_id => $reg_session->id, child_id => $reg_child->id } ],
-            tenant_slug      => undef,
-        },
-    });
+    my $reg_child = Registry::DAO::FamilyMember->create($db,
+        { family_id => $reg_parent->id, child_name => 'Reg Kid WH', birth_date => '2018-01-01' });
+    my $reg_session = make_session($db);
+    my $reg_version = session_offer($db, $reg_session, price_cents => 7500);
+    my ( $reg_run, $reg_pay ) = held_cart($dao, $reg_parent->id,
+        [ $reg_child->id, $reg_session->id, $reg_version->id, 'pay' ]);
+    my $reg_payment = started_charge($db, $reg_run, $reg_pay);
     ok $reg_payment, 'registry-schema payment created';
 
-    my $evt = {
-        type => 'payment_intent.succeeded',
-        data => { object => {
-            id       => 'pi_reg_schema_wh_1',
-            metadata => { payment_id => $reg_payment->id },
-            # no tenant_slug key in metadata
-        } },
-    };
+    Test::Registry::SessionCheckout::post_succeeded($t, $reg_payment, 'acct_platform_test')->status_is(200);
+    drive($t->app->minion);
 
-    $wh->_process_payment_intent_succeeded($db, $evt);
-
-    my $enr_count = scalar @{ $db->select('registry.enrollments', '*',
-        { payment_id => $reg_payment->id })->hashes };
-    is $enr_count, 1, 'enrollment created in registry schema for registry payment';
-
-    my $refreshed = Registry::DAO::Payment->find($db, { id => $reg_payment->id });
-    is $refreshed->status, 'completed', 'registry payment marked completed';
+    is $db->select('registry.entitlements', ['id'], { payment_id => $reg_payment->id })->rows, 1,
+        'entitlement created in registry schema for registry payment';
+    is Registry::DAO::Payment->find($db, { id => $reg_payment->id })->status, 'completed',
+        'registry payment marked completed';
 };
 
 done_testing;

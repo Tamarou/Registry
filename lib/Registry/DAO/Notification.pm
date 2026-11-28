@@ -147,6 +147,8 @@ class Registry::DAO::Notification :isa(Registry::DAO::Object) {
                 event      => $meta->{event_name}    // '',
                 start_date => $meta->{start_date}    // '',
                 location   => $meta->{location_name} // '',
+                # A session cart's: each child's booking, in words.
+                lines      => ref $meta->{lines} eq 'ARRAY' ? $meta->{lines} : [],
             );
         }
         if ( $type eq 'domain_verified' || $type eq 'domain_verification_failed' ) {

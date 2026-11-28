@@ -1,4 +1,4 @@
-# ABOUTME: The instalment_schedule job as the Connect webhook enqueues it, run by Minion's own worker.
+# ABOUTME: The instalment_schedule and cancel_instalment_schedule jobs for one child's entitlement, run by Minion's own worker.
 # ABOUTME: Retries make one schedule, adopt one a replayed 500 hid, and alert when the last attempt fails.
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
@@ -10,16 +10,15 @@ use Test::More;
 use Test::Registry::DB;
 use Test::Registry::PricingProbe qw( state_platform_terms );
 use Test::Registry::Mojo;
-use Test::Registry::StripeWebhook;
+use Test::Registry::InstalmentCheckout qw( instalment_checkout );
 use Registry::DAO;
 use Registry::DAO::Tenant;
 use Registry::DAO::User;
 use Registry::DAO::Payment;
+use Registry::Job::InstalmentSchedule;
 use Registry::Service::Stripe;
 
-local $ENV{STRIPE_SECRET_KEY}             = 'sk_test_schedule_retry';
-local $ENV{STRIPE_WEBHOOK_SECRET}         = 'whsec_test_schedule_retry';
-local $ENV{STRIPE_CONNECT_WEBHOOK_SECRET} = 'whsec_test_schedule_retry_connect';
+local $ENV{STRIPE_SECRET_KEY} = 'sk_test_schedule_retry';
 
 my $test_db = Test::Registry::DB->new;
 my $db      = $test_db->db->db;
@@ -36,10 +35,6 @@ Registry::DAO::Tenant->provision( $db, {
 my $tdb = Registry::DAO->new( url => $test_db->uri, schema => $slug )->db;
 state_platform_terms( $db, $slug, { rate => 0 } );
 
-my $parent = Registry::DAO::User->create( $tdb, {
-    username => "sr_parent_$$", email => "sr_parent_$$\@test.example",
-    name => 'SR Parent', user_type => 'parent' } );
-
 # The real dao helper, not an override: the job finds the tenant's schema by slug.
 my $t      = Test::Registry::Mojo->new('Registry');
 my $minion = $t->app->minion;
@@ -49,51 +44,41 @@ $t->app->log->unsubscribe('message');
 $t->app->log->level('info');
 $t->app->log->on( message => sub ( $log, $level, @lines ) { push @logs, [ $level, "@lines" ] } );
 
-my $sales = 0;
-
-# Instalment one of three, settled by its success event: the webhook enqueues
-# the job. Returns the payment and the job it queued.
-sub a_settled_first_instalment () {
-    my $sale = Registry::DAO::Payment->create( $tdb, {
-        user_id => $parent->id, amount_cents => 3333, status => 'pending',
-        instalment_seq => 1, instalment_count => 3,
-        metadata => {
-            enrollment_items => [],
-            tenant_slug      => $slug,
-            instalment_plan  => [
-                { amount_cents => 3333, due_date => '2026-06-01' },
-                { amount_cents => 3333, due_date => '2026-07-01' },
-                { amount_cents => 3334, due_date => '2026-08-01' },
-            ],
-        } } );
-    $tdb->update( 'payments', { stripe_payment_intent_id => 'pi_sr_' . $sale->id },
-        { id => $sale->id } );
-
-    Test::Registry::StripeWebhook::post_connect( $t, {
-        id      => "evt_sr_${$}_" . ++$sales,
-        type    => 'payment_intent.succeeded',
-        account => $account,
-        data    => { object => {
-            id => 'pi_sr_' . $sale->id, amount => 3333,
-            metadata => { payment_id => $sale->id },
-        } },
-    } )->status_is(200);
-
-    my $job = $minion->jobs( { tasks => ['instalment_schedule'], notes => [ $sale->id ] } )
-        ->next;
-    return ( $sale, $job );
+# A child's paid checkout in three parts, and the $task job for its
+# entitlement, queued as checkout queues it.
+sub queued ( $task, $c = instalment_checkout( $tdb, slug => $slug, first_date => '2027-03-15' ) ) {
+    Registry::Job::InstalmentSchedule->enqueue( $minion, $task, $c->{entitlement}->id, $slug );
+    my $job = $minion->jobs( { tasks => [$task], notes => [ $c->{entitlement}->id ] } )->next;
+    return ( $c, $job );
 }
 
-subtest 'the schedule job is enqueued to be retried' => sub {
-    my ( $sale, $job ) = a_settled_first_instalment();
-    ok $job, 'the settlement queued the schedule job';
-    cmp_ok $job->{attempts}, '>', 1, 'with more than the one attempt Minion defaults to';
-    is $job->{attempts}, 10, 'ten, as the webhook names';
-    $minion->job( $job->{id} )->remove;
+sub run ($job) {
+    my $backoff = $minion->backoff;
+    $minion->backoff( sub ($retries) { 0 } );
+    $minion->perform_jobs_in_foreground( { id => $job->{id} } );
+    $minion->backoff($backoff);
+    return $minion->job( $job->{id} )->info;
+}
+
+sub scheduled ($c) {
+    return $tdb->select( 'payments', [qw( stripe_schedule_id )],
+        { entitlement_id => $c->{entitlement}->id } )->arrays->flatten->to_array;
+}
+
+subtest 'the jobs are queued to be retried, once per entitlement' => sub {
+    for my $task (qw( instalment_schedule cancel_instalment_schedule )) {
+        my ( $c, $job ) = queued($task);
+        is_deeply $job->{args}, [ $c->{entitlement}->id, $slug ], "$task names the entitlement and tenant";
+        is $job->{attempts}, 10, 'with ten attempts';
+        Registry::Job::InstalmentSchedule->enqueue( $minion, $task, $c->{entitlement}->id, $slug );
+        is $minion->jobs( { tasks => [$task], notes => [ $c->{entitlement}->id ] } )->total, 1,
+            'and a second ask while it waits adds none';
+        $minion->job( $job->{id} )->remove;
+    }
 };
 
 subtest 'a job that fails once and succeeds on retry makes one schedule' => sub {
-    my ( $sale, $job ) = a_settled_first_instalment();
+    my ( $c, $job ) = queued('instalment_schedule');
 
     # The first schedule create never reaches Stripe, then makes it. Not a 500:
     # Stripe would replay a 500 under the same key (see below).
@@ -114,29 +99,20 @@ subtest 'a job that fails once and succeeds on retry makes one schedule' => sub 
         return { id => $made[-1] };
     };
 
-    # Retry at once rather than after Minion's backoff, so one worker pass sees both runs.
-    my $backoff = $minion->backoff;
-    $minion->backoff( sub ($retries) { 0 } );
-    $minion->perform_jobs_in_foreground( { id => $job->{id} } );
-    $minion->backoff($backoff);
-
-    my $info = $minion->job( $job->{id} )->info;
+    my $info = run($job);
     is $info->{state},   'finished', 'the job finished';
     is $info->{retries}, 1,          'on its second run';
     is $tries, 2, 'Stripe was asked twice';
     is_deeply \@made, ['sub_sched_sr_2'], 'and made one schedule';
-
-    my $row = Registry::DAO::Payment->find( $tdb, { id => $sale->id } );
-    is $row->stripe_schedule_id, 'sub_sched_sr_2', 'which is the one recorded';
-    is $tdb->query( q{SELECT count(*) FROM payments WHERE metadata->>'instalment_of' = ?},
-        $sale->id )->array->[0], 2, 'with one row per remaining instalment';
+    is_deeply scheduled($c), [ ('sub_sched_sr_2') x 2 ],
+        'which is the one recorded, on one row per remaining instalment';
 };
 
-# Every Stripe call the job makes for $sale stubbed: the schedule create
-# always answers $error, as Stripe replays a stored 500 under one
-# Idempotency-Key for 24 hours; listing the customer's schedules returns
-# @$listed once a create has run, as Stripe may have made the schedule it
-# answered 500 for. Runs $job to its end and returns what Stripe was asked.
+# Every Stripe call the job makes stubbed: the schedule create always answers
+# $error, as Stripe replays a stored 500 under one Idempotency-Key for 24
+# hours; listing the customer's schedules returns @$listed once a create has
+# run, as Stripe may have made the schedule it answered 500 for. Runs $job to
+# its end and returns what Stripe was asked.
 sub run_against_replayed_500 ( $job, $error, $listed ) {
     my ( @keys, @lists );
     no warnings 'redefine';
@@ -154,26 +130,22 @@ sub run_against_replayed_500 ( $job, $error, $listed ) {
         push @lists, $p;
         return { data => @keys ? $listed : [] };
     };
-
-    my $backoff = $minion->backoff;
-    $minion->backoff( sub ($retries) { 0 } );
-    $minion->perform_jobs_in_foreground( { id => $job->{id} } );
-    $minion->backoff($backoff);
-    return { keys => \@keys, lists => \@lists, info => $minion->job( $job->{id} )->info };
+    return { keys => \@keys, lists => \@lists, info => run($job) };
 }
 
-sub alerts_for ($sale) {
+sub alerts_for ($c) {
     $tdb->query( q{SELECT subject, message FROM notifications
-                    WHERE user_id = ? AND message LIKE ?}, $admin->id, '%' . $sale->id . '%' )
+                    WHERE user_id = ? AND message LIKE ?}, $admin->id, '%' . $c->{entitlement}->id . '%' )
         ->hashes->to_array;
 }
 
 subtest 'a replayed 500 under the key: a retry finds the schedule Stripe made and records it' => sub {
-    my ( $sale, $job ) = a_settled_first_instalment();
+    my ( $c, $job ) = queued('instalment_schedule');
+    my $eid = $c->{entitlement}->id;
     my $ran = run_against_replayed_500( $job, 'Stripe api_error: An unknown error occurred',
-        [ { id => 'sub_sched_other', status => 'active', metadata => { payment_id => 'someone-else' } },
-          { id => 'sub_sched_made',  status => 'not_started', metadata => { payment_id => $sale->id },
-            # Our fee in the two phases we send, so it is ours to adopt.
+        [ { id => 'sub_sched_other', status => 'active', metadata => { entitlement_id => 'someone-else' } },
+          { id => 'sub_sched_made',  status => 'not_started', metadata => { entitlement_id => $eid },
+            # Our fee in the two phases we send (3333, 3334), so it is ours to adopt.
             default_settings => { application_fee_percent => 100
                 * Registry::PriceOps::RevenueShare::revenue_share_fraction_for_tenant( $db, $slug ) },
             phases => [ {}, {} ] } ] );
@@ -181,34 +153,164 @@ subtest 'a replayed 500 under the key: a retry finds the schedule Stripe made an
     is $ran->{info}{state}, 'finished', 'the job finishes';
     is scalar @{ $ran->{keys} }, 1, 'after one create, answered 500';
     is scalar @{ $ran->{lists} }, 2, 'each run first listed schedules';
-    is $ran->{lists}[1]{customer}, 'cus_sr', "the payment's customer's";
-    my $row = Registry::DAO::Payment->find( $tdb, { id => $sale->id } );
-    is $row->stripe_schedule_id, 'sub_sched_made', 'and records the one made for this payment';
-    is $tdb->query( q{SELECT count(*) FROM payments WHERE metadata->>'instalment_of' = ?},
-        $sale->id )->array->[0], 2, 'with one row per remaining instalment';
-    is scalar @{ alerts_for($sale) }, 0, 'and nobody is alerted';
+    is $ran->{lists}[1]{customer}, 'cus_sr', "the checkout charge's customer's";
+    is_deeply scheduled($c), [ ('sub_sched_made') x 2 ],
+        'and records the one made for this entitlement, one row per remaining instalment';
+    is scalar @{ alerts_for($c) }, 0, 'and nobody is alerted';
 };
 
-subtest 'a job whose last attempt fails alerts an operator naming payment and tenant' => sub {
-    my ( $sale, $job ) = a_settled_first_instalment();
+subtest 'a cancel that fails once is retried until Stripe cancels' => sub {
+    my ( $c, $job ) = queued('cancel_instalment_schedule');
+    $tdb->insert( 'payments', { user_id => $c->{parent}, amount_cents => 3333, status => 'pending',
+        instalment_seq => 2, instalment_count => 3, stripe_schedule_id => 'sub_sched_to_cancel',
+        entitlement_id => $c->{entitlement}->id } );
+
+    my ( $tries, @cancelled ) = (0);
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::retrieve_subscription_schedule = sub ( $s, $id ) {
+        return { id => $id, status => @cancelled ? 'canceled' : 'active' };
+    };
+    local *Registry::Service::Stripe::cancel_subscription_schedule = sub ( $s, $id, $p = {} ) {
+        die "Connect timeout\n" unless $tries++;
+        push @cancelled, [ $s->stripe_account, $id ];
+        return { id => $id, status => 'canceled' };
+    };
+
+    my $info = run($job);
+    is $info->{state}, 'finished', 'the job finished';
+    is $info->{retries}, 1, 'on its second run';
+    is_deeply \@cancelled, [ [ $account, 'sub_sched_to_cancel' ] ],
+        "the child's schedule is cancelled once, on the studio's account";
+};
+
+subtest 'each job says when it had nothing to do' => sub {
+    my ( $c, $cancel ) = queued('cancel_instalment_schedule');
+    {
+        # Stripe holds nothing for it either.
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::retrieve_payment_intent = sub ( $s, $pi ) { { id => $pi, customer => 'cus_sr' } };
+        local *Registry::Service::Stripe::list_subscription_schedules = sub ( $s, $p ) { { data => [] } };
+        run($cancel);
+    }
+    like $minion->job( $cancel->{id} )->info->{result}, qr/had no instalment schedule to cancel/,
+        'a cancel with no schedule says there was nothing to cancel';
+
+    my $one_time = instalment_checkout( $tdb, slug => $slug, first_date => '2027-03-15' );
+    $tdb->query( q{UPDATE payments SET metadata = jsonb_set(metadata, '{lines,0,kind}', '"one_time"') WHERE id = ?},
+        $one_time->{payment}->id );
+    my ( undef, $schedule ) = queued( 'instalment_schedule', $one_time );
+    run($schedule);
+    like $minion->job( $schedule->{id} )->info->{result}, qr/has no instalments to schedule/,
+        'and a schedule job with none says so';
+};
+
+subtest 'the last failed attempt alerts admins' => sub {
+    my ( $c, $job ) = queued('instalment_schedule');
     @logs = ();
     my $ran = run_against_replayed_500( $job, 'Stripe api_error: An unknown error occurred', [] );
 
     is $ran->{info}{state}, 'failed', 'the job ends failed';
     is scalar @{ $ran->{keys} }, 10, 'after ten attempts';
     is_deeply [ sort keys %{ { map { $_ => 1 } @{ $ran->{keys} } } } ],
-        [ 'instalment_schedule:' . $sale->id . ':schedule' ],
+        [ 'instalment_schedule:' . $c->{entitlement}->id . ':schedule' ],
         'every one under the same key: never a new key';
-    is scalar @{ $ran->{lists} }, 10, 'each attempt first looked for a schedule Stripe made';
-    ok !Registry::DAO::Payment->find( $tdb, { id => $sale->id } )->stripe_schedule_id,
-        'nothing is recorded';
+    is scalar @{ $ran->{lists} }, 11,
+        'each attempt first looked for a schedule Stripe made, and the last looked again to cancel one';
+    is_deeply scheduled($c), [], 'nothing is recorded';
 
-    my $alerts = alerts_for($sale);
+    my $alerts = alerts_for($c);
     is scalar @$alerts, 1, "the tenant's admin is alerted once, at the last attempt";
     like $alerts->[0]{message}, qr/\Q$slug\E/, 'naming the tenant';
-    my @errors = grep { $_->[0] eq 'error' && $_->[1] =~ /\Q${\ $sale->id }\E/ } @logs;
+    my @errors = grep { $_->[0] eq 'error' && $_->[1] =~ /\Q${\ $c->{entitlement}->id }\E/ } @logs;
     is scalar @errors, 1, 'and the platform log says so once at error';
     like $errors[0][1] // '', qr/\Q$slug\E/, 'naming the tenant';
+};
+
+subtest 'the last failed cancel attempt alerts admins' => sub {
+    my ( $c, $job ) = queued('cancel_instalment_schedule');
+    $tdb->insert( 'payments', { user_id => $c->{parent}, amount_cents => 3333, status => 'pending',
+        instalment_seq => 2, instalment_count => 3, stripe_schedule_id => 'sub_sched_stuck',
+        entitlement_id => $c->{entitlement}->id } );
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::retrieve_subscription_schedule = sub ( $s, $id ) {
+        return { id => $id, status => 'active' };
+    };
+    local *Registry::Service::Stripe::cancel_subscription_schedule = sub ( $s, $id, $p = {} ) {
+        die "Stripe api_error: An unknown error occurred\n";
+    };
+
+    is run($job)->{state}, 'failed', 'the job ends failed';
+    my $alerts = alerts_for($c);
+    is scalar @$alerts, 1, "the tenant's admin is alerted once";
+    like $alerts->[0]{subject}, qr/could not be cancelled/, 'that the instalments were not cancelled';
+};
+
+# Stripe makes the schedule on every attempt (the first; later ones adopt
+# it), but recording it here dies every time: a trigger refuses the rows.
+# The cancel at Stripe answers $cancel. Runs $job to its end.
+sub made_but_never_recorded ( $c, $job, $cancel ) {
+    my $eid = $c->{entitlement}->id;
+    $tdb->query( q{CREATE OR REPLACE FUNCTION refuse_rows() RETURNS trigger LANGUAGE plpgsql AS
+        $$ BEGIN IF NEW.entitlement_id::text = TG_ARGV[0] THEN RAISE EXCEPTION 'disk full'; END IF; RETURN NEW; END $$} );
+    $tdb->query( qq{CREATE TRIGGER refuse_rows_$$ BEFORE INSERT ON payments FOR EACH ROW EXECUTE FUNCTION refuse_rows('$eid')} );
+    my @at;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::retrieve_payment_intent = sub ( $s, $pi ) {
+        return { id => $pi, customer => 'cus_sr', payment_method => 'pm_sr' };
+    };
+    local *Registry::Service::Stripe::create_product = sub ( $s, $p ) { { id => 'prod_sr' } };
+    local *Registry::Service::Stripe::list_subscription_schedules = sub ( $s, $p ) { { data => [@at] } };
+    local *Registry::Service::Stripe::create_subscription_schedule = sub ( $s, $p ) {
+        push @at, { id => 'sub_sched_unrecorded', status => 'not_started', customer => 'cus_sr',
+            metadata => { entitlement_id => $eid },
+            default_settings => { application_fee_percent => $p->{'default_settings[application_fee_percent]'} },
+            phases => [ map { {} } grep { /\Aphases\[\d+\]\[iterations\]\z/ } keys %$p ] };
+        return $at[-1];
+    };
+    local *Registry::Service::Stripe::cancel_subscription_schedule = sub ( $s, $id, $p = {} ) {
+        die "Stripe api_error: An unknown error occurred\n" unless $cancel eq 'works';
+        $_->{status} = 'canceled' for grep { $_->{id} eq $id } @at;
+        return { id => $id, status => 'canceled' };
+    };
+    my $info = run($job);
+    $tdb->query(qq{DROP TRIGGER refuse_rows_$$ ON payments});
+    return ( $info, \@at );
+}
+
+subtest 'a schedule made but never recorded is cancelled after the last attempt' => sub {
+    my ( $c, $job ) = queued('instalment_schedule');
+    my ( $info, $at ) = made_but_never_recorded( $c, $job, 'works' );
+    is $info->{state}, 'failed', 'the job ends failed';
+    is $at->[0]{status}, 'canceled', 'and the schedule left at Stripe is cancelled';
+    my $alerts = alerts_for($c);
+    is scalar @$alerts, 1, 'the admins are told once';
+    like $alerts->[0]{message}, qr/cancelled.*will not be charged/s, 'that it was cancelled, so nothing more is charged';
+};
+
+subtest 'when that cancel fails too, the admins are told the family may still be charged' => sub {
+    my ( $c, $job ) = queued('instalment_schedule');
+    my ( $info, $at ) = made_but_never_recorded( $c, $job, 'fails' );
+    is $at->[0]{status}, 'not_started', 'the schedule at Stripe is still live';
+    my $alerts = alerts_for($c);
+    is scalar @$alerts, 1, 'the admins are told once';
+    like $alerts->[0]{message}, qr/may still be charged/, 'that the family may still be charged';
+    like $alerts->[0]{message}, qr/sub_sched_unrecorded/, 'naming the schedule';
+    unlike $alerts->[0]{message}, qr/will not be charged/, 'and not that it will not be';
+};
+
+# Nothing to cancel, and no reason to ask Stripe: a pay-in-full child, or a
+# charge made on no Stripe account.
+subtest 'a cancel for an entitlement not paid in instalments asks Stripe nothing' => sub {
+    my $one_time = instalment_checkout( $tdb, slug => $slug, first_date => '2027-03-15' );
+    $tdb->query( q{UPDATE payments SET metadata = jsonb_set(metadata, '{lines,0,kind}', '"one_time"') WHERE id = ?},
+        $one_time->{payment}->id );
+    my $unpaid_online = instalment_checkout( $tdb, first_date => '2027-03-15' );
+    for my $c ( $one_time, $unpaid_online ) {
+        my ( undef, $job ) = queued( 'cancel_instalment_schedule', $c );
+        my $info = run($job);    # Stripe is not stubbed: any call would fail the job
+        is $info->{state}, 'finished', 'the cancel finishes';
+        like $info->{result}, qr/had no instalment schedule to cancel/, 'with nothing to cancel';
+    }
 };
 
 done_testing;

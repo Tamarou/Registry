@@ -152,8 +152,10 @@ class Registry::Service::Stripe {
         return $self->_request_async('POST', "payment_intents/$intent_id/confirm", $params);
     }
     
-    method cancel_payment_intent_async($intent_id) {
-        return $self->_request_async('POST', "payment_intents/$intent_id/cancel");
+    method cancel_payment_intent_async($intent_id, $params = {}) {
+        my %p  = %$params;
+        my $ik = delete $p{_idempotency_key};
+        return $self->_request_async('POST', "payment_intents/$intent_id/cancel", \%p, $ik);
     }
     
     # Customers API
@@ -215,7 +217,9 @@ class Registry::Service::Stripe {
     }
     
     method cancel_subscription_async($subscription_id, $params = {}) {
-        return $self->_request_async('DELETE', "subscriptions/$subscription_id", $params);
+        my %p  = %$params;
+        my $ik = delete $p{_idempotency_key};
+        return $self->_request_async('DELETE', "subscriptions/$subscription_id", \%p, $ik);
     }
 
     # Subscription Schedules API
@@ -243,8 +247,16 @@ class Registry::Service::Stripe {
         return $self->_request_async('GET', 'subscription_schedules', $params);
     }
 
+    method update_subscription_schedule_async($schedule_id, $params) {
+        my %p  = %$params;
+        my $ik = delete $p{_idempotency_key};
+        return $self->_request_async('POST', "subscription_schedules/$schedule_id", \%p, $ik);
+    }
+
     method cancel_subscription_schedule_async($schedule_id, $params = {}) {
-        return $self->_request_async('POST', "subscription_schedules/$schedule_id/cancel", $params);
+        my %p  = %$params;
+        my $ik = delete $p{_idempotency_key};
+        return $self->_request_async('POST', "subscription_schedules/$schedule_id/cancel", \%p, $ik);
     }
 
     # Invoices API (for subscription payment tracking)

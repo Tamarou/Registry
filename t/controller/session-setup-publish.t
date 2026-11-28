@@ -297,4 +297,33 @@ subtest 'a sibling offer retired after the conditions step is refused at publish
     ok !Registry::DAO::Offer->find( $db, { name => 'Camp late sibling' } ), 'no offer is made';
 };
 
+subtest 'a session price of $0 is refused' => sub {
+    my ($program) = Registry::DAO::Project->find( $db, { name => 'Lake camp' } );
+    $t->get_ok('/session-setup')->status_is(200);
+    submit_step( 'program', program_mode => 'existing', project_id => $program->id, location_id => $site->id );
+    submit_step( 'sessions', action => 'continue' );
+    like submit_step( 'offer-basics', resource_ids => [ map { $_->id } @sessions ], offer_name => 'Camp free' ),
+        qr{/offer-price\z};
+    like submit_step( 'offer-price', price_cents => 0, currency => 'USD', units_per_acceptance => 1, per_booking_cap => 1 ),
+        qr{/offer-price\z}, 'the step stays';
+    $t->content_like( qr/A session needs a price above \$0/, 'and says why' );
+};
+
+subtest 'a session price of $0 is refused at publish' => sub {
+    to_conditions('Camp zeroed');
+    submit_step( 'conditions', sibling => 'none' );
+    submit_step( 'one-time-payment', one_time => 'offered' );
+    submit_step( 'instalment-payment', instalments => 'declined' );
+    submit_step( 'refund-policy', refund => 'none', approval => 'none' );
+    submit_step( 'change-policy', change => 'none' );
+    submit_step( 'use-policy', use => 'none' );
+    like submit_step( 'expiry-policy', expiry => 'end_of_occurrence' ), qr{/publish\z}, 'at the review';
+    # The price as a run carried past its step could hold it.
+    my $run = this_run();
+    $run->update_data( $db, { offer_price => { %{ $run->data->{offer_price} }, price_cents => 0 } } );
+    like submit_step( 'publish', action => 'publish' ), qr{/publish\z}, 'publish stays';
+    $t->content_like( qr/A session needs a price above \$0/, 'and says why' );
+    ok !Registry::DAO::Offer->find( $db, { name => 'Camp zeroed' } ), 'no offer is made';
+};
+
 done_testing;

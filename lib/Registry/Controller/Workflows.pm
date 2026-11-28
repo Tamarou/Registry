@@ -144,9 +144,13 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         # agreed_terms_version is the /terms version a booking is stamped with;
         # only Registry::Terms::record_agreement writes it.
         # booking_refund names the payment CompleteBooking refunds; only it writes it.
+        # cart_lines is a session cart's children, sessions, prices and plans;
+        # only SessionCart writes it, once every line is one it would offer.
+        # cart_holds names the hold each cart line converts; only HoldSessionSeats writes it.
+        # checkout_outcome is each cart line booked or refunded; only CompleteSessionCheckout writes it.
         for my $key ( keys %$data ) {
             delete $data->{$key}
-                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_offer_version|__remote_address|stripe_account_id|tenant|change_hold|change_entitlement_id|change_targets|change_needs_admin|owed_payment|owed_payment_id|__driver|retry|stripe_event_id|refund_entitlement_id|booking_hold|agreed_terms_version|booking_refund)(?:\[|\z)/;
+                if $key =~ /\A(?:user|user_id|__tenant_slug|selected_offer_version|__remote_address|stripe_account_id|tenant|change_hold|change_entitlement_id|change_targets|change_needs_admin|owed_payment|owed_payment_id|__driver|retry|stripe_event_id|refund_entitlement_id|booking_hold|agreed_terms_version|booking_refund|cart_lines|cart_holds|checkout_outcome)(?:\[|\z)/;
         }
 
         # Mojolicious fills remote_address from X-Forwarded-For only in
@@ -194,6 +198,23 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
           if $run && $data->{__tenant_slug};
 
         return $data;
+    }
+
+    method _record_signed_in_user ( $run, $step ) {
+        # If the authenticated user is not yet recorded in this run's data,
+        # store them now so that the account-check step can render the
+        # "already logged in" branch.
+        #
+        # This mutates run data on a GET. It is safe: idempotent (guarded by
+        # !$run->data->{user_id}), scoped to an AccountCheck step (by class, not
+        # slug: in-studio-booking's is `account`), and merely records the
+        # already-authenticated session user — no external effect.
+        return $run unless $step && $step isa Registry::DAO::WorkflowSteps::AccountCheck;
+        my $current_user = $self->stash('current_user');
+        return $run unless ref $current_user && $current_user->{id} && !$run->data->{user_id};
+        $run->update_data( $self->dao->db, { user_id => $current_user->{id},
+            user_name => $current_user->{name} || '', user_email => $current_user->{email} || '' } );
+        return $run;
     }
 
     method index() {
@@ -244,6 +265,8 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
             || $workflow->first_step($dao->db);
 
         return unless $step;
+        # session-checkout starts at its account step.
+        $run = $self->_record_signed_in_user( $run, $step );
 
         my $data_json = Mojo::JSON::encode_json($run->data || {});
         my $errors_json = Mojo::JSON::encode_json($self->flash('validation_errors') || []);
@@ -447,31 +470,7 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
                 { payment_intent_id => $intent } );
         }
 
-        # If the authenticated user is not yet recorded in this run's data,
-        # store them now so that the account-check step can render the
-        # "already logged in" branch.
-        #
-        # This mutates run data on a GET. It is safe: idempotent (guarded by
-        # !$run->data->{user_id}), scoped to an AccountCheck step (by class, not
-        # slug: in-studio-booking's is `account`), and merely records the
-        # already-authenticated session user — no external effect.
-        if ($step && $step isa Registry::DAO::WorkflowSteps::AccountCheck) {
-            my $current_user = $self->stash('current_user');
-            if ($current_user && !$run->data->{user_id}) {
-                my $uid  = ref $current_user ? $current_user->{id} : undef;
-                my $name = ref $current_user ? ($current_user->{name} || '') : '';
-                my $email = ref $current_user ? ($current_user->{email} || '') : '';
-                if ($uid) {
-                    $dao->db->query(
-                        q{UPDATE workflow_runs SET data = COALESCE(data,'{}') || ?::jsonb WHERE id = ?},
-                        Mojo::JSON::encode_json({ user_id => $uid, user_name => $name, user_email => $email }),
-                        $run->id,
-                    );
-                    # Reload run so $run->data is fresh for template rendering.
-                    ($run) = $dao->find(WorkflowRun => { id => $run->id });
-                }
-            }
-        }
+        $run = $self->_record_signed_in_user( $run, $step );
 
         # Get data for rendering.
         #
@@ -599,8 +598,32 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         return $self->_render_step_result( $run, $step, $result );
     }
 
+    # Queues the run's driver (Job::ContinueWorkflowRun) to carry it on with
+    # nobody present, with the attempts the Connect webhook gives it. A queue
+    # that refuses is logged and put before the tenant's admins.
+    method _drive_later ($run) {
+        my $slug = $run->data->{__tenant_slug} // 'registry';
+        try {
+            $self->app->minion->enqueue( continue_workflow_run =>
+                [ { tenant => $slug, run_id => $run->id } ], { attempts => 3 } );
+        }
+        catch ($e) {
+            $self->app->log->error( 'Workflow: could not queue continue_workflow_run for run '
+                  . $run->id . ': ' . ( $e =~ s/\s+\z//r ) );
+            require Registry::DAO::Notification;
+            Registry::DAO::Notification->alert_admins( $self->dao->db,
+                'A checkout was not carried on: finish it by hand',
+                sprintf( 'Workflow run %s has Stripe work to finish (such as a refund) but its driver could not '
+                    . 'be queued. Continue it by hand.', $run->id ), { workflow_run_id => $run->id } );
+        }
+    }
+
     method _render_step_result ( $run, $step, $result ) {
         my $dao = $self->dao;
+
+        # A step that could not finish its Stripe work (a refund that failed)
+        # asks to be retried; nobody may come back, so the run's driver does.
+        $self->_drive_later($run) if $result->{retry};
 
         # Check for validation errors from workflow steps.
         # Steps may use either '_validation_errors' or 'errors' key.
@@ -681,6 +704,17 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
             my $next = $run->next_step( $dao->db );
             last unless $next && $next->can('nothing_to_ask') && $next->nothing_to_ask( $dao->db, $run );
             my $passed = $run->process( $dao->db, $next, {} );
+            # Not waited on here: Stripe work in flight (a promise, such as a
+            # refund) that fails, or a step asking to be retried, is finished
+            # by the run's driver, which re-enters the step; its work is keyed.
+            # Queued only then, so a driver never races work that succeeds.
+            if ( $passed isa Mojo::Promise ) {
+                $passed->then(
+                    sub ($settled) { $self->_drive_later($run) if ref $settled eq 'HASH' && $settled->{retry} },
+                    sub (@)        { $self->_drive_later($run) },
+                );
+            }
+            elsif ( ref $passed eq 'HASH' && $passed->{retry} ) { $self->_drive_later($run) }
             last if ref $passed ne 'HASH' || $passed->{errors} || $passed->{stay} || $passed->{redirect};
         }
 

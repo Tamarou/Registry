@@ -1,0 +1,59 @@
+%# ABOUTME: session-checkout step: the parent pays the cart's one charge, every child's first share, while the seats are held.
+%# ABOUTME: Posting starts the charge on the studio's own account; a cart with an instalment child says its card is kept.
+% extends 'layouts/workflow';
+% title 'Pay for your cart';
+% my $owed = $run ? ( $run->data // {} )->{owed_payment} // {} : {};
+% my $step_data = stash('step_data') // {};
+% my $amount = sprintf '%.2f', ( $owed->{amount_cents} // 0 ) / 100;
+% my $saves_card = grep { ref $_ eq 'HASH' && ( $_->{kind} // '' ) eq 'instalments' } @{ ref $owed->{lines} eq 'ARRAY' ? $owed->{lines} : [] };
+%= include 'in-studio-booking/_errors'
+
+% if (@{ stash('errors') // [] }) {
+%# Refused (a lapsed hold, checkout closed): a way out. A new run each time,
+%# so a POST: a GET of the workflow resumes this run, still at payment.
+<form method="POST" action="<%= url_for('workflow_start', workflow => 'session-checkout') %>">
+  <div class="form-actions">
+    <button type="submit" class="btn btn-secondary">Start a new checkout</button>
+  </div>
+</form>
+% }
+
+<section class="card">
+  <p>Due today: $<%= $amount %></p>
+  % if ($saves_card) {
+  <p>Your card is kept on file with the studio to pay the later instalments on their due dates.</p>
+  % }
+  % if (my $message = $step_data->{message}) {
+  <p><%= $message %></p>
+  % }
+</section>
+
+% if ($step_data->{show_stripe_form}) {
+<form id="payment-form">
+  <div id="payment-element"></div>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Pay $<%= $amount %></button>
+  </div>
+</form>
+<script src="https://js.stripe.com/v3/"></script>
+<script>
+  // A direct charge's intent confirms only on the seller's account it was created on.
+  const stripe = Stripe(<%== Mojo::JSON::encode_json($ENV{STRIPE_PUBLISHABLE_KEY} // '') %>,
+    { stripeAccount: <%== Mojo::JSON::encode_json($step_data->{stripe_account} // '') %> });
+  const elements = stripe.elements({ clientSecret: <%== Mojo::JSON::encode_json($step_data->{client_secret} // '') %> });
+  elements.create('payment').mount('#payment-element');
+  document.getElementById('payment-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const { error } = await stripe.confirmPayment({ elements, confirmParams: {
+      return_url: <%== Mojo::JSON::encode_json(url_for('workflow_step', workflow => 'session-checkout', run => $run->id, step => 'payment')->to_abs->to_string) %>,
+    } });
+    if (error) alert(error.message);
+  });
+</script>
+% } else {
+<form method="POST" action="<%= $action %>">
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Pay $<%= $amount %></button>
+  </div>
+</form>
+% }
