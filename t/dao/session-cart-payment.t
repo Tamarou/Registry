@@ -155,4 +155,20 @@ subtest 'without a stripe key the charge is refused' => sub {
         "each child's seat stays held";
 };
 
+subtest 'one lapsed hold refuses the whole charge' => sub {
+    my ( $run, $pay ) = mixed_cart();
+    my ( $a, $b ) = map { $_->{hold_id} } data_of($run)->{owed_payment}{lines}->@*;
+    # B's seat lapsed while the parent was away; A's is still held.
+    $db->query( q{UPDATE holds SET expires_at = clock_timestamp() - interval '1 minute' WHERE id = ?}, $b );
+    my $a_expires = $db->query( 'SELECT expires_at FROM holds WHERE id = ?', $a )->array->[0];
+
+    my ( $out, $customers, $intents ) = charge( $run, $pay );
+    is_deeply $out->{errors}, ['The seats held for this payment lapsed. Nothing has been charged.'], 'refused';
+    is $db->query( 'SELECT state FROM holds WHERE id = ?', $b )->array->[0], 'released', "B's lapsed hold is released";
+    is $db->query( 'SELECT state FROM holds WHERE id = ?', $a )->array->[0], 'held', "A's stays held";
+    is $db->query( 'SELECT expires_at FROM holds WHERE id = ?', $a )->array->[0], $a_expires, 'and is not extended';
+    is scalar(@$customers) + scalar(@$intents), 0, 'nothing is sent to Stripe';
+    is scalar @{ payments_of($run) }, 0, 'and no payment row is written';
+};
+
 done_testing;
