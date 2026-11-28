@@ -296,7 +296,13 @@ sub b3_rows ($run) {
         is Registry::DAO::Payment->find( $db, { id => $declined } )->status, 'failed',
             'the declined charge is recorded as failed';
 
+        my @cancelled;
+        local *Registry::Service::Stripe::cancel_payment_intent_async = sub ($s, $id, $key = undef) {
+            push @cancelled, $id;
+            return Mojo::Promise->resolve({ id => $id, status => 'canceled' });
+        };
         settle($run->process($db, $step, {}));
+        is_deeply \@cancelled, ['pi_b3_ac2_1'], 'the declined intent is cancelled before the retry';
         isnt b3_payment_id($run), $declined, 'the retry is its own payment row';
         is scalar @keys, 2, 'one intent per attempt';
         isnt $keys[1], $keys[0],
@@ -339,9 +345,9 @@ sub b3_rows ($run) {
         cmp_ok( Registry::DAO::Payment->find($db, { id => $payment_id })->amount_cents, q{==}, 10000,
             q{first submit: single-child cart totals 10000 cents} );
 
-        # The owed lines change under the started charge (shares re-split).
+        # The owed lines change under the started charge (another child's line).
         my $owed = $run->data->{owed_payment};
-        $owed->{lines}[0]{parts} = [ { amount_cents => 10000, due_date => '2099-01-01' } ];
+        $owed->{lines}[0]{family_member_id} = '00000000-0000-4000-8000-000000000001';
         $run->update_data($db, { owed_payment => $owed });
 
         my $out = settle($run->process($db, $step, {}));

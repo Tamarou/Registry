@@ -152,8 +152,8 @@ class Registry::Service::Stripe {
         return $self->_request_async('POST', "payment_intents/$intent_id/confirm", $params);
     }
     
-    method cancel_payment_intent_async($intent_id) {
-        return $self->_request_async('POST', "payment_intents/$intent_id/cancel");
+    method cancel_payment_intent_async($intent_id, $idempotency_key = undef) {
+        return $self->_request_async('POST', "payment_intents/$intent_id/cancel", {}, $idempotency_key);
     }
     
     # Customers API

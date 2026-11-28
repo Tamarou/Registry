@@ -199,4 +199,71 @@ subtest 'a share that disagrees with its price is refused with no row written' =
     }
 };
 
+# A cart whose first card was declined: the run, its payment step, and the
+# declined payment whose intent is pi_cart_1. %stripe swaps further service
+# methods for the retry.
+sub declined_cart () {
+    my ( $run, $pay ) = mixed_cart();
+    charge( $run, $pay );
+    my $declined = Registry::DAO::Payment->find( $db, { id => data_of($run)->{owed_payment_id} } );
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::retrieve_payment_intent_async = sub ( $s, $id ) {
+        Mojo::Promise->resolve( { id => $id, status => 'requires_payment_method',
+            last_payment_error => { message => 'Your card was declined.' } } );
+    };
+    settle( $run->process( $db, $pay, { payment_intent_id => 'pi_cart_1' } ) );
+    is $declined->stripe_payment_intent_id, 'pi_cart_1', 'the first intent was pi_cart_1';
+    return ( $run, $pay, Registry::DAO::Payment->find( $db, { id => $declined->id } ) );
+}
+
+subtest 'a retry after a decline cancels the declined intent first' => sub {
+    my ( $run, $pay, $declined ) = declined_cart();
+    is $declined->status, 'failed', 'declined';
+    my @cancelled;
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::cancel_payment_intent_async = sub ( $s, $id, $key = undef ) {
+        push @cancelled, [ $id, $key, $s->stripe_account ];
+        Mojo::Promise->resolve( { id => $id, status => 'canceled' } );
+    };
+    my ( $out, $customers, $intents ) = charge( $run, $pay );
+    ok !$out->{errors}, 'a new card form is offered' or diag explain $out;
+    is_deeply \@cancelled, [ [ 'pi_cart_1', 'pi-cancel:pi_cart_1', $declined->metadata->{stripe_account_id} ] ],
+        "the declined intent is cancelled once, under its own key, on the seller's account";
+    is scalar @$intents, 1, 'then one new intent';
+    isnt data_of($run)->{owed_payment_id}, $declined->id, 'for a new payment row';
+};
+
+subtest 'a declined intent that succeeded meanwhile is taken as paid' => sub {
+    my ( $run, $pay, $declined ) = declined_cart();
+    no warnings 'redefine';
+    # Another tab confirmed the first intent after all: Stripe will not cancel it.
+    local *Registry::Service::Stripe::cancel_payment_intent_async = sub ( $s, $id, $key = undef ) {
+        Mojo::Promise->reject("Stripe invalid_request_error: You cannot cancel this PaymentIntent because it has a status of succeeded.");
+    };
+    local *Registry::Service::Stripe::retrieve_payment_intent_async = sub ( $s, $id ) {
+        Mojo::Promise->resolve( { id => $id, status => 'succeeded', amount => 39000,
+            payment_method => 'pm_card', metadata => { payment_id => $declined->id } } );
+    };
+    my ( $out, $customers, $intents ) = charge( $run, $pay );
+    ok !$out->{errors} && !$out->{stay}, 'the run is handed on' or diag explain $out;
+    is scalar @$intents, 0, 'no new intent is made';
+    is Registry::DAO::Payment->find( $db, { id => $declined->id } )->status, 'completed', 'the first payment is completed';
+    is scalar @{ payments_of($run) }, 1, 'and no second row is written';
+};
+
+subtest 'a declined intent still processing is waited on' => sub {
+    my ( $run, $pay, $declined ) = declined_cart();
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::cancel_payment_intent_async = sub ( $s, $id, $key = undef ) {
+        Mojo::Promise->reject("Stripe invalid_request_error: You cannot cancel this PaymentIntent because it has a status of processing.");
+    };
+    local *Registry::Service::Stripe::retrieve_payment_intent_async = sub ( $s, $id ) {
+        Mojo::Promise->resolve( { id => $id, status => 'processing', metadata => { payment_id => $declined->id } } );
+    };
+    my ( $out, $customers, $intents ) = charge( $run, $pay );
+    is_deeply $out->{errors}, ['Your earlier payment is still being processed. Nothing more has been charged.'], 'refused';
+    is scalar @$intents, 0, 'no new intent is made';
+    is scalar @{ payments_of($run) }, 1, 'and no second row';
+};
+
 done_testing;

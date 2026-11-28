@@ -1,5 +1,5 @@
 # ABOUTME: Gated real-Stripe proof that a session cart with an instalment child is one direct charge on the seller's account.
-# ABOUTME: The charge carries the revenue-share fee and saves the card on the payer's customer there, for the later instalments.
+# ABOUTME: It carries the revenue-share fee and saves the card for later instalments; a retry cancels the declined intent there.
 BEGIN { $ENV{EMAIL_SENDER_TRANSPORT} = 'Test' }
 
 use 5.42.0;
@@ -94,6 +94,32 @@ subtest 'the cart is one charge that saves the card on the connected account' =>
         Registry::DAO::Payment::application_fee_cents( 39000, platform_terms_for_tenant( $db, $slug )->{fraction} ),
         "with the tenant's revenue share of it";
     ok !$charge->{transfer_data}, 'a direct charge, with no transfer_data';
+};
+
+subtest 'paying again after a decline cancels the declined intent on the connected account' => sub {
+    my $s2 = make_session( $tdb, days => [ map { days_from_now($_) } 30 .. 32 ] );
+    my ( $retry_run, $retry_pay ) = held_cart( $tdao, $parent->id,
+        [ $kid->id, $s2->id, session_offer( $tdb, $s2, price_cents => 30000 )->id, 'pay' ] );
+    my $payment_of = sub {
+        Registry::DAO::Payment->find( $tdb,
+            { id => Registry::DAO::WorkflowRun->find( $tdb, { id => $retry_run->id } )->data->{owed_payment_id} } );
+    };
+
+    settle( $retry_run->process( $tdb, $retry_pay, {} ) );
+    my $declined = $payment_of->()->stripe_payment_intent_id;
+    like $declined, qr/^pi_/, 'a real intent was created';
+    ok !eval { Test::Registry::StripeConfirm::confirm( $declined, 'pm_card_chargeDeclined', $acct ); 1 },
+        'Stripe declines the card';
+    settle( $retry_run->process( $tdb, $retry_pay, { payment_intent_id => $declined } ) );
+    is $payment_of->()->status, 'failed', 'the return records the decline';
+
+    my $again = settle( $retry_run->process( $tdb, $retry_pay, {} ) );
+    ok !$again->{errors}, 'paying again offers a new card form' or diag explain $again;
+    is Test::Registry::StripeConfirm::payment_intent( $declined, $acct )->{status}, 'canceled',
+        'the declined intent is cancelled on the connected account';
+    my $fresh = $payment_of->()->stripe_payment_intent_id;
+    like $fresh, qr/^pi_/, 'a new intent replaces it';
+    isnt $fresh, $declined, 'a different one';
 };
 
 done_testing;

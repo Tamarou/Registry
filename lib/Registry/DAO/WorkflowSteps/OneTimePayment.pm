@@ -14,6 +14,7 @@ use Registry::PriceOps::Hold;
 my $UUID = qr/\A[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\z/i;
 
 my $UNAVAILABLE = 'This payment cannot be taken right now. Nothing has been charged.';
+my $STILL_PROCESSING = 'Your earlier payment is still being processed. Nothing more has been charged.';
 
 # What is owed is read from the run's owed_payment, which the step before this
 # one writes and the controller never accepts from a request: { offer_version_id,
@@ -38,6 +39,47 @@ method process ( $db, $form_data, $run = undef ) {
     if ( my $refusal = $self->hold_for_charge( $db, $run ) ) {
         return $self->_stay( errors => [$refusal] );
     }
+
+    # A declined charge is replaced by a new one: its intent is cancelled
+    # first, so a second tab cannot confirm it beside the new one.
+    my $declined = $ENV{STRIPE_SECRET_KEY} && $self->_run_payment( $db, $run );
+    return $self->_charge( $db, $run )
+        unless $declined && $declined->status eq 'failed' && $declined->stripe_payment_intent_id;
+    return $self->_retire_intent( $db, $run, $declined )->then(
+        sub ($paid) { $paid ? {} : $self->_charge( $db, $run ) },
+        sub ($why)  { $self->_stay( errors => [ index( $why, $STILL_PROCESSING ) == 0 ? $STILL_PROCESSING
+                                                   : "Payment processing error: $why" ] ) },
+    );
+}
+
+
+# _retire_intent($db, $run, $payment) -> Promise(paid?)
+#
+# Cancels $payment's intent on the seller's account, under one key per
+# intent. Stripe refuses to cancel one that succeeded or is settling; then
+# its status decides: a succeeded intent settles $payment (paid, so nothing
+# new is charged), a processing or authorised one is waited on, and any
+# other (already cancelled) is replaced.
+method _retire_intent ( $db, $run, $payment ) {
+    my $client    = $payment->stripe_client;
+    my $intent_id = $payment->stripe_payment_intent_id;
+    return $client->cancel_payment_intent_async( $intent_id, "pi-cancel:$intent_id" )->then(
+        sub (@) { 0 },
+        sub (@) {
+            $client->retrieve_payment_intent_async($intent_id)->then( sub ($intent) {
+                my $status = $intent->{status} // '';
+                return $payment->process_payment_async( $db, $intent_id )->then( sub (@) {
+                    $self->_paid( $db, $run ) ? 1 : die "the earlier payment $intent_id succeeded but does not match this cart\n";
+                } ) if $status eq 'succeeded';
+                die "$STILL_PROCESSING\n" if $status eq 'processing' || $status eq 'requires_capture';
+                return 0;
+            } );
+        },
+    );
+}
+
+# The charge: what is owed, as a pending payment, and its intent.
+method _charge ( $db, $run ) {
     my $owed = $self->owed_payment( $db, $run );
     return $self->_stay( errors => $owed->{errors} ) if $owed->{errors};
     my $payment = $owed->{payment};

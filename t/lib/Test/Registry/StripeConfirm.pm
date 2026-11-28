@@ -138,6 +138,12 @@ package Test::Registry::StripeConfirm {
 
     # The PaymentMethod $pm_id as $account holds it: its customer, once a
     # confirmation saved it for later use.
+    # The PaymentIntent $pi_id as $account holds it.
+    sub payment_intent {
+        my ($pi_id, $account) = @_;
+        return _get("/payment_intents/$pi_id", $account);
+    }
+
     sub payment_method {
         my ($pm_id, $account) = @_;
         return _get("/payment_methods/$pm_id", $account);
