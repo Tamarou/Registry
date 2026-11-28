@@ -48,7 +48,13 @@ class Registry::DAO::WorkflowSteps::CompleteSessionCheckout :isa(Registry::DAO::
         my ( %hold, %lost );
         for my $line ( sort { $a->{resource_id} cmp $b->{resource_id} } @lines ) {
             my $key = _key($line);
-            Registry::DAO::Resource->locked( $db, $line->{resource_id} );
+            my $session = Registry::DAO::Resource->locked( $db, $line->{resource_id} );
+            # A session that started while the parent paid is not booked (ruling 7a).
+            unless ( $session->on_sale($db) ) {
+                $db->query( q{UPDATE holds SET state = 'released' WHERE id = ? AND state = 'held'}, $line->{hold_id} );
+                $lost{$key} = 'started';
+                next;
+            }
             my $held = $db->query( "SELECT $live FROM holds WHERE id = ? AND workflow_run_id = ? AND resource_id = ?",
                 $line->{hold_id}, $run->id, $line->{resource_id} )->array;
             if ( $held && $held->[0] ) { $hold{$key} = $line->{hold_id}; next }
@@ -240,6 +246,7 @@ class Registry::DAO::WorkflowSteps::CompleteSessionCheckout :isa(Registry::DAO::
     my %WHY = (
         full    => '%2$s had no room left for %1$s by the time the payment went through',
         sibling => "%1\$s's price was for a child whose brother or sister also has a place, and that place could not be made",
+        started => '%2$s had already started by the time the payment went through',
         plan_ends_late => "%1\$s's payment plan would end after the last day of %2\$s, as the payment went through on "
             . 'a later day than the seats were held',
     );

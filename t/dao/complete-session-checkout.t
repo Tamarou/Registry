@@ -298,4 +298,21 @@ subtest 'a plan the charge date pushes past the session is refunded as a lost li
     ok( ( grep { $_->{user_id} eq $admin->id } notes_for($run)->@* ), 'and the admins' );
 };
 
+subtest 'a session that started while the parent paid is refunded, not booked' => sub {
+    my $s = session();
+    my ( $run, $pay ) = cart( [ $kid, $s, full_price($s), 'pay' ] );
+    my $payment = started_charge( $db, $run, $pay );
+    $db->query( q{UPDATE events SET time = clock_timestamp() - interval '1 hour'
+                   WHERE session_resource_id = ? AND time = (SELECT min(time) FROM events WHERE session_resource_id = ?)},
+        $s->id, $s->id );
+    my $asked = @refunds;
+    post_succeeded( $t, $payment, $account )->status_is(200);
+    drive($minion);
+
+    is scalar entitlements_of($payment)->@*, 0, 'nobody is booked';
+    is_deeply [ map { $_->{amount} } @refunds[ $asked .. $#refunds ] ], [30000], 'the line is refunded';
+    my ($told) = grep { $_->{user_id} eq $parent->id && $_->{type} eq 'general' } notes_for($run)->@*;
+    like $told->{message}, qr/Session \d+ had already started/, 'the parent is told it had started';
+};
+
 done_testing;
