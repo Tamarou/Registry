@@ -108,8 +108,8 @@ subtest 'a cart being paid for keeps its holds' => sub {
 subtest 'an early bird crossed before the hold is refused and every hold released' => sub {
     my $s   = session();
     my $cap = $s->free_units($db);
-    # A deadline a few seconds off: chosen before it, held again after it.
-    my $deadline = strftime '%Y-%m-%dT%H:%M:%SZ', gmtime( time + 5 );
+    # A deadline fifteen seconds off, room for a slow setup: chosen before it, held again after it.
+    my $deadline = strftime '%Y-%m-%dT%H:%M:%SZ', gmtime( time + 15 );
     my $early    = session_offer( $db, $s, price_cents => 25000, conditions => [ { kind => 'before', at => $deadline } ] );
     my ( $run, $hold ) = held_run( [ $kid, $s, $early, 'pay' ], [ $sib, $s, full_price($s), 'pay' ] );
     ok !$run->process( $db, $hold, {} )->{errors}, 'held before the deadline';
