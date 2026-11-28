@@ -90,6 +90,12 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
 
         $db = $db->db if $db isa Registry::DAO;
 
+        # Where the run stood when the step began: its result moves the run on
+        # only from there, so one that settles after another process (the
+        # run's driver) moved the run leaves it where that left it.
+        my $from = $db->query( 'SELECT latest_step_id FROM workflow_runs WHERE id = ?', $id )->array;
+        $from = $from ? $from->[0] : undef;
+
         my $step_result = $step->process( $db, $new_data, $self );
 
         # A step that performs network I/O (the payment step talking to Stripe)
@@ -97,13 +103,13 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
         # daemon's event loop never settles. Persisting its outcome has to wait
         # for it; every other step is unaffected and stays synchronous.
         return $step_result->then( sub ($resolved) {
-            $self->_persist_step_result( $db, $step, $resolved );
+            $self->_persist_step_result( $db, $step, $resolved, $from );
         }) if $step_result isa Mojo::Promise;
 
-        return $self->_persist_step_result( $db, $step, $step_result );
+        return $self->_persist_step_result( $db, $step, $step_result, $from );
     }
 
-    method _persist_step_result ( $db, $step, $step_result ) {
+    method _persist_step_result ( $db, $step, $step_result, $from = undef ) {
         # Don't persist validation errors or advance the step pointer on
         # failure. The controller inspects these keys and redirects; the
         # user retries the same step.
@@ -152,11 +158,15 @@ class Registry::DAO::WorkflowRun :isa(Registry::DAO::Object) {
 
         # Atomic merge of step data + advance latest_step_id in a single query.
         # Avoids the race where a crash between two separate UPDATEs could leave
-        # data updated but latest_step_id stale.
-        my $result = $db->query(
-            'UPDATE workflow_runs SET data = COALESCE(data, \'{}\'::jsonb) || ?::jsonb, latest_step_id = ? WHERE id = ? RETURNING data, latest_step_id',
-            to_json(\%to_persist), $step->id, $id
-        )->expand->hash;
+        # data updated but latest_step_id stale. The pointer moves only from
+        # where the run stood when the step began ($from); moved since by
+        # another process, it is left where that left it.
+        my $result = $db->query( q{
+            UPDATE workflow_runs SET data = COALESCE(data, '{}'::jsonb) || ?::jsonb,
+                   latest_step_id = CASE WHEN latest_step_id IS NOT DISTINCT FROM ?::uuid THEN ?::uuid
+                                         ELSE latest_step_id END
+             WHERE id = ? RETURNING data, latest_step_id
+        }, to_json(\%to_persist), $from, $step->id, $id )->expand->hash;
 
         croak "WorkflowRun id=$id not found during process" unless $result;
 
