@@ -45,7 +45,7 @@ class Registry::DAO::WorkflowSteps::HoldSessionSeats :isa(Registry::DAO::Workflo
         # a price ended or a plan stopped fitting since the cart. The cart
         # listed every line's price, so one it would not list now is no longer
         # offered (an early-bird deadline passed, or a new version replaced it).
-        if ( my $why = $CART->refusal( $db, $data, $lines ) ) {
+        if ( my $why = $CART->refusal( $db, $data, $lines, $run->id ) ) {
             return refuse( $why eq $CART->unlisted
                 ? 'A price in your cart is no longer offered. Go back to your cart and choose again.' : $why );
         }

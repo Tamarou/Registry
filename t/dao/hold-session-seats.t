@@ -15,6 +15,7 @@ use Test::Registry::Sessions qw( make_session session_offer cart_run add_cart_li
 use Test::Registry::Offers qw( instalment_plan );
 use Registry::DAO::Entitlement;
 use Registry::DAO::FamilyMember;
+use Registry::DAO::WorkflowSteps::SessionCart;
 use Registry::DAO::WorkflowRun;
 
 my $test_db = Test::Registry::DB->new;
@@ -149,6 +150,19 @@ subtest 'a child held in another checkout is refused' => sub {
         sprintf( '%s is already being booked into %s in another checkout', $kid->child_name, $s->name ), 'the second is refused';
     is $s->free_units($db), $cap - 1, 'only one seat is held';
     is live_holds($second), 0, 'the second run holds nothing';
+};
+
+subtest "only the run's own holds count as its room" => sub {
+    my $s     = session( capacity => 1 );
+    my $price = full_price($s);
+    my ( $holder, $step ) = held_run( [ $kid, $s, $price, 'pay' ] );
+    ok !$holder->process( $db, $step, {} )->{errors}, 'another run holds the one seat';
+    my $elsewhere = session();
+    my ($other)   = held_run( [ $sib, $elsewhere, full_price($elsewhere), 'pay' ] );
+    # A cart_holds naming the first run's hold is not room for the other run.
+    my $data = { user_id => $parent->id, cart_holds => data_of($holder)->{cart_holds} };
+    my $line = { family_member_id => $sib->id, resource_id => $s->id, offer_version_id => $price->id, payment_plan_id => 'pay' };
+    like Registry::DAO::WorkflowSteps::SessionCart->refusal( $db, $data, [$line], $other->id ), qr/is full/, 'refused';
 };
 
 done_testing;

@@ -36,13 +36,13 @@ class Registry::DAO::WorkflowSteps::SessionCart :isa(Registry::DAO::WorkflowStep
                 family_member_id => $form_data->{family_member_id}, resource_id => $form_data->{resource_id},
                 offer_version_id => $version, payment_plan_id => $plan,
             } ];
-            my $why = __PACKAGE__->refusal( $db, $data, $added );
+            my $why = __PACKAGE__->refusal( $db, $data, $added, $run->id );
             return $why ? { stay => 1, errors => [$why] } : { stay => 1, cart_lines => $added };
         }
         return { stay => 1 } unless $action eq 'checkout';
         return { stay => 1, errors => ['Choose a session for at least one child'] } unless @$lines;
         # Asked again: a session may have filled or a price ended since its line.
-        my $why = __PACKAGE__->refusal( $db, $data, $lines )
+        my $why = __PACKAGE__->refusal( $db, $data, $lines, $run->id )
             // Registry::Terms::record_agreement( $db, $run, $form_data );
         return $why ? { stay => 1, errors => [$why] } : {};
     }
@@ -84,13 +84,13 @@ class Registry::DAO::WorkflowSteps::SessionCart :isa(Registry::DAO::WorkflowStep
     # room for the cart's lines in it, its version is choosable for that child
     # given the earlier lines, its plan is one of that version's and fits, and
     # a child is in a session at most once, never one it already has a place in.
-    # Seats the run already holds for its lines (cart_holds) count as room.
-    sub refusal ( $class, $db, $data, $lines ) {
+    # Seats run $run_id already holds for its lines (cart_holds) count as room.
+    sub refusal ( $class, $db, $data, $lines, $run_id = undef ) {
         my $payer = $data->{user_id};
         return 'Sign in to book' unless defined $payer && !ref $payer && $payer =~ $UUID;
         my %mine = map { $_->id => $_->child_name } Registry::DAO::Family->list_children( $db, $payer )->@*;
         my $at   = $class->now_instant;
-        my %own = $class->own_holds( $db, $data );
+        my %own = $class->own_holds( $db, $data, $run_id );
         my ( @earlier, %seen, %taking );
         for my $line (@$lines) {
             return $UNLISTED
@@ -115,15 +115,17 @@ class Registry::DAO::WorkflowSteps::SessionCart :isa(Registry::DAO::WorkflowStep
         return;
     }
 
-    # Per session, how many of the run's cart_holds are live.
-    sub own_holds ( $class, $db, $data ) {
+    # Per session, how many of run $run_id's cart_holds are live and its own.
+    sub own_holds ( $class, $db, $data, $run_id ) {
         my $held = ref $data->{cart_holds} eq 'HASH' ? $data->{cart_holds} : {};
-        my @ids  = grep { defined && !ref && $_ =~ $UUID } values %$held or return;
+        my @ids  = grep { defined && !ref && $_ =~ $UUID } values %$held;
+        return unless @ids && defined $run_id;
         require Registry::PriceOps::Hold;
         my $live = Registry::PriceOps::Hold->live_sql('holds');
         return map {@$_} $db->query( qq{
-            SELECT resource_id, count(*) FROM holds WHERE id = ANY(?::uuid[]) AND $live GROUP BY resource_id
-        }, \@ids )->arrays->@*;
+            SELECT resource_id, count(*) FROM holds
+             WHERE id = ANY(?::uuid[]) AND workflow_run_id = ? AND $live GROUP BY resource_id
+        }, \@ids, $run_id )->arrays->@*;
     }
 
     # Whether child $child holds a seat in session $resource_id now or later:
