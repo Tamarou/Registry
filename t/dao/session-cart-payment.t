@@ -266,4 +266,20 @@ subtest 'a declined intent still processing is waited on' => sub {
     is scalar @{ payments_of($run) }, 1, 'and no second row';
 };
 
+subtest 'a declined intent already cancelled is replaced by a new charge' => sub {
+    my ( $run, $pay, $declined ) = declined_cart();
+    no warnings 'redefine';
+    local *Registry::Service::Stripe::cancel_payment_intent_async = sub ( $s, $id, $p = {} ) {
+        Mojo::Promise->reject("Stripe invalid_request_error: You cannot cancel this PaymentIntent because it has a status of canceled.");
+    };
+    local *Registry::Service::Stripe::retrieve_payment_intent_async = sub ( $s, $id ) {
+        Mojo::Promise->resolve( { id => $id, status => 'canceled', metadata => { payment_id => $declined->id } } );
+    };
+    my ( $out, $customers, $intents ) = charge( $run, $pay );
+    ok !$out->{errors}, 'a new card form is offered' or diag explain $out;
+    is scalar @$intents, 1, 'for one new intent';
+    isnt data_of($run)->{owed_payment_id}, $declined->id, 'on a new payment row';
+    is Registry::DAO::Payment->find( $db, { id => $declined->id } )->status, 'failed', 'the declined one stays failed';
+};
+
 done_testing;
