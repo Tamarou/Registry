@@ -113,7 +113,8 @@ sub advance ( $clock, $to ) {
 # for each invoice Stripe raised other than the $0 opening one, [ its date,
 # its subtotal, how many proration lines it has ].
 my $ENTITLEMENT = '00000000-0000-4000-8000-0000000000e1';
-sub billed ( $cadence, $first, $count = 3 ) {
+my $last_customer;
+sub billed ( $cadence, $first, $count = 3, $past_the_end = 0 ) {
     my $parts = Registry::PriceOps::Instalments::parts( 10000, { count => $count, cadence => $cadence }, $first );
     my $start = Registry::DAO::Payment::instalment_schedule_start( $cadence, $parts, $first );
     my ( $clock, $cus, $card ) = clocked_customer( noon($first) + 3600 );
@@ -124,10 +125,14 @@ sub billed ( $cadence, $first, $count = 3 ) {
         instalments => [ @{$parts}[ 1 .. $#$parts ] ],
     } ) );
     advance( $clock, noon( $_->{due_date} ) + 2 * 3600 ) for @{$parts}[ 1 .. $#$parts ];
+    # One more period on, where a schedule that had not ended would bill again.
+    advance( $clock, noon( Registry::PriceOps::Instalments::due_dates(
+        { count => $count + 1, cadence => $cadence }, $first )->[-1] ) + 2 * 3600 ) if $past_the_end;
 
     my $sub = $stripe->retrieve_subscription_schedule( $made->{id} )->{subscription};
     $sub = $sub->{id} if ref $sub;
     my $invoices = $stripe->list_invoices( { subscription => $sub, limit => 100 } )->{data} // [];
+    $last_customer = $cus;
     return ( $made, $parts, [ map { [ ymd( $_->{created} ), $_->{subtotal},
                   scalar grep { $_->{proration} } @{ $_->{lines}{data} // [] } ] }
         sort { $a->{created} <=> $b->{created} }
@@ -172,6 +177,16 @@ subtest 'stripe charges month-end instalments on their stored due dates' => sub 
     my ( $made, $parts, $charged ) = eval { billed( monthly => '2027-01-31', 4 ) };
     ok $made, 'started on the checkout date' or do { diag $@; return };
     is_deeply $charged, shown($parts), 'Feb 28, Mar 31 and Apr 30, unprorated';
+};
+
+# $100 in three is 33.33, 33.33, 33.34: a phase change before the last part.
+subtest 'a month-end schedule bills nothing more after its last part' => sub {
+    my ( $made, $parts, $charged ) = eval { billed( monthly => '2027-01-31', 3, 1 ) };
+    ok $made, 'run a month past its last due date' or do { diag $@; return };
+    is_deeply $charged, shown($parts), 'Feb 28 and Mar 31 only, unprorated: no invoice on Apr 30';
+    is $stripe->retrieve_subscription_schedule( $made->{id} )->{status}, 'completed', 'the schedule completed';
+    is $stripe->_await( $stripe->retrieve_customer_async($last_customer) )->{balance}, 0,
+        'and left the family no credit or debit balance';
 };
 
 subtest 'stripe charges a mid-month plan from part two on its stored due dates' => sub {
