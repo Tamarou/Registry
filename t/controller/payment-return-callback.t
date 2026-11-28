@@ -88,6 +88,7 @@ subtest 'Stripe return GET completes the run instead of re-rendering payment' =>
     is step_of($run), 'complete', 'and the run moved past its payment and booked the cart';
     is Registry::DAO::WorkflowRun->find( $db, { id => $run->id } )->next_step($db)->slug, 'done',
         'leaving the done page to show';
+    is drivers($run), 0, 'and with nothing left to finish, no driver is queued';
 };
 
 subtest 'an ordinary GET with no Stripe params still renders the form' => sub {
@@ -168,6 +169,21 @@ subtest 'a line refund made on the return queues no driver and leaves no failure
     my $after = Registry::DAO::Payment->find( $db, { id => $payment->id } );
     is $after->refunded_cents, 10000, 'the refund is recorded';
     ok !exists $after->metadata->{refund_last_failure}, 'and no failure is stamped';
+};
+
+subtest 'a driver that cannot be queued is put before the admins' => sub {
+    my $admin = Test::Registry::Fixtures::create_user( $db, { username => "return_admin_$$", name => 'Admin',
+        email => "return_admin_$$\@example.com", user_type => 'admin' } );
+    my ( $run, $payment ) = lost_line_cart();
+    {
+        no warnings qw( redefine once );
+        local *Minion::enqueue = sub { die "minion is down\n" };
+        return_from_stripe( $run, $payment, sub ( $self, $p ) { Mojo::Promise->reject("Stripe api_error: try later\n") } );
+    }
+    my $told = $db->query( q{SELECT message FROM notifications WHERE user_id = ? AND subject LIKE 'A checkout was not carried on%'},
+        $admin->id )->hashes;
+    is scalar @$told, 1, 'the admins are told once';
+    like $told->[0]{message}, qr/\Q${\ $run->id }\E/, 'naming the run';
 };
 
 subtest 'a line refund that fails on the return is driven again until it is made' => sub {
