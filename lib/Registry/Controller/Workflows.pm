@@ -598,8 +598,32 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
         return $self->_render_step_result( $run, $step, $result );
     }
 
+    # Queues the run's driver (Job::ContinueWorkflowRun) to carry it on with
+    # nobody present, with the attempts the Connect webhook gives it. A queue
+    # that refuses is logged and put before the tenant's admins.
+    method _drive_later ($run) {
+        my $slug = $run->data->{__tenant_slug} // 'registry';
+        try {
+            $self->app->minion->enqueue( continue_workflow_run =>
+                [ { tenant => $slug, run_id => $run->id } ], { attempts => 3 } );
+        }
+        catch ($e) {
+            $self->app->log->error( 'Workflow: could not queue continue_workflow_run for run '
+                  . $run->id . ': ' . ( $e =~ s/\s+\z//r ) );
+            require Registry::DAO::Notification;
+            Registry::DAO::Notification->alert_admins( $self->dao->db,
+                'A checkout was not carried on: finish it by hand',
+                sprintf( 'Workflow run %s has Stripe work to finish (such as a refund) but its driver could not '
+                    . 'be queued. Continue it by hand.', $run->id ), { workflow_run_id => $run->id } );
+        }
+    }
+
     method _render_step_result ( $run, $step, $result ) {
         my $dao = $self->dao;
+
+        # A step that could not finish its Stripe work (a refund that failed)
+        # asks to be retried; nobody may come back, so the run's driver does.
+        $self->_drive_later($run) if $result->{retry};
 
         # Check for validation errors from workflow steps.
         # Steps may use either '_validation_errors' or 'errors' key.
@@ -680,6 +704,11 @@ class Registry::Controller::Workflows :isa(Registry::Controller) {
             my $next = $run->next_step( $dao->db );
             last unless $next && $next->can('nothing_to_ask') && $next->nothing_to_ask( $dao->db, $run );
             my $passed = $run->process( $dao->db, $next, {} );
+            # Not waited on here: a promise (Stripe work in flight, such as a
+            # refund) or a retry is finished by the run's driver, which re-enters
+            # the step; its work is keyed, so a second ask moves nothing twice.
+            $self->_drive_later($run)
+                if $passed isa Mojo::Promise || ( ref $passed eq 'HASH' && $passed->{retry} );
             last if ref $passed ne 'HASH' || $passed->{errors} || $passed->{stay} || $passed->{redirect};
         }
 

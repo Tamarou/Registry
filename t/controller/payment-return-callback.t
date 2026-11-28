@@ -14,7 +14,9 @@ use Test::Registry::Fixtures;
 use Test::Registry::Helpers qw( authenticate_as import_all_workflows days_from_now );
 use Test::Registry::PricingProbe qw( state_platform_terms );
 use Test::Registry::Sessions qw( make_session session_offer held_cart );
+use Registry::DAO::Entitlement;
 use Registry::DAO::FamilyMember;
+use Test::Registry::Async;
 use Registry::DAO::Payment;
 use Registry::DAO::WorkflowRun;
 use Registry::Service::Stripe;
@@ -108,6 +110,62 @@ subtest 'the Stripe params alone do not advance a non-payment step' => sub {
     is $retrieved, 0, 'no intent is looked up';
     is Registry::DAO::Payment->find( $db, { id => $payment->id } )->status, 'pending', 'nothing is settled';
     is step_of($run), 'hold', 'and the run stays where it was';
+};
+
+# Two children in a two-seat session; the second's hold lapsed while the parent
+# paid and another family took the seat. The return settles the charge, and the
+# controller completes the checkout: Kid is booked, Sib's line is refunded.
+subtest 'a line refund that fails on the return is driven again until it is made' => sub {
+    my ( $kid, $sib ) = map { Registry::DAO::FamilyMember->create( $db, {
+        family_id => $parent->id, child_name => "$_ $$", birth_date => '2016-01-01' } ) } qw( Kid Sib );
+    my $s = make_session( $db, capacity => 2, days => [ map { days_from_now($_) } 30 .. 32 ] );
+    my $v = session_offer( $db, $s, price_cents => 10000 );
+    my ( $run, $pay ) = held_cart( $dao, $parent->id, map { [ $_->id, $s->id, $v->id, 'pay' ] } $kid, $sib );
+    my $payment = $pay->owed_payment( $db, $run )->{payment};
+    $payment->_record_intent( $db, { id => "pi_returned_lost_$$", client_secret => 's' } );
+    $db->query( q{UPDATE holds SET expires_at = clock_timestamp() - interval '1 second' WHERE id::text = ?},
+        Registry::DAO::WorkflowRun->find( $db, { id => $run->id } )->data->{cart_holds}{ $sib->id . ':' . $s->id } );
+    my $other = Test::Registry::Fixtures::create_user( $db, { username => "return_other_$$" } );
+    Registry::DAO::Entitlement->grant( $db, { holder_family_member_id => Registry::DAO::FamilyMember->create( $db, {
+            family_id => $other->id, child_name => 'Other', birth_date => '2016-01-01' } )->id,
+        offer_version_id => $v->id, payment_plan_id => 'pay', starts_at => 'now', resource_id => $s->id, units => 1 } );
+
+    my $minion = $t->app->minion;
+    my sub drivers () {
+        scalar grep { $_->{args}[0]{run_id} eq $run->id }
+            $minion->backend->list_jobs( 0, 100, { tasks => ['continue_workflow_run'], states => ['inactive'] } )->{jobs}->@*;
+    }
+    my @refunds;
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::retrieve_payment_intent_async = sub ( $self, $id ) {
+            Mojo::Promise->resolve( { id => $id, status => 'succeeded', amount => 20000,
+                payment_method => 'pm_card', metadata => { payment_id => $payment->id } } );
+        };
+        local *Registry::Service::Stripe::create_refund_async = sub ( $self, $p ) {
+            push @refunds, $p;
+            Mojo::Promise->reject("Stripe api_error: try later\n");
+        };
+        $t->get_ok( "/session-checkout/@{[ $run->id ]}/payment?payment_intent=pi_returned_lost_$$"
+            . "&payment_intent_client_secret=s&redirect_status=succeeded" );
+        # The refund may run on after the response; give the loop time to finish it.
+        for ( 1 .. 40 ) { Mojo::IOLoop->timer( 0.05 => sub { } ); Mojo::IOLoop->one_tick }
+    }
+    is scalar @refunds, 1, 'the return asked Stripe for the refund, which failed';
+    is drivers(), 1, "and queued the run's driver to try it again";
+
+    {
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_refund_async = sub ( $self, $p ) {
+            push @refunds, $p;
+            Mojo::Promise->resolve( { id => 're_returned_lost', status => 'succeeded' } );
+        };
+        my $jobs = $minion->jobs( { tasks => ['continue_workflow_run'], states => ['inactive'] } );
+        while ( my $job = $jobs->next ) { $minion->perform_jobs_in_foreground( { id => $job->{id} } ) }
+    }
+    is $refunds[-1]{amount}, 10000, "the driver refunds Sib's line";
+    is Registry::DAO::Payment->find( $db, { id => $payment->id } )->refunded_cents, 10000, 'and it is recorded';
+    is step_of($run), 'done', 'the run goes on to done';
 };
 
 done_testing();
