@@ -292,3 +292,16 @@ subtest 'admins hear of a released schedule before its subscription is cancelled
     is $cancel->[1], 1, 'the admins had been told when the retry cancelled the subscription';
     is $told->(), 1, 'once';
 };
+
+subtest 'a deleted entitlement is not scheduled' => sub {
+    my $c = instalment_checkout( $db, slug => $seller, first_date => '2027-03-15' );
+    $db->delete( 'entitlement_units', { entitlement_id => $c->{entitlement}->id } );
+    $db->delete( 'entitlements', { id => $c->{entitlement}->id } );
+    my ( $scheduled, $died );
+    my $calls = with_stripe( sub {
+        eval { $scheduled = $c->{payment}->schedule_instalments_for( $db, $c->{entitlement} ); 1 } or $died = $@;
+    } );
+    is $died, undef, 'it does not die';
+    is $scheduled, undef, 'and schedules nothing';
+    is_deeply [ grep { $_->[0] =~ /\Acreate_/ } @$calls ], [], 'at Stripe';
+};
