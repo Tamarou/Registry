@@ -276,4 +276,26 @@ subtest "a sibling price whose sibling lost the seat refunds the whole cart" => 
     is reload($run)->next_step($db)->slug, 'complete', 'the run stays where it says nothing was booked';
 };
 
+# Held at 23:55 UTC, charged at 00:05: re-dated from the charge, a weekly plan
+# whose last part fell on the session's last day would now end the day after.
+subtest 'a plan the charge date pushes past the session is refunded as a lost line' => sub {
+    my $s = session( days => [ map { days_from_now($_) } 12 .. 14 ] );
+    my ( $run, $pay ) = cart( [ $kid, $s, full_price($s), 'pay' ], [ $sib, $s, in_parts($s), 'parts' ] );
+    my $payment = started_charge( $db, $run, $pay );
+    post_succeeded( $t, $payment, $account )->status_is(200);
+    $db->query( q{UPDATE payments SET completed_at = (((now() AT TIME ZONE 'UTC')::date + 1) + time '00:05') AT TIME ZONE 'UTC'
+                   WHERE id = ?}, $payment->id );
+    my ( $jobs, $asked ) = ( schedule_jobs(), scalar @refunds );
+    drive($minion);
+
+    is_deeply [ map { $_->holder_family_member_id } entitlements_of($payment)->@* ], [ $kid->id ],
+        'Kid is booked; Sib, whose plan no longer fits, is not';
+    my @new = @refunds[ $asked .. $#refunds ];
+    is_deeply [ map { $_->{amount} } @new ], [9000], "Sib's share alone is refunded";
+    is schedule_jobs(), $jobs, 'and no schedule is queued';
+    my ($told) = grep { $_->{user_id} eq $parent->id && $_->{type} eq 'general' } notes_for($run)->@*;
+    like $told->{message}, qr/Sib's payment plan would end after the last day of Session \d+/, 'the parent is told why';
+    ok( ( grep { $_->{user_id} eq $admin->id } notes_for($run)->@* ), 'and the admins' );
+};
+
 done_testing;

@@ -38,6 +38,8 @@ class Registry::DAO::WorkflowSteps::CompleteSessionCheckout :isa(Registry::DAO::
         my $terms = $data->{agreed_terms_version};
         return _stay('Agree to the terms of service to book.') unless defined $terms && !ref $terms && length $terms;
         my @lines = $payment->metadata->{lines}->@*;
+        my $charged = $db->query( q{SELECT to_char(completed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD')
+                                      FROM payments WHERE id = ?}, $payment->id )->array->[0];
 
         # Each line's seat: its hold while live; a lapsed one is taken again
         # if its session still has room, otherwise the line is lost. Sessions
@@ -64,6 +66,20 @@ class Registry::DAO::WorkflowSteps::CompleteSessionCheckout :isa(Registry::DAO::
             $lost{$key} = 'full';
         }
 
+        # An instalment line's parts are dated from the charge's UTC date, as
+        # the schedule's start compares them (Payment::instalment_schedule_start);
+        # the hold dated them before the charge. A plan that, so dated, would
+        # end after its session's last day no longer fits: refused, never clamped.
+        my %parts;
+        for my $line ( grep { !$lost{ _key($_) } && $_->{kind} eq 'instalments' } @lines ) {
+            my $version = Registry::DAO::OfferVersion->find( $db, { id => $line->{offer_version_id} } );
+            my ($plan)  = grep { $_->{id} eq $line->{payment_plan_id} } $version->payment_plans($db)->@*;
+            $parts{ _key($line) } = $line->{parts}[0]{due_date} eq $charged ? $line->{parts}
+                : Registry::PriceOps::Instalments::parts( $version->price_cents, $plan, $charged );
+            $lost{ _key($line) } = 'plan_ends_late'
+                unless Registry::PriceOps::Instalments::fits( $plan, $charged, $self->_last_day( $db, $line->{resource_id} ) );
+        }
+
         # A price may have counted a sibling whose line is lost (a sibling
         # price): each surviving line's price is asked again, at the moment
         # its seat was held, without the lost lines. One that no longer
@@ -82,7 +98,7 @@ class Registry::DAO::WorkflowSteps::CompleteSessionCheckout :isa(Registry::DAO::
             }
         }
 
-        my ( %booked, @refunds, @scheduled );
+        my ( %booked, @refunds );
         for my $line (@lines) {
             my $key = _key($line);
             if ( $lost{$key} ) {
@@ -113,9 +129,8 @@ class Registry::DAO::WorkflowSteps::CompleteSessionCheckout :isa(Registry::DAO::
                 terms_version           => $terms,
             } );
             $booked{$key} = $entitlement->id;
-            push @scheduled, $entitlement->id if $line->{kind} eq 'instalments';
         }
-        $self->_date_parts_from_charge( $db, $payment ) if @scheduled;
+        $self->_store_parts( $db, $payment, { map { $_ => $parts{$_} } grep { $booked{$_} } keys %parts } );
 
         my $outcome = { booked => \%booked, refunds => \@refunds };
         $run->update_data( $db, { checkout_outcome => $outcome } );
@@ -123,9 +138,18 @@ class Registry::DAO::WorkflowSteps::CompleteSessionCheckout :isa(Registry::DAO::
         $self->_tell( $db, $run, $payment, \@refunds ) if @refunds;
         $tx->commit if $tx;
 
-        # After the COMMIT: each instalment child's Stripe schedule is made by
-        # a retried job, keyed by its entitlement (Job::InstalmentSchedule).
+        $self->_schedule( $db, $run, $payment->id, $outcome );
+        return $self->_refund( $db, $run, $outcome );
+    }
+
+    # After the COMMIT: each booked instalment child's Stripe schedule is made
+    # by a retried job, keyed by its entitlement (Job::InstalmentSchedule),
+    # unless one is recorded already.
+    method _schedule ( $db, $run, $payment_id, $outcome ) {
+        my $payment = defined $payment_id && !ref $payment_id && $payment_id =~ $UUID
+            && Registry::DAO::Payment->find( $db, { id => $payment_id } ) or return;
         my $slug = $payment->metadata->{tenant_slug};
+        my @scheduled = map { $outcome->{booked}{ _key($_) } // () } grep { $_->{kind} eq 'instalments' } $payment->metadata->{lines}->@*;
         for my $eid (@scheduled) {
             try { Registry::Job::InstalmentSchedule->enqueue( Registry::Job::InstalmentSchedule->minion,
                     instalment_schedule => $eid, $slug ) }
@@ -136,7 +160,14 @@ class Registry::DAO::WorkflowSteps::CompleteSessionCheckout :isa(Registry::DAO::
                     . "the rest. ($e)", { entitlement_id => $eid, workflow_run_id => $run->id } );
             }
         }
-        return $self->_refund( $db, $run, $outcome );
+    }
+
+    # Session $resource_id's last day, in its location's zone.
+    method _last_day ( $db, $resource_id ) {
+        return $db->query( q{
+            SELECT max(to_char(e.time AT TIME ZONE l.time_zone, 'YYYY-MM-DD'))
+              FROM events e JOIN locations l ON l.id = e.location_id WHERE e.session_resource_id = ?
+        }, $resource_id )->array->[0];
     }
 
     sub _key ($line) { "$line->{family_member_id}:$line->{resource_id}" }
@@ -147,25 +178,13 @@ class Registry::DAO::WorkflowSteps::CompleteSessionCheckout :isa(Registry::DAO::
                                FROM holds WHERE id = ?}, $hold_id )->array->[0];
     }
 
-    # The parts a schedule is built from start on the charge's UTC date, as
-    # the schedule's start compares them with the UTC today (Payment::
-    # instalment_schedule_start); the hold dated them before the charge.
-    method _date_parts_from_charge ( $db, $payment ) {
-        my $charged = $db->query( q{SELECT to_char(completed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD')
-                                      FROM payments WHERE id = ?}, $payment->id )->array->[0];
-        my $changed = 0;
-        my @lines = map {
-            my $line = {%$_};
-            if ( $line->{kind} eq 'instalments' && $line->{parts}[0]{due_date} ne $charged ) {
-                my $version = Registry::DAO::OfferVersion->find( $db, { id => $line->{offer_version_id} } );
-                my ($plan)  = grep { $_->{id} eq $line->{payment_plan_id} } $version->payment_plans($db)->@*;
-                $line->{parts} = Registry::PriceOps::Instalments::parts( $version->price_cents, $plan, $charged );
-                $changed++;
-            }
-            $line;
-        } $payment->metadata->{lines}->@*;
+    # Stores the booked instalment lines' parts as re-dated from the charge
+    # (%$parts, by line key), which the schedule and the confirmation read.
+    method _store_parts ( $db, $payment, $parts ) {
+        my @lines = map { $parts->{ _key($_) } ? { %$_, parts => $parts->{ _key($_) } } : $_ }
+            $payment->metadata->{lines}->@*;
         $db->query( q{UPDATE payments SET metadata = jsonb_set(metadata, '{lines}', ?::jsonb) WHERE id = ?},
-            encode_json( \@lines ), $payment->id ) if $changed;
+            encode_json( \@lines ), $payment->id ) if %$parts;
     }
 
     my sub dollars ($cents) { sprintf '$%.2f', $cents / 100 }
@@ -221,6 +240,8 @@ class Registry::DAO::WorkflowSteps::CompleteSessionCheckout :isa(Registry::DAO::
     my %WHY = (
         full    => '%2$s had no room left for %1$s by the time the payment went through',
         sibling => "%1\$s's price was for a child whose brother or sister also has a place, and that place could not be made",
+        plan_ends_late => "%1\$s's payment plan would end after the last day of %2\$s, as the payment went through on "
+            . 'a later day than the seats were held',
     );
 
     # The payer and the studio's admins, told once, when the refunds are decided.
