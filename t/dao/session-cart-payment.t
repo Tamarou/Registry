@@ -127,4 +127,32 @@ subtest 'a one-time cart does not save the card' => sub {
     ok !exists $intents->[0]{customer}, 'nor name a customer';
 };
 
+subtest 'a tampered share is refused with no row written' => sub {
+    my ( $run, $pay ) = mixed_cart();
+    my $owed = data_of($run)->{owed_payment};
+    $owed->{lines}[0]{share_cents} = 100;
+    $run->update_data( $db, { owed_payment => $owed } );
+
+    my ( $out, $customers, $intents ) = charge( $run, $pay );
+    is_deeply $out->{errors}, ['The shares in this cart do not add up to what is owed.'], 'refused';
+    is scalar @{ payments_of($run) }, 0, 'no payment row';
+    is scalar(@$customers) + scalar(@$intents), 0, 'and nothing sent to Stripe';
+    ok !data_of($run)->{owed_payment_id}, 'the run names no payment';
+};
+
+subtest 'without a stripe key the charge is refused' => sub {
+    my ( $run, $pay ) = mixed_cart();
+    delete local $ENV{STRIPE_SECRET_KEY};
+
+    my @warned;
+    local $SIG{__WARN__} = sub { push @warned, @_ };
+    my ( $out, $customers, $intents ) = charge( $run, $pay );
+    is_deeply $out->{errors}, ['This payment cannot be taken right now. Nothing has been charged.'], 'refused';
+    like "@warned", qr/STRIPE_SECRET_KEY is not set/, 'the refusal is logged';
+    is scalar @{ payments_of($run) }, 0, 'no payment row';
+    is scalar(@$customers) + scalar(@$intents), 0, 'and nothing sent to Stripe';
+    is $db->query( q{SELECT count(*) FROM holds WHERE workflow_run_id = ? AND state = 'held'}, $run->id )->array->[0], 2,
+        "each child's seat stays held";
+};
+
 done_testing;

@@ -38,6 +38,25 @@ sub held () {
     return held_cart( $dao, $parent->id, [ $kid->id, $s->id, session_offer( $db, $s, price_cents => 30000 )->id, 'pay' ] );
 }
 
+subtest 'production mode refuses the cart charge' => sub {
+    for my $mode (qw( production staging )) {
+        my ( $run, $pay ) = held();
+        my $called = 0;
+        no warnings 'redefine';
+        local *Registry::Service::Stripe::create_customer_async       = sub { $called++; Mojo::Promise->resolve( {} ) };
+        local *Registry::Service::Stripe::create_payment_intent_async = sub { $called++; Mojo::Promise->resolve( {} ) };
+        my $out = do { local $ENV{MOJO_MODE} = $mode; $run->process( $db, $pay, {} ) };
+        ok !( $out isa Mojo::Promise ), "$mode: refused without calling Stripe";
+        is_deeply $out->{errors}, ['Online payment for this program is not open yet. Nothing has been charged.'],
+            "$mode: the parent is told why";
+        is $called, 0, "$mode: nothing is sent to Stripe";
+        is $db->query( q{SELECT count(*) FROM payments WHERE metadata->>'workflow_run_id' = ?}, $run->id )->array->[0], 0,
+            "$mode: no payment row written";
+        ok !Registry::DAO::WorkflowRun->find( $db, { id => $run->id } )->data->{owed_payment_id},
+            "$mode: the run names no payment";
+    }
+};
+
 subtest 'development and test do not refuse' => sub {
     for my $mode (qw( development test )) {
         is Registry::DAO::WorkflowSteps::Payment->camp_checkout_refusal($mode), undef, "$mode is open";
